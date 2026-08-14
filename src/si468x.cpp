@@ -220,9 +220,9 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
 
     // 2. Hard Reset Chip
     gpio_set_rst(false); // Reset low
-    std::this_thread::sleep_for(std::chrono::microseconds(50));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200)); // Allow full voltage discharge
     gpio_set_rst(true);  // Reset high
-    std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Stable wait
+    std::this_thread::sleep_for(std::chrono::milliseconds(50)); // Allow bootloader to stabilize
 
     // 3. Open SPI Bus
 #ifdef HAVE_WIRINGPI
