@@ -173,8 +173,8 @@ int main(int argc, char** argv)
             }
             std::cout << "    ================================================" << std::endl;
 
-            // ACTIVE AUDIO PLAYBACK DIAGNOSTIC TEST (Plays the 1st discovered station for 10 seconds!)
-            std::cout << "    >>> [TEST] Activating 10-Second Hardware Headphone Playback..." << std::endl;
+            // ACTIVE AUDIO PLAYBACK DIAGNOSTIC TEST (Plays the 1st discovered station for 20 seconds!)
+            std::cout << "    >>> [TEST] Activating 20-Second Hardware Headphone Playback..." << std::endl;
             std::cout << "    >>> Station: '" << services[0].label << "' (SId: 0x" << std::hex << services[0].service_id
                       << ", CompId: " << std::dec << services[0].component_id << ")" << std::endl;
 
@@ -185,13 +185,13 @@ int main(int argc, char** argv)
                 si468x_set_volume(55);
 
                 std::cout << "    >>> Playback active! Streaming analog audio directly to board headphone jack..." << std::endl;
-                for (int sec = 1; sec <= 10; sec++) {
+                for (int sec = 1; sec <= 20; sec++) {
                     std::this_thread::sleep_for(std::chrono::seconds(1));
 
                     // Periodically print signal updates during playback to monitor stability
                     si468x_signal_status_t play_status;
                     if (si468x_get_signal_status(&play_status) == SI468X_SUCCESS) {
-                        std::cout << "        [Play Sec " << sec << "/10] RSSI: " << (int)play_status.rssi
+                        std::cout << "        [Play Sec " << sec << "/20] RSSI: " << (int)play_status.rssi
                                   << " dBuV | SNR: " << (int)play_status.snr << " dB";
 
                         // Query dynamic component info during playback of the active service!
