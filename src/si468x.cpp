@@ -81,6 +81,24 @@ static int spi_transfer(const uint8_t* tx, uint8_t* rx, size_t length)
         return -1;
     }
 
+#ifdef HAVE_WIRINGPI
+    std::vector<uint8_t> buf(length);
+    if (tx) {
+        std::memcpy(buf.data(), tx, length);
+    }
+    else {
+        std::memset(buf.data(), 0, length);
+    }
+
+    if (wiringPiSPIDataRW(0, buf.data(), length) < 0) {
+        return -1;
+    }
+
+    if (rx) {
+        std::memcpy(rx, buf.data(), length);
+    }
+    return 0;
+#else
     struct spi_ioc_transfer tr;
     std::memset(&tr, 0, sizeof(tr));
     tr.tx_buf = (unsigned long)tx;
@@ -94,6 +112,7 @@ static int spi_transfer(const uint8_t* tx, uint8_t* rx, size_t length)
         return -1;
     }
     return 0;
+#endif
 }
 
 /* Polling the CTS (Clear To Send) flag over SPI */
@@ -199,6 +218,14 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Stable wait
 
     // 3. Open SPI Bus
+#ifdef HAVE_WIRINGPI
+    spi_fd = wiringPiSPISetup(0, 10000000); // 10 MHz
+    if (spi_fd < 0) {
+        std::cerr << "libsi468x: Error opening SPI bus via wiringPi!" << std::endl;
+        gpio_shutdown();
+        return SI468X_ERROR_SPI;
+    }
+#else
     spi_fd = open(spi_device, O_RDWR);
     if (spi_fd < 0) {
         std::cerr << "libsi468x: Error opening SPI device: " << spi_device << std::endl;
@@ -218,6 +245,7 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         si468x_shutdown();
         return SI468X_ERROR_SPI;
     }
+#endif
 
     // 4. Send POWER_UP (0x01)
     uint8_t power_up_cmd[5] = { SI468X_CMD_POWER_UP, 0x00, 0x00, 0x00, 0x00 };
