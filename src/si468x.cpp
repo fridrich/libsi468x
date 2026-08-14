@@ -117,7 +117,7 @@ static int spi_transfer(const uint8_t* tx, uint8_t* rx, size_t length)
 }
 
 /* Polling the CTS (Clear To Send) flag over SPI */
-static bool wait_for_cts(int timeout_ms = 1000)
+static bool wait_for_cts(int timeout_ms = 1000, bool suppress_errors = false)
 {
     auto start = std::chrono::steady_clock::now();
     uint8_t tx_byte = 0x00;
@@ -128,7 +128,7 @@ static bool wait_for_cts(int timeout_ms = 1000)
         if (spi_transfer(&tx_byte, &rx_byte, 1) == 0) {
             if (rx_byte & SI468X_CTS_MASK) {
                 // Check for Command Error (ERR bit 6)
-                if (rx_byte & 0x40) {
+                if ((rx_byte & 0x40) && !suppress_errors) {
                     std::cerr << "libsi468x: WARNING: Command Error (Status: 0x"
                               << std::hex << (int)rx_byte << std::dec << ")" << std::endl;
                 }
@@ -379,7 +379,40 @@ int si468x_set_frequency(uint32_t frequency_hz)
     cmd[4] = 0x00;
     cmd[5] = freq_index; // Pass the frequency index
 
-    return send_command(cmd, 6, nullptr, 0);
+    if (send_command(cmd, 6, nullptr, 0) != SI468X_SUCCESS) {
+        return SI468X_ERROR_SPI;
+    }
+
+    // Wait for the RF synthesizers to lock and acquire OFDM sync (up to 10 seconds)
+    bool locked = false;
+    for (int i = 0; i < 50; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        // Poll signal status quietly
+        uint8_t stat_cmd[1] = { SI468X_CMD_DAB_DIGRAD_STATUS };
+        std::vector<uint8_t> resp(12, 0x00);
+
+        // We bypass the global send_command here to ignore 0xc0 Command Errors,
+        // as the chip routinely rejects status queries while actively seeking RF lock.
+        spi_transfer(stat_cmd, nullptr, 1);
+        if (wait_for_cts(100, true)) {
+            std::vector<uint8_t> tx_dummy(12, 0x00);
+            if (spi_transfer(tx_dummy.data(), resp.data(), 12) == 0) {
+                if (resp[4] != 0xc0 && (resp[10] & 0x01) == 1) { // SYNC flag high
+                    locked = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!locked) {
+        return SI468X_ERROR_TIMEOUT; // No signal found on this frequency
+    }
+
+    // Give the co-processor 1000ms to accumulate and decode the FIC database tables from the air
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    return SI468X_SUCCESS;
 }
 
 uint32_t si468x_get_frequency(void)
