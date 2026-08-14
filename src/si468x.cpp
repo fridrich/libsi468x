@@ -34,6 +34,8 @@ static int rst_gpio_pin = -1;
 static uint32_t active_frequency = 0;
 static int active_audio_mode = 0; // 0 = Analog Only, 1 = I2S Digital
 
+static int si468x_enable_service_data(void);
+
 /* Low-level GPIO RSTB management */
 static bool gpio_init(int pin)
 {
@@ -340,6 +342,9 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     if (si468x_set_audio_output(active_audio_mode) != SI468X_SUCCESS) {
         std::cerr << "libsi468x: Warning: Failed to configure default audio output." << std::endl;
     }
+
+    // Enable the co-processor's PAD/XPAD service data decoder upon system init (before playback starts)
+    si468x_enable_service_data();
 
     // Diagnostic query: Print raw chip revision info over SPI
     uint8_t rev_cmd[1] = { 0x10 };
