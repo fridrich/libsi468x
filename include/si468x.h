@@ -56,6 +56,12 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode);
 int si468x_shutdown(void);
 
 /*
+ * Cleanly clear the co-processor's internal service list database.
+ * Returns SI468X_SUCCESS on success, or negative error code.
+ */
+int si468x_clear_service_list(void);
+
+/*
  * Tune the hardware receiver to a specified frequency in Hz (e.g. 227360000 for 12C).
  */
 int si468x_set_frequency(uint32_t frequency_hz);

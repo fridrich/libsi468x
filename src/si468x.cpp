@@ -360,9 +360,18 @@ int si468x_shutdown(void)
     return SI468X_SUCCESS;
 }
 
+int si468x_clear_service_list(void)
+{
+    uint8_t cmd[2] = { 0x80, 0x02 }; // Opcode 0x80 + ACTION 0x02 (Clear Service List)
+    return send_command(cmd, 2, nullptr, 0);
+}
+
 int si468x_set_frequency(uint32_t frequency_hz)
 {
     active_frequency = frequency_hz;
+
+    // Cleanly wipe the on-chip service database list to prevent cross-frequency accumulation
+    si468x_clear_service_list();
 
     // Map the requested frequency (in Hz) to its standard European Frequency Index (0-37)
     uint8_t freq_index = 0;
@@ -561,14 +570,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         return 0;
     }
 
-    // Query current tuned Ensemble ID first to filter out other ensembles
-    char current_ensemble_label[17];
-    uint16_t tuned_eid = 0;
-    std::memset(current_ensemble_label, 0, sizeof(current_ensemble_label));
-    si468x_get_ensemble_info(current_ensemble_label, &tuned_eid);
-
-    std::clog << "libsi468x: Querying on-chip service database (filtering for EId: 0x"
-              << std::hex << tuned_eid << std::dec << ")..." << std::endl;
+    std::clog << "libsi468x: Querying on-chip service database..." << std::endl;
 
     // Step 1: Send GET_DIGITAL_SERVICE_LIST (0x80) command to query database size (7-byte read)
     uint8_t size_cmd[2] = { 0x80, 0x00 };
@@ -597,7 +599,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
 
     // Shift index by 7 to bypass the 4-byte SPI status/padding overhead and 3 header bytes
     uint8_t num_services = resp[7];
-    std::clog << "libsi468x: Total accumulated database service count: " << (int)num_services << std::endl;
+    std::clog << "libsi468x: Chip reported " << (int)num_services << " active services." << std::endl;
 
     if (num_services == 0) {
         return 0;
@@ -623,13 +625,13 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         // 2. Number of Components (offset 5, low 4 bits)
         uint8_t num_components = resp[offset + 5] & 0x0F;
 
-        // 3. Ensemble ID (EId) association (offset 6-7)
-        uint16_t service_eid = resp[offset + 6] | ((uint16_t)resp[offset + 7] << 8);
-
-        // 4. Label: 16-character array (offset 8-23)
+        // 3. Label: 16-character array (offset 8-23)
         char service_label[17];
         std::memcpy(service_label, &resp[offset + 8], 16);
         service_label[16] = '\0';
+
+        // 4. Subchannel ID (SubChId) is stored at offset 24
+        uint8_t subchannel_id = resp[offset + 24];
 
         // Offset advancement past the 24-byte Service Header
         offset += 24;
@@ -644,17 +646,17 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
             // - Component ID: 12-bit value packed in a 16-bit Little Endian word (offset 0-1)
             uint16_t component_id = (resp[offset] | ((uint16_t)resp[offset + 1] << 8)) & 0x0FFF;
 
-            // Store the first audio component if the service belongs to the currently tuned ensemble
-            if (c == 0 && (service_eid == tuned_eid || tuned_eid == 0)) {
+            // Store the first audio component of the service in our output list
+            if (c == 0) {
                 list[services_count].service_id = service_id;
                 list[services_count].component_id = component_id;
-                list[services_count].audio_type = 0; // Default: Resolved dynamically during playback
-                list[services_count].bitrate = 0;    // Default: Resolved dynamically during playback
+                list[services_count].audio_type = subchannel_id; // Reuse audio_type to pass Subchannel ID cleanly!
+                list[services_count].bitrate = 0;                // Resolved dynamically during playback
 
                 std::strncpy(list[services_count].label, service_label, 16);
                 list[services_count].label[16] = '\0';
 
-                // Generate clean dynamic short label using welle.io logic (copy 8 chars and strip spaces)
+                // Generate clean fallback short label dynamically (welle.io logic: copy 8 chars and strip trailing spaces)
                 std::strncpy(list[services_count].short_label, service_label, 8);
                 list[services_count].short_label[8] = '\0';
                 for (int len = 7; len >= 0; len--) {
