@@ -793,6 +793,9 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
             // - Component ID: 12-bit value packed in a 16-bit Little Endian word (offset 0-1)
             uint16_t component_id = (resp[offset] | ((uint16_t)resp[offset + 1] << 8)) & 0x0FFF;
 
+            // - Short Label Character Flag Mask: 16-bit Little Endian word (offset 2-3)
+            uint16_t short_label_mask = resp[offset + 2] | ((uint16_t)resp[offset + 3] << 8);
+
             // Store the first audio component of the service in our output list
             if (c == 0) {
                 list[services_count].service_id = service_id;
@@ -803,17 +806,8 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
                 std::strncpy(list[services_count].label, service_label, 16);
                 list[services_count].label[16] = '\0';
 
-                // Reconstruct clean fallback short label dynamically (copy first 8 characters and strip trailing spaces)
-                std::strncpy(list[services_count].short_label, service_label, 8);
-                list[services_count].short_label[8] = '\0';
-                for (int len = 7; len >= 0; len--) {
-                    if (list[services_count].short_label[len] == ' ' || list[services_count].short_label[len] == '\0') {
-                        list[services_count].short_label[len] = '\0';
-                    }
-                    else {
-                        break;
-                    }
-                }
+                // Reconstruct exact Short Label using the character flag mask and the decoded helper!
+                si468x_decode_short_label(service_label, short_label_mask, list[services_count].short_label);
 
                 services_count++;
             }
