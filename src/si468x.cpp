@@ -332,9 +332,9 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     // Wait for the on-chip application operating system to boot and stabilize
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
 
-    // Enable direct onboard analog headphone output unconditionally upon system init
-    if (si468x_set_audio_output(0) != SI468X_SUCCESS) {
-        std::cerr << "libsi468x: Warning: Failed to configure default Analog output." << std::endl;
+    // Enable I2S digital output by default upon system init
+    if (si468x_set_audio_output(1) != SI468X_SUCCESS) {
+        std::cerr << "libsi468x: Warning: Failed to configure default I2S output." << std::endl;
     }
 
     // Diagnostic query: Print raw chip revision info over SPI
@@ -559,7 +559,13 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
         std::clog << std::dec << " (ret: " << ret << ")" << std::endl;
     }
 
-    return ret;
+    if (ret == SI468X_SUCCESS && !(resp[1] & 0x40)) {
+        // Unconditionally configure I2S digital output by default upon play
+        si468x_set_audio_output(1);
+        return SI468X_SUCCESS;
+    }
+
+    return SI468X_ERROR_SPI;
 }
 
 int si468x_stop_service(void)
