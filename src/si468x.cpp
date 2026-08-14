@@ -525,7 +525,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
     }
 
     int services_count = 0;
-    size_t offset = 8; // Data payload starts at index 8 of the response parameters
+    size_t offset = 13; // Data payload starts at index 13 of the response parameters (after 5-byte header)
 
     for (int i = 0; i < num_services; i++) {
         if (services_count >= max_services) {
