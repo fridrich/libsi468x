@@ -536,21 +536,37 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
         (uint8_t)((component_id >> 24) & 0xFF)
     };
 
-    // Send first attempt with SCIdS = 0
-    int ret = send_command(cmd, 12, nullptr, 0);
-    if (ret != SI468X_SUCCESS) {
+    uint8_t resp[7];
+    std::memset(resp, 0, sizeof(resp));
+
+    // Send first attempt with SCIdS = 0 and capture the 7-byte response parameters
+    int ret = send_command(cmd, 12, resp, 7);
+    std::clog << "libsi468x: START_DIGITAL (SCIdS 0) Raw Response: ";
+    for (int i = 0; i < 7; i++) {
+        std::clog << "0x" << std::hex << (int)resp[i] << " ";
+    }
+    std::clog << std::dec << " (ret: " << ret << ")" << std::endl;
+
+    if (ret != SI468X_SUCCESS || (resp[1] & 0x40)) {
         // Try fallback attempt with SCIdS = 1 just like native play_station()
         cmd[1] = 0x01;
-        ret = send_command(cmd, 12, nullptr, 0);
+        std::memset(resp, 0, sizeof(resp));
+        ret = send_command(cmd, 12, resp, 7);
+        std::clog << "libsi468x: START_DIGITAL (SCIdS 1) Raw Response: ";
+        for (int i = 0; i < 7; i++) {
+            std::clog << "0x" << std::hex << (int)resp[i] << " ";
+        }
+        std::clog << std::dec << " (ret: " << ret << ")" << std::endl;
     }
 
-    if (ret == SI468X_SUCCESS) {
+    if (ret == SI468X_SUCCESS && !(resp[1] & 0x40)) {
         // Unconditionally force the analog headphone routing property (Property 0x0800 = 0x0001)
         // right after triggering playback to ensure the physical DAC audio path is connected!
         si468x_set_audio_output(0);
+        return SI468X_SUCCESS;
     }
 
-    return ret;
+    return SI468X_ERROR_SPI;
 }
 
 int si468x_stop_service(void)
@@ -564,15 +580,34 @@ int si468x_stop_service(void)
         0x00, 0x00, 0x00, 0x00
     };
 
-    // Send first attempt with SCIdS = 0
-    int ret = send_command(cmd, 12, nullptr, 0);
-    if (ret != SI468X_SUCCESS) {
+    uint8_t resp[7];
+    std::memset(resp, 0, sizeof(resp));
+
+    // Send first attempt with SCIdS = 0 and capture the 7-byte response parameters
+    int ret = send_command(cmd, 12, resp, 7);
+    std::clog << "libsi468x: STOP_DIGITAL (SCIdS 0) Raw Response: ";
+    for (int i = 0; i < 7; i++) {
+        std::clog << "0x" << std::hex << (int)resp[i] << " ";
+    }
+    std::clog << std::dec << " (ret: " << ret << ")" << std::endl;
+
+    if (ret != SI468X_SUCCESS || (resp[1] & 0x40)) {
         // Try fallback attempt with SCIdS = 1 just like native play_station()
         cmd[1] = 0x01;
-        ret = send_command(cmd, 12, nullptr, 0);
+        std::memset(resp, 0, sizeof(resp));
+        ret = send_command(cmd, 12, resp, 7);
+        std::clog << "libsi468x: STOP_DIGITAL (SCIdS 1) Raw Response: ";
+        for (int i = 0; i < 7; i++) {
+            std::clog << "0x" << std::hex << (int)resp[i] << " ";
+        }
+        std::clog << std::dec << " (ret: " << ret << ")" << std::endl;
     }
 
-    return ret;
+    if (ret == SI468X_SUCCESS && !(resp[1] & 0x40)) {
+        return SI468X_SUCCESS;
+    }
+
+    return SI468X_ERROR_SPI;
 }
 
 int si468x_set_volume(uint8_t volume)
