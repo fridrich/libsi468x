@@ -1,6 +1,6 @@
 /*
  *    Copyright (C) 2026
- *    si468x_scan.cpp - Diagnostic DAB Frequency Scanner Utility
+ *    si468x_scan.cpp - Diagnostic DAB Frequency Scanner Utility with Active Playback Test
  */
 
 #include <iostream>
@@ -62,6 +62,7 @@ int main(int argc, char** argv)
 {
     std::cout << "==================================================" << std::endl;
     std::cout << "  libsi468x DAB Band III Diagnostic Frequency Scan" << std::endl;
+    std::cout << "  (Active 10-Second Headphone Audio Playback Test) " << std::endl;
     std::cout << "==================================================" << std::endl;
 
     const char* spi_dev = "/dev/spidev0.0";
@@ -78,7 +79,7 @@ int main(int argc, char** argv)
     std::cout << "Reset Pin:  GPIO " << rst_pin << std::endl;
     std::cout << "==================================================" << std::endl;
 
-    // Boot the chip in DAB mode
+    // Boot the chip in DAB mode (analog audio is unconditionally enabled by default on init!)
     int ret = si468x_init(spi_dev, rst_pin, SI468X_BOOT_DAB);
     if (ret != SI468X_SUCCESS) {
         std::cerr << "Initialization failed! (Code: " << ret << ")" << std::endl;
@@ -142,16 +143,79 @@ int main(int argc, char** argv)
             std::cout << "      Discovered " << num_services << " active services on Channel " << ch.label << ":" << std::endl;
             std::cout << "    ================================================" << std::endl;
             for (int s = 0; s < num_services; s++) {
+                // Dynamically fetch detailed component info and short label directly from the chip over SPI (Opcode 0xBB)
+                char comp_label[17];
+                char comp_short_label[9];
+                uint8_t subchannel_id = 0;
+                std::memset(comp_label, 0, sizeof(comp_label));
+                std::memset(comp_short_label, 0, sizeof(comp_short_label));
+
+                int comp_ret = si468x_get_component_info(services[s].service_id, services[s].component_id, comp_label, comp_short_label, &subchannel_id);
+
                 std::cout << "      " << std::setw(2) << (s + 1) << ". "
-                          << std::left << std::setw(17) << services[s].label
-                          << " (" << std::left << std::setw(8) << services[s].short_label << ") "
-                          << " | SId: 0x" << std::hex << services[s].service_id
-                          << " | CompId: " << std::dec << services[s].component_id
-                          << " | SubChId: " << (int)services[s].audio_type
-                          << " | DAB+ AAC" << std::endl;
+                          << std::left << std::setw(17) << services[s].label;
+
+                if (comp_ret == 0) {
+                    std::cout << " (" << std::left << std::setw(8) << comp_short_label << ") "
+                              << " | SId: 0x" << std::hex << services[s].service_id
+                              << " | CompId: " << std::dec << services[s].component_id
+                              << " | SubChId: " << (int)subchannel_id
+                              << " | CompLabel: '" << comp_label << "'";
+                }
+                else {
+                    std::cout << " (" << std::left << std::setw(8) << services[s].short_label << ") "
+                              << " | SId: 0x" << std::hex << services[s].service_id
+                              << " | CompId: " << std::dec << services[s].component_id
+                              << " | SubChId: N/A";
+                }
+                std::cout << " | DAB+ AAC" << std::endl;
                 total_stations++;
             }
             std::cout << "    ================================================" << std::endl;
+
+            // ACTIVE AUDIO PLAYBACK DIAGNOSTIC TEST (Plays the 1st discovered station for 10 seconds!)
+            std::cout << "    >>> [TEST] Activating 10-Second Hardware Headphone Playback..." << std::endl;
+            std::cout << "    >>> Station: '" << services[0].label << "' (SId: 0x" << std::hex << services[0].service_id
+                      << ", CompId: " << std::dec << services[0].component_id << ")" << std::endl;
+
+            // Trigger actual hardware play command
+            int play_ret = si468x_play_service(services[0].service_id, services[0].component_id);
+            if (play_ret == SI468X_SUCCESS) {
+                // Un-mute the analog DAC by setting hardware volume property 0x0300 to 55
+                si468x_set_volume(55);
+
+                std::cout << "    >>> Playback active! Streaming analog audio directly to board headphone jack..." << std::endl;
+                for (int sec = 1; sec <= 10; sec++) {
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+                    // Periodically print signal updates during playback to monitor stability
+                    si468x_signal_status_t play_status;
+                    if (si468x_get_signal_status(&play_status) == SI468X_SUCCESS) {
+                        std::cout << "        [Play Sec " << sec << "/10] RSSI: " << (int)play_status.rssi
+                                  << " dBuV | SNR: " << (int)play_status.snr << " dB";
+
+                        // Query dynamic component info during playback of the active service!
+                        char play_comp_label[17];
+                        char play_comp_short[9];
+                        uint8_t play_subchannel_id = 0;
+                        std::memset(play_comp_label, 0, sizeof(play_comp_label));
+                        std::memset(play_comp_short, 0, sizeof(play_comp_short));
+
+                        if (si468x_get_component_info(services[0].service_id, services[0].component_id, play_comp_label, play_comp_short, &play_subchannel_id) == 0) {
+                            std::cout << " | PlayLabel: '" << play_comp_label << "' (" << play_comp_short << ") | SubChId: " << (int)play_subchannel_id;
+                        }
+                        std::cout << std::endl;
+                    }
+                }
+
+                std::cout << "    >>> Stopping playback..." << std::endl;
+                si468x_stop_service();
+            }
+            else {
+                std::cerr << "    >>> [ERROR] START_DIGITAL play command rejected by chip! (Code: " << play_ret << ")" << std::endl;
+            }
+            std::cout << "    ================================================" << std::endl;
+
         }
         else {
             std::cout << "      (Ensemble locked, but no active service tables read)" << std::endl;
