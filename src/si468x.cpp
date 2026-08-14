@@ -563,6 +563,17 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
     if (ret == SI468X_SUCCESS && !(resp[1] & 0x40)) {
         // Re-apply the active configured audio output path upon service play
         si468x_set_audio_output(active_audio_mode);
+
+        // Explicitly set Property 0x0301 (AUDIO_MUTE) to 0x0000 to UNMUTE the audio path!
+        uint8_t mute_cmd[6];
+        mute_cmd[0] = SI468X_CMD_SET_PROPERTY;
+        mute_cmd[1] = 0x00;
+        mute_cmd[2] = 0x03; // Property 0x0301 (AUDIO_MUTE)
+        mute_cmd[3] = 0x01;
+        mute_cmd[4] = 0x00; // Value 0x0000 (Unmuted)
+        mute_cmd[5] = 0x00;
+        send_command(mute_cmd, 6, nullptr, 0);
+
         return SI468X_SUCCESS;
     }
 
