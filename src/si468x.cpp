@@ -615,7 +615,10 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
     status->rssi = resp[19];
     status->snr = resp[20];
     status->freq_offset = 0; // Handled as secondary telemetry
-    status->sync_status = ((resp[5] & 0x02) >> 1); // SYNC flag (Bit 1)
+
+    // Lock achieved if OFDM Frame Sync (Bit 1 of Byte 1), FIC Sync (Bit 2 of Byte 1),
+    // or Signal Acquisition (Bit 2 of Byte 2) are high.
+    status->sync_status = ((resp[5] & 0x06) || (resp[6] & 0x04)) ? 1 : 0;
 
     return SI468X_SUCCESS;
 }
