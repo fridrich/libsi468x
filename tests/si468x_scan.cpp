@@ -108,6 +108,7 @@ int main(int argc, char** argv)
                           << " (" << std::left << std::setw(8) << services[s].short_label << ") "
                           << " | SId: 0x" << std::hex << services[s].service_id
                           << " | CompId: " << std::dec << services[s].component_id
+                          << " | SubChId: " << (int)services[s].audio_type
                           << " | DAB+ AAC" << std::endl;
                 total_stations++;
             }

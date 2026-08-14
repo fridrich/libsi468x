@@ -516,16 +516,6 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         return 0;
     }
 
-    // Print raw database payload hex dump
-    std::clog << "libsi468x: Raw Service Database Hex Dump (" << full_resp_len << " bytes):" << std::endl;
-    for (uint16_t x = 0; x < full_resp_len; x++) {
-        std::clog << "0x" << std::hex << (int)resp[x] << " ";
-        if ((x + 1) % 16 == 0) {
-            std::clog << std::endl;
-        }
-    }
-    std::clog << std::dec << std::endl;
-
     // Shift index by 7 to bypass the 4-byte SPI status/padding overhead and 3 header bytes
     uint8_t num_services = resp[7];
     std::clog << "libsi468x: Chip reported " << (int)num_services << " active services." << std::endl;
@@ -559,8 +549,8 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         std::memcpy(service_label, &resp[offset + 8], 16);
         service_label[16] = '\0';
 
-        // 4. Short Label Abbreviation Mask: 16-bit Little Endian (offset 24-25)
-        uint16_t char_mask = resp[offset + 24] | ((uint16_t)resp[offset + 25] << 8);
+        // 4. Subchannel ID (SubChId) is stored at offset 24
+        uint8_t subchannel_id = resp[offset + 24];
 
         // Offset advancement past the 26-byte Service Header
         offset += 26;
@@ -579,14 +569,23 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
             if (c == 0) {
                 list[services_count].service_id = service_id;
                 list[services_count].component_id = component_id;
-                list[services_count].audio_type = 0; // Resolved dynamically during playback
+                list[services_count].audio_type = subchannel_id; // Reuse audio_type to pass Subchannel ID cleanly!
                 list[services_count].bitrate = 0;    // Resolved dynamically during playback
 
                 std::strncpy(list[services_count].label, service_label, 16);
                 list[services_count].label[16] = '\0';
 
-                // Decode short label natively from the real Character Flag Mask!
-                si468x_decode_short_label(service_label, char_mask, list[services_count].short_label);
+                // Generate clean, stripped short label directly from the long label
+                std::strncpy(list[services_count].short_label, service_label, 8);
+                list[services_count].short_label[8] = '\0';
+                for (int len = 7; len >= 0; len--) {
+                    if (list[services_count].short_label[len] == ' ') {
+                        list[services_count].short_label[len] = '\0';
+                    }
+                    else {
+                        break;
+                    }
+                }
 
                 services_count++;
             }
