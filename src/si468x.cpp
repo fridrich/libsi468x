@@ -625,7 +625,18 @@ int si468x_set_volume(uint8_t volume)
     cmd[4] = 0x00;
     cmd[5] = volume;
 
-    return send_command(cmd, 6, nullptr, 0);
+    uint8_t resp[7];
+    std::memset(resp, 0, sizeof(resp));
+
+    // Capture and print the raw 7-byte response parameters for maximum debugging visibility
+    int ret = send_command(cmd, 6, resp, 7);
+    std::clog << "libsi468x: SET_VOLUME Property 0x0300 Raw Response: ";
+    for (int i = 0; i < 7; i++) {
+        std::clog << "0x" << std::hex << (int)resp[i] << " ";
+    }
+    std::clog << std::dec << " (ret: " << ret << ")" << std::endl;
+
+    return ret;
 }
 
 void si468x_decode_short_label(const char* long_label, uint16_t char_mask, char* short_label)
@@ -884,33 +895,34 @@ int si468x_set_audio_output(int enable_i2s)
     cmd[2] = 0x08;
     cmd[3] = 0x00;
     cmd[4] = 0x00;
-    cmd[5] = 0x03; // Bit 0 (Analog) | Bit 1 (I2S)
+    cmd[5] = enable_i2s ? 0x03 : 0x01; // 0x03 = Dual-Active, 0x01 = Analog Only
 
     int ret = send_command(cmd, 6, nullptr, 0);
     if (ret != SI468X_SUCCESS) {
         return ret;
     }
 
-    // Set Property 0x0200 to 0x8000 (enable digital audio IO block) unconditionally
-    cmd[0] = SI468X_CMD_SET_PROPERTY;
-    cmd[1] = 0x00;
-    cmd[2] = 0x02;
-    cmd[3] = 0x00;
-    cmd[4] = 0x80;
-    cmd[5] = 0x00;
-    ret = send_command(cmd, 6, nullptr, 0);
-    if (ret != SI468X_SUCCESS) {
-        return ret;
+    if (enable_i2s) {
+        // Set Property 0x0200 to 0x8000 (enable digital audio IO block) unconditionally
+        cmd[0] = SI468X_CMD_SET_PROPERTY;
+        cmd[1] = 0x00;
+        cmd[2] = 0x02;
+        cmd[3] = 0x00;
+        cmd[4] = 0x80;
+        cmd[5] = 0x00;
+        ret = send_command(cmd, 6, nullptr, 0);
+        if (ret != SI468X_SUCCESS) {
+            return ret;
+        }
+
+        // Set Property 0x0202 to 0x1000 (digital audio format select) unconditionally
+        cmd[0] = SI468X_CMD_SET_PROPERTY;
+        cmd[1] = 0x00;
+        cmd[2] = 0x02;
+        cmd[3] = 0x02;
+        cmd[4] = 0x10;
+        cmd[5] = 0x00;
+        ret = send_command(cmd, 6, nullptr, 0);
     }
-
-    // Set Property 0x0202 to 0x1000 (digital audio format select) unconditionally
-    cmd[0] = SI468X_CMD_SET_PROPERTY;
-    cmd[1] = 0x00;
-    cmd[2] = 0x02;
-    cmd[3] = 0x02;
-    cmd[4] = 0x10;
-    cmd[5] = 0x00;
-    ret = send_command(cmd, 6, nullptr, 0);
-
     return ret;
 }
