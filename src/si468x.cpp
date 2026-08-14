@@ -511,28 +511,22 @@ int si468x_get_ensemble_info(char* label, uint16_t* ueid)
         *ueid = resp[5] | ((uint16_t)resp[6] << 8);
     }
 
-    // Extract Ensemble Label (16 bytes starting at resp[6], skip SICharset if < 0x20)
-    int start_offset = (resp[6] < 0x20) ? 7 : 6;
-    int len_to_copy = (resp[6] < 0x20) ? 15 : 16;
-
-    std::memcpy(label, &resp[start_offset], len_to_copy);
-    label[len_to_copy] = '\0';
+    // Extract Ensemble Label (16 bytes starting exactly at resp[7] past 16-bit Ensemble ID)
+    std::memcpy(label, &resp[7], 16);
+    label[16] = '\0';
     return 0;
 }
 
 int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint8_t* subchannel_id)
 {
-    // Write 12-byte command: Opcode 0xBB + Service ID + Component ID
+    // Write 12-byte command: Opcode 0xBB + Service ID + SCIdS (component index 0-based within service)
     uint8_t cmd[12] = {
         0xBB, 0x00, 0x00, 0x00,
         (uint8_t)(service_id & 0xFF),
         (uint8_t)((service_id >> 8) & 0xFF),
         (uint8_t)((service_id >> 16) & 0xFF),
         (uint8_t)((service_id >> 24) & 0xFF),
-        (uint8_t)(component_id & 0xFF),
-        (uint8_t)((component_id >> 8) & 0xFF),
-        (uint8_t)((component_id >> 16) & 0xFF),
-        (uint8_t)((component_id >> 24) & 0xFF)
+        0x00, 0x00, 0x00, 0x00 // Pass primary component index 0 dynamically (SCIdS)
     };
     uint8_t resp[29];
     std::memset(resp, 0, sizeof(resp));
@@ -625,18 +619,10 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         // 2. Number of Components (offset 5, low 4 bits)
         uint8_t num_components = resp[offset + 5] & 0x0F;
 
-        // 3. Label: 16-character array (offset 8-23)
-        char service_label[17];
-        std::memcpy(service_label, &resp[offset + 8], 16);
-        service_label[16] = '\0';
-
-        // 4. Subchannel ID (SubChId) is stored at offset 24
-        uint8_t subchannel_id = resp[offset + 24];
-
         // Offset advancement past the 24-byte Service Header
         offset += 24;
 
-        // 5. Parse Components of this service
+        // 3. Parse Components of this service
         for (int c = 0; c < num_components; c++) {
             if (offset + 4 > full_resp_len) {
                 break;
@@ -648,27 +634,28 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
 
             // Store the first audio component of the service in our output list
             if (c == 0) {
-                list[services_count].service_id = service_id;
-                list[services_count].component_id = component_id;
-                list[services_count].audio_type = subchannel_id; // Reuse audio_type to pass Subchannel ID cleanly!
-                list[services_count].bitrate = 0;                // Resolved dynamically during playback
+                char dynamic_label[17];
+                char dynamic_short_label[9];
+                uint8_t subchannel_id = 0;
 
-                std::strncpy(list[services_count].label, service_label, 16);
-                list[services_count].label[16] = '\0';
+                std::memset(dynamic_label, 0, sizeof(dynamic_label));
+                std::memset(dynamic_short_label, 0, sizeof(dynamic_short_label));
 
-                // Generate clean fallback short label dynamically (welle.io logic: copy 8 chars and strip trailing spaces)
-                std::strncpy(list[services_count].short_label, service_label, 8);
-                list[services_count].short_label[8] = '\0';
-                for (int len = 7; len >= 0; len--) {
-                    if (list[services_count].short_label[len] == ' ') {
-                        list[services_count].short_label[len] = '\0';
-                    }
-                    else {
-                        break;
-                    }
+                // Dynamically fetch actual over-the-air labels and subchannel parameters using 0xBB (SCIdS = 0)!
+                if (si468x_get_component_info(service_id, 0, dynamic_label, dynamic_short_label, &subchannel_id) == 0) {
+                    list[services_count].service_id = service_id;
+                    list[services_count].component_id = component_id;
+                    list[services_count].audio_type = subchannel_id; // Reuse audio_type to pass Subchannel ID cleanly!
+                    list[services_count].bitrate = 0;                // Resolved dynamically during playback
+
+                    std::strncpy(list[services_count].label, dynamic_label, 16);
+                    list[services_count].label[16] = '\0';
+
+                    std::strncpy(list[services_count].short_label, dynamic_short_label, 8);
+                    list[services_count].short_label[8] = '\0';
+
+                    services_count++;
                 }
-
-                services_count++;
             }
 
             offset += 4; // Component Entry is 4 bytes
