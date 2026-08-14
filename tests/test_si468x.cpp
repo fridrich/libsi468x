@@ -72,6 +72,27 @@ static bool test_initialization_failure()
     return true;
 }
 
+static bool test_api_signatures_uninitialized()
+{
+    std::cout << "Running test: test_api_signatures_uninitialized..." << std::endl;
+
+    char label[17];
+    char short_label[9];
+    uint8_t subchannel_id = 0;
+
+    // 1. Verify si468x_get_component_info signature and uninitialized failure
+    int ret_comp = si468x_get_component_info(0xf226, 6, label, short_label, &subchannel_id);
+    ASSERT_TRUE(ret_comp == -1, "si468x_get_component_info must fail safely when uninitialized");
+
+    // 2. Verify si468x_get_dls_text signature and uninitialized failure
+    char dls_text[129];
+    int ret_dls = si468x_get_dls_text(dls_text, sizeof(dls_text));
+    ASSERT_TRUE(ret_dls == -2, "si468x_get_dls_text must fail safely when uninitialized");
+
+    std::cout << "PASS: test_api_signatures_uninitialized" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -82,6 +103,7 @@ int main()
 
     success &= test_short_label_decoding();
     success &= test_initialization_failure();
+    success &= test_api_signatures_uninitialized();
 
     std::cout << "========================================" << std::endl;
     if (success) {
