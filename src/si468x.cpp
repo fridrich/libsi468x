@@ -49,6 +49,11 @@ static bool gpio_init(int pin)
         return false;
     }
     pinMode(pin, OUTPUT);
+
+    // Configure BCM GPIO 7 (CE1) as an input with PUD_UP (pull-up)
+    // to hold secondary chip select high, resolving bus contention
+    pinMode(7, INPUT);
+    pullUpDnControl(7, PUD_UP);
     return true;
 #else
     std::clog << "libsi468x: Compiling in mock GPIO mode (wiringPi absent)." << std::endl;
@@ -381,10 +386,10 @@ int si468x_set_frequency(uint32_t frequency_hz)
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_DAB_TUNE_FREQ;
     cmd[1] = 0x00;
-    cmd[2] = 0x00;
+    cmd[2] = freq_index; // Pass the frequency index at Byte 2 (matches reference binary)
     cmd[3] = 0x00;
     cmd[4] = 0x00;
-    cmd[5] = freq_index; // Pass the frequency index
+    cmd[5] = 0x00;
 
     if (send_command(cmd, 6, nullptr, 0, 5000) != SI468X_SUCCESS) {
         return SI468X_ERROR_SPI;
