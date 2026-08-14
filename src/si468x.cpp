@@ -523,13 +523,13 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
               << std::hex << service_id << ", CompId: " << std::dec << component_id << ")..." << std::endl;
 
     // Build 12-byte command packet matching native binary exactly:
-    // - Byte 0: Opcode 0xB3 (START_DIGITAL)
+    // - Byte 0: Opcode 0x81 (START_SERVICE)
     // - Byte 1: SCIdS index (try 0 first, if fails try 1)
     // - Byte 2..3: 0x00 (reserved)
     // - Byte 4..7: Service ID (32-bit Little-Endian)
     // - Byte 8..11: Global Component ID (32-bit Little-Endian)
     uint8_t cmd[12] = {
-        0xB3, 0x00, 0x00, 0x00,
+        SI468X_CMD_START_DIGITAL, 0x00, 0x00, 0x00,
         (uint8_t)(service_id & 0xFF),
         (uint8_t)((service_id >> 8) & 0xFF),
         (uint8_t)((service_id >> 16) & 0xFF),
@@ -564,9 +564,9 @@ int si468x_stop_service(void)
 {
     std::clog << "libsi468x: Stopping service playback..." << std::endl;
 
-    // Build 12-byte STOP_DIGITAL command matching native binary exactly (using opcode 0xB4)
+    // Build 12-byte STOP_DIGITAL command matching native binary exactly (using opcode 0x82)
     uint8_t cmd[12] = {
-        0xB4, 0x00, 0x00, 0x00,
+        SI468X_CMD_STOP_DIGITAL, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00
     };
