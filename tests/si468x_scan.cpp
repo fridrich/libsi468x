@@ -205,6 +205,13 @@ int main(int argc, char** argv)
                             std::cout << " | PlayLabel: '" << play_comp_label << "' (" << play_comp_short << ") | SubChId: " << (int)play_subchannel_id;
                         }
                         std::cout << std::endl;
+
+                        // Query and display any live DLS scrolling text (song/track info) dynamically!
+                        char dls_text[129];
+                        int dls_ret = si468x_get_dls_text(dls_text, sizeof(dls_text));
+                        if (dls_ret > 0) {
+                            std::cout << "        [DLS UPDATE] " << dls_text << std::endl;
+                        }
                     }
                 }
 
