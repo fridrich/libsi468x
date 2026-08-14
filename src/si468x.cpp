@@ -32,6 +32,7 @@
 static int spi_fd = -1;
 static int rst_gpio_pin = -1;
 static uint32_t active_frequency = 0;
+static int active_audio_mode = 0; // 0 = Analog Only, 1 = I2S Digital
 
 /* Low-level GPIO RSTB management */
 static bool gpio_init(int pin)
@@ -170,11 +171,19 @@ static int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_
         return SI468X_ERROR_TIMEOUT;
     }
 
-    // 3. Read the response payload if requested
+    // 3. Read the response payload. If none was requested, always read a 7-byte dummy response
+    // to cleanly flush the co-processor's SPI transmit FIFO and prevent bus blockages!
     if (resp && resp_len > 0) {
         std::vector<uint8_t> tx_dummy(resp_len, 0x00);
         std::memset(resp, 0, resp_len);
         if (spi_transfer(tx_dummy.data(), resp, resp_len) < 0) {
+            return SI468X_ERROR_SPI;
+        }
+    }
+    else {
+        uint8_t dummy_resp[7];
+        uint8_t tx_dummy[7] = { 0x00 };
+        if (spi_transfer(tx_dummy, dummy_resp, 7) < 0) {
             return SI468X_ERROR_SPI;
         }
     }
@@ -266,9 +275,12 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     }
 #endif
 
-    // 4. Send POWER_UP (0x01) with reference crystal and clock dividers
-    uint8_t power_up_cmd[5] = { SI468X_CMD_POWER_UP, 0x00, 0x1F, 0x7F, 0x00 };
-    if (send_command(power_up_cmd, 5, nullptr, 0) != SI468X_SUCCESS) {
+    // 4. Send POWER_UP (0x01) with complete 16-byte reference crystal and clock configuration (matches radio_cli)
+    uint8_t power_up_cmd[16] = {
+        SI468X_CMD_POWER_UP, 0x00, 0x1F, 0x7F, 0x00,
+        0xF8, 0x24, 0x01, 0x20, 0x10, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00
+    };
+    if (send_command(power_up_cmd, 16, nullptr, 0) != SI468X_SUCCESS) {
         si468x_shutdown();
         return SI468X_ERROR_TIMEOUT;
     }
@@ -324,9 +336,9 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     // Wait for the on-chip application operating system to boot and stabilize
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
 
-    // Enable I2S digital output by default upon system init
-    if (si468x_set_audio_output(1) != SI468X_SUCCESS) {
-        std::cerr << "libsi468x: Warning: Failed to configure default I2S output." << std::endl;
+    // Enable default audio output upon system init
+    if (si468x_set_audio_output(active_audio_mode) != SI468X_SUCCESS) {
+        std::cerr << "libsi468x: Warning: Failed to configure default audio output." << std::endl;
     }
 
     // Diagnostic query: Print raw chip revision info over SPI
@@ -510,25 +522,71 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
     std::clog << "libsi468x: Starting service playback (SId: 0x"
               << std::hex << service_id << ", CompId: " << std::dec << component_id << ")..." << std::endl;
 
-    uint8_t cmd[9];
-    cmd[0] = SI468X_CMD_START_DIGITAL;
-    cmd[1] = 0x00;
-    cmd[2] = (service_id >> 24) & 0xFF;
-    cmd[3] = (service_id >> 16) & 0xFF;
-    cmd[4] = (service_id >> 8) & 0xFF;
-    cmd[5] = service_id & 0xFF;
-    cmd[6] = (component_id >> 16) & 0xFF;
-    cmd[7] = (component_id >> 8) & 0xFF;
-    cmd[8] = component_id & 0xFF;
+    // Build 12-byte command packet matching native binary exactly:
+    // - Byte 0: Opcode 0x81 (START_SERVICE)
+    // - Byte 1: SCIdS index (try 0 first, if fails try 1)
+    // - Byte 2..3: 0x00 (reserved)
+    // - Byte 4..7: Service ID (32-bit Little-Endian)
+    // - Byte 8..11: Global Component ID (32-bit Little-Endian)
+    uint8_t cmd[12] = {
+        SI468X_CMD_START_DIGITAL, 0x00, 0x00, 0x00,
+        (uint8_t)(service_id & 0xFF),
+        (uint8_t)((service_id >> 8) & 0xFF),
+        (uint8_t)((service_id >> 16) & 0xFF),
+        (uint8_t)((service_id >> 24) & 0xFF),
+        (uint8_t)(component_id & 0xFF),
+        (uint8_t)((component_id >> 8) & 0xFF),
+        (uint8_t)((component_id >> 16) & 0xFF),
+        (uint8_t)((component_id >> 24) & 0xFF)
+    };
 
-    return send_command(cmd, 9, nullptr, 0);
+    // Send first attempt with SCIdS = 0 (reads 0 response parameter bytes, matches radio_cli!)
+    int ret = send_command(cmd, 12, nullptr, 0);
+    std::clog << "libsi468x: START_DIGITAL (SCIdS 0) ret: " << ret << std::endl;
+
+    if (ret != SI468X_SUCCESS) {
+        // Try fallback attempt with SCIdS = 1 just like native play_station()
+        cmd[1] = 0x01;
+        ret = send_command(cmd, 12, nullptr, 0);
+        std::clog << "libsi468x: START_DIGITAL (SCIdS 1) ret: " << ret << std::endl;
+    }
+
+    if (ret == SI468X_SUCCESS) {
+        // Re-apply the active configured audio output path upon service play
+        si468x_set_audio_output(active_audio_mode);
+        return SI468X_SUCCESS;
+    }
+
+    return SI468X_ERROR_SPI;
 }
 
 int si468x_stop_service(void)
 {
     std::clog << "libsi468x: Stopping service playback..." << std::endl;
-    uint8_t cmd[1] = { SI468X_CMD_STOP_DIGITAL };
-    return send_command(cmd, 1, nullptr, 0);
+
+    // Build 12-byte STOP_DIGITAL command matching native binary exactly (using opcode 0x82)
+    uint8_t cmd[12] = {
+        SI468X_CMD_STOP_DIGITAL, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00
+    };
+
+    // Send first attempt with SCIdS = 0 (reads 0 response parameter bytes, matches radio_cli!)
+    int ret = send_command(cmd, 12, nullptr, 0);
+    std::clog << "libsi468x: STOP_DIGITAL (SCIdS 0) ret: " << ret << std::endl;
+
+    if (ret != SI468X_SUCCESS) {
+        // Try fallback attempt with SCIdS = 1 just like native play_station()
+        cmd[1] = 0x01;
+        ret = send_command(cmd, 12, nullptr, 0);
+        std::clog << "libsi468x: STOP_DIGITAL (SCIdS 1) ret: " << ret << std::endl;
+    }
+
+    if (ret == SI468X_SUCCESS) {
+        return SI468X_SUCCESS;
+    }
+
+    return SI468X_ERROR_SPI;
 }
 
 int si468x_set_volume(uint8_t volume)
@@ -546,7 +604,18 @@ int si468x_set_volume(uint8_t volume)
     cmd[4] = 0x00;
     cmd[5] = volume;
 
-    return send_command(cmd, 6, nullptr, 0);
+    uint8_t resp[7];
+    std::memset(resp, 0, sizeof(resp));
+
+    // Capture and print the raw 7-byte response parameters for maximum debugging visibility
+    int ret = send_command(cmd, 6, resp, 7);
+    std::clog << "libsi468x: SET_VOLUME Property 0x0300 Raw Response: ";
+    for (int i = 0; i < 7; i++) {
+        std::clog << "0x" << std::hex << (int)resp[i] << " ";
+    }
+    std::clog << std::dec << " (ret: " << ret << ")" << std::endl;
+
+    return ret;
 }
 
 void si468x_decode_short_label(const char* long_label, uint16_t char_mask, char* short_label)
@@ -606,7 +675,16 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
     uint8_t resp[29];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 12, resp, 29) != SI468X_SUCCESS) {
+    int ret = send_command(cmd, 12, resp, 29);
+
+    std::clog << "libsi468x: GET_COMPONENT_INFO (SId: 0x" << std::hex << service_id
+              << ", CompId: " << std::dec << component_id << ") ret: " << ret << " Raw Resp: ";
+    for (int i = 0; i < 29; i++) {
+        std::clog << "0x" << std::hex << (int)resp[i] << " ";
+    }
+    std::clog << std::dec << std::endl;
+
+    if (ret != SI468X_SUCCESS) {
         return -1;
     }
 
@@ -774,8 +852,8 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
     // resp[4]    : Response parameter Byte 0 (state/status)
     // resp[5]    : Response parameter Byte 1 (digital status: Bit 1 is SYNC, Bit 2 is FIC_SYNC)
     // resp[6]    : Response parameter Byte 2 (acq status: Bit 2 is ACQ)
-    // resp[19]   : Response parameter Byte 15 (RSSI in dBuV)
-    // resp[20]   : Response parameter Byte 16 (SNR in dB)
+    // resp[7]    : Response parameter Byte 3 (RSSI value in dBuV!)
+    // resp[10]   : Response parameter Byte 6 (SNR value in dB!)
     // resp[21..22] : Response parameter Byte 17-18 (Antenna Tuning Cap)
     std::clog << "libsi468x: Raw DIGRAD_STATUS: ";
     for (int i = 0; i < 28; i++) {
@@ -783,8 +861,8 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
     }
     std::clog << std::dec << std::endl;
 
-    status->rssi = resp[19];
-    status->snr = resp[20];
+    status->rssi = resp[7];  // Aligned with native binary offset (Byte 3)
+    status->snr = resp[10];  // Aligned with native binary offset (Byte 6)
     status->freq_offset = 0; // Handled as secondary telemetry
 
     // Lock achieved if OFDM Frame Sync (Bit 1 of Byte 1), FIC Sync (Bit 2 of Byte 1),
@@ -796,16 +874,17 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
 
 int si468x_set_audio_output(int enable_i2s)
 {
+    active_audio_mode = enable_i2s;
     std::clog << "libsi468x: Configuring audio output path (I2S: " << enable_i2s << ")..." << std::endl;
 
-    // Set Property 0x0800 (output pin config enable)
+    // Set Property 0x0800 to 0x0002 for I2S only, or 0x0001 for Analog Only (matches radio_cli exactly)
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
     cmd[2] = 0x08;
     cmd[3] = 0x00;
     cmd[4] = 0x00;
-    cmd[5] = enable_i2s ? 0x02 : 0x01; // 0x02 = Digital I2S, 0x01 = Analog
+    cmd[5] = enable_i2s ? 0x02 : 0x01; // 0x02 = I2S only, 0x01 = Analog Only
 
     int ret = send_command(cmd, 6, nullptr, 0);
     if (ret != SI468X_SUCCESS) {
@@ -813,19 +892,19 @@ int si468x_set_audio_output(int enable_i2s)
     }
 
     if (enable_i2s) {
-        // Set Property 0x0200 to 0x8000 (enable digital audio IO block)
+        // Set Property 0x0200 to 0x8000 (enable digital audio IO block as I2S Slave, matches radio_cli exactly!)
         cmd[0] = SI468X_CMD_SET_PROPERTY;
         cmd[1] = 0x00;
         cmd[2] = 0x02;
         cmd[3] = 0x00;
-        cmd[4] = 0x80;
+        cmd[4] = 0x80; // Bit 15 (I2S Enable) = 1, Bit 14 (I2S Master) = 0
         cmd[5] = 0x00;
         ret = send_command(cmd, 6, nullptr, 0);
         if (ret != SI468X_SUCCESS) {
             return ret;
         }
 
-        // Set Property 0x0202 to 0x1000 (digital audio format select)
+        // Set Property 0x0202 to 0x1000 (digital audio format select) unconditionally
         cmd[0] = SI468X_CMD_SET_PROPERTY;
         cmd[1] = 0x00;
         cmd[2] = 0x02;
@@ -833,9 +912,6 @@ int si468x_set_audio_output(int enable_i2s)
         cmd[4] = 0x10;
         cmd[5] = 0x00;
         ret = send_command(cmd, 6, nullptr, 0);
-        if (ret != SI468X_SUCCESS) {
-            return ret;
-        }
     }
-    return SI468X_SUCCESS;
+    return ret;
 }
