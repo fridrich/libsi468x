@@ -148,15 +148,15 @@ static bool wait_for_cts(int timeout_ms = 1000, bool suppress_errors = false)
 }
 
 /* Transmit a command packet and wait for response */
-static int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_len)
+static int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_len, int timeout_ms = 1000)
 {
     // Write command
     if (spi_transfer(cmd, nullptr, cmd_len) < 0) {
         return SI468X_ERROR_SPI;
     }
 
-    // Wait for CTS
-    if (!wait_for_cts()) {
+    // Wait for CTS with configurable timeout
+    if (!wait_for_cts(timeout_ms)) {
         return SI468X_ERROR_TIMEOUT;
     }
 
@@ -379,7 +379,7 @@ int si468x_set_frequency(uint32_t frequency_hz)
     cmd[4] = 0x00;
     cmd[5] = freq_index; // Pass the frequency index
 
-    if (send_command(cmd, 6, nullptr, 0) != SI468X_SUCCESS) {
+    if (send_command(cmd, 6, nullptr, 0, 5000) != SI468X_SUCCESS) {
         return SI468X_ERROR_SPI;
     }
 
@@ -388,13 +388,13 @@ int si468x_set_frequency(uint32_t frequency_hz)
     for (int i = 0; i < 50; i++) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-        // Poll signal status quietly
-        uint8_t stat_cmd[1] = { SI468X_CMD_DAB_DIGRAD_STATUS };
+        // Poll signal status (2-byte packet: Opcode + INTACK)
+        uint8_t stat_cmd[2] = { SI468X_CMD_DAB_DIGRAD_STATUS, 0x00 };
         std::vector<uint8_t> resp(12, 0x00);
 
         // We bypass the global send_command here to ignore 0xc0 Command Errors,
         // as the chip routinely rejects status queries while actively seeking RF lock.
-        spi_transfer(stat_cmd, nullptr, 1);
+        spi_transfer(stat_cmd, nullptr, 2);
         if (wait_for_cts(100, true)) {
             std::vector<uint8_t> tx_dummy(12, 0x00);
             if (spi_transfer(tx_dummy.data(), resp.data(), 12) == 0) {
@@ -578,10 +578,11 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
         return -1;
     }
 
-    uint8_t cmd[1] = { SI468X_CMD_DAB_DIGRAD_STATUS };
+    // 2-byte packet required (Opcode + INTACK)
+    uint8_t cmd[2] = { SI468X_CMD_DAB_DIGRAD_STATUS, 0x00 };
     std::vector<uint8_t> resp(12, 0x00); // 4 status/padding bytes + 8 response parameter bytes
 
-    if (send_command(cmd, 1, resp.data(), 12) != SI468X_SUCCESS) {
+    if (send_command(cmd, 2, resp.data(), 12) != SI468X_SUCCESS) {
         // Return simulated parameters if physical bus is closed (mock fallback)
         if (spi_fd < 0) {
             status->rssi = 45;       // 45 dBuV (decent signal)
