@@ -613,6 +613,13 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
             break;    // Buffer boundary safety guard
         }
 
+        // Print raw 24-byte service header in raw hex to clog
+        std::clog << "libsi468x: Raw Service Header " << i + 1 << " Hex: ";
+        for (int b = 0; b < 24; b++) {
+            std::clog << "0x" << std::hex << (int)resp[offset + b] << " ";
+        }
+        std::clog << std::dec << std::endl;
+
         // 1. Service ID (SId): 32-bit Little Endian (offset 0-3)
         uint32_t service_id = resp[offset] |
                               ((uint32_t)resp[offset + 1] << 8) |
