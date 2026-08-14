@@ -442,15 +442,8 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         return 0;
     }
 
-    // Parse the Silicon Labs Si468x raw service database payload.
-    //
-    // Response layout:
-    // resp[0] : Status byte
-    // resp[1] : Response code
-    // resp[2] : Service List Version
-    // resp[3] : Number of Services (active station count decoded by hardware)
-
-    uint8_t num_services = resp[3];
+    // Shift index by 4 to bypass the 4-byte SPI status/padding overhead
+    uint8_t num_services = resp[7];
     std::clog << "libsi468x: Chip reported " << (int)num_services << " active services." << std::endl;
 
     if (num_services == 0) {
@@ -458,7 +451,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
     }
 
     int services_count = 0;
-    size_t offset = 4; // Data payload starts at index 4
+    size_t offset = 8; // Data payload starts at index 8 after 4 status/padding + 4 header bytes
 
     for (int i = 0; i < num_services; i++) {
         if (services_count >= max_services) {
@@ -533,9 +526,9 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
     }
 
     uint8_t cmd[1] = { SI468X_CMD_DAB_DIGRAD_STATUS };
-    std::vector<uint8_t> resp(8, 0x00);
+    std::vector<uint8_t> resp(12, 0x00); // 4 status/padding bytes + 8 response parameter bytes
 
-    if (send_command(cmd, 1, resp.data(), 8) != SI468X_SUCCESS) {
+    if (send_command(cmd, 1, resp.data(), 12) != SI468X_SUCCESS) {
         // Return simulated parameters if physical bus is closed (mock fallback)
         if (spi_fd < 0) {
             status->rssi = 45;       // 45 dBuV (decent signal)
@@ -548,16 +541,17 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
     }
 
     // Parse DAB_DIGRAD_STATUS Response:
-    // resp[0] : Status byte
-    // resp[1] : Response code
-    // resp[2] : RSSI in dBµV
-    // resp[3] : SNR in dB
-    // resp[4-5] : Frequency Offset in kHz (Big Endian signed 16-bit)
-    // resp[6] : Sync status (Bit 0 is SYNC flag)
-    status->rssi = resp[2];
-    status->snr = resp[3];
-    status->freq_offset = (int16_t)(((uint16_t)resp[4] << 8) | resp[5]);
-    status->sync_status = (resp[6] & 0x01);
+    // resp[0..3] : SPI status and padding bytes (Byte 0 is STATUS, Bytes 1-3 is padding)
+    // resp[4]    : Response parameter Byte 0 (state/status)
+    // resp[5]    : Response parameter Byte 1 (digital status)
+    // resp[6]    : Response parameter Byte 2 (RSSI in dBuV)
+    // resp[7]    : Response parameter Byte 3 (SNR in dB)
+    // resp[8..9] : Response parameter Byte 4-5 (Frequency Offset in kHz, Big Endian signed 16-bit)
+    // resp[10]   : Response parameter Byte 6 (Sync status: Bit 0 is SYNC flag)
+    status->rssi = resp[6];
+    status->snr = resp[7];
+    status->freq_offset = (int16_t)(((uint16_t)resp[8] << 8) | resp[9]);
+    status->sync_status = (resp[10] & 0x01);
 
     return SI468X_SUCCESS;
 }
