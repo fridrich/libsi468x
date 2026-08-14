@@ -34,6 +34,8 @@ static int rst_gpio_pin = -1;
 static uint32_t active_frequency = 0;
 static int active_audio_mode = 0; // 0 = Analog Only, 1 = I2S Digital
 
+static int si468x_enable_service_data(void);
+
 /* Low-level GPIO RSTB management */
 static bool gpio_init(int pin)
 {
@@ -144,8 +146,8 @@ static int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_
         if (spi_transfer(poll_tx, poll_rx, 7) == 0) {
             // poll_rx[1] is the co-processor's status byte; Bit 7 (0x80) is the CTS flag
             if (poll_rx[1] & 0x80) {
-                // Check for Command Error (ERR bit 6)
-                if (poll_rx[1] & 0x40) {
+                // Check for Command Error (ERR bit 6), silencing expected queue-empty codes for 0x84/0xBB/0x80
+                if ((poll_rx[1] & 0x40) && cmd && cmd[0] != 0x84 && cmd[0] != 0xBB && cmd[0] != 0x80) {
                     std::cerr << "libsi468x: WARNING: Command Error (Status: 0x"
                               << std::hex << (int)poll_rx[1] << std::dec << ")" << std::endl;
                 }
@@ -341,6 +343,9 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         std::cerr << "libsi468x: Warning: Failed to configure default audio output." << std::endl;
     }
 
+    // Enable the co-processor's PAD/XPAD service data decoder upon system init (before playback starts)
+    si468x_enable_service_data();
+
     // Diagnostic query: Print raw chip revision info over SPI
     uint8_t rev_cmd[1] = { 0x10 };
     uint8_t rev_resp[16];
@@ -517,6 +522,43 @@ uint32_t si468x_get_frequency(void)
     return active_frequency;
 }
 
+static int si468x_enable_service_data(void)
+{
+    std::clog << "libsi468x: Enabling on-chip PAD/XPAD decoder (Properties 0xB200-0xB204)..." << std::endl;
+    uint8_t cmd[6];
+
+    // Set Property 0xB200 to 0x003F (63) to enable PAD/XPAD decoding
+    cmd[0] = SI468X_CMD_SET_PROPERTY;
+    cmd[1] = 0x00;
+    cmd[2] = 0xB2;
+    cmd[3] = 0x00;
+    cmd[4] = 0x00;
+    cmd[5] = 0x3F;
+    send_command(cmd, 6, nullptr, 0);
+
+    // Set Property 0xB201 to 0x000C (12)
+    cmd[3] = 0x01;
+    cmd[4] = 0x00;
+    cmd[5] = 0x0C;
+    send_command(cmd, 6, nullptr, 0);
+
+    // Set Property 0xB202 to 0x07D0 (2000)
+    cmd[3] = 0x02;
+    cmd[4] = 0x07;
+    cmd[5] = 0xD0;
+    send_command(cmd, 6, nullptr, 0);
+
+    // Set Property 0xB203 to 0x07D0 (2000)
+    cmd[3] = 0x03;
+    send_command(cmd, 6, nullptr, 0);
+
+    // Set Property 0xB204 to 0x07D0 (2000)
+    cmd[3] = 0x04;
+    send_command(cmd, 6, nullptr, 0);
+
+    return SI468X_SUCCESS;
+}
+
 int si468x_play_service(uint32_t service_id, uint32_t component_id)
 {
     std::clog << "libsi468x: Starting service playback (SId: 0x"
@@ -554,6 +596,10 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
     if (ret == SI468X_SUCCESS) {
         // Re-apply the active configured audio output path upon service play
         si468x_set_audio_output(active_audio_mode);
+
+        // Turn on the on-chip PAD/XPAD decoder so that DLS text and MOT slideshow are dynamically decoded
+        si468x_enable_service_data();
+
         return SI468X_SUCCESS;
     }
 
@@ -906,4 +952,56 @@ int si468x_set_audio_output(int enable_i2s)
         ret = send_command(cmd, 6, nullptr, 0);
     }
     return ret;
+}
+
+int si468x_get_dls_text(char* out_text, int max_len)
+{
+    if (!out_text || max_len <= 0) {
+        return -1;
+    }
+
+    // Command 0x84 (DAB_GET_DIGITAL_SERVICE_DATA) with parameter 0x01 (DLS Text)
+    uint8_t cmd[2] = { 0x84, 0x01 };
+    std::vector<uint8_t> resp(2073, 0x00);
+
+    if (send_command(cmd, 2, resp.data(), 2073) != SI468X_SUCCESS) {
+        return -2;
+    }
+
+    // Check DLS presence flag (Bit 0 of resp[5])
+    bool dls_present = resp[5] & 0x01;
+    if (!dls_present) {
+        out_text[0] = '\0';
+        return 0; // No active DLS text present
+    }
+
+    // Extract DLS length (16-bit Little-Endian word at resp[19..20])
+    uint16_t dls_len = resp[19] | ((uint16_t)resp[20] << 8);
+
+    // The first 2 bytes (resp[25] and resp[26]) are DLS Control Bytes (header)
+    // The actual text characters start at resp[27]
+    if (dls_len <= 2 || dls_len > 130) {
+        out_text[0] = '\0';
+        return 0; // No active DLS text in the queue
+    }
+
+    uint16_t text_len = dls_len - 2;
+
+    if (text_len >= max_len) {
+        text_len = max_len - 1;
+    }
+
+    // Dynamic UTF-8 DLS string payload starts exactly at resp[27] (bypassing control header)
+    std::memcpy(out_text, &resp[27], text_len);
+    out_text[text_len] = '\0';
+
+    static std::string last_dls_text = "";
+    std::string current_dls(out_text);
+
+    if (current_dls != last_dls_text) {
+        last_dls_text = current_dls;
+        return 1; // New/updated DLS text available!
+    }
+
+    return 0; // DLS has not changed
 }
