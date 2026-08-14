@@ -170,11 +170,19 @@ static int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_
         return SI468X_ERROR_TIMEOUT;
     }
 
-    // 3. Read the response payload if requested
+    // 3. Read the response payload. If none was requested, always read a 7-byte dummy response
+    // to cleanly flush the co-processor's SPI transmit FIFO and prevent bus blockages!
     if (resp && resp_len > 0) {
         std::vector<uint8_t> tx_dummy(resp_len, 0x00);
         std::memset(resp, 0, resp_len);
         if (spi_transfer(tx_dummy.data(), resp, resp_len) < 0) {
+            return SI468X_ERROR_SPI;
+        }
+    }
+    else {
+        uint8_t dummy_resp[7];
+        uint8_t tx_dummy[7] = { 0x00 };
+        if (spi_transfer(tx_dummy, dummy_resp, 7) < 0) {
             return SI468X_ERROR_SPI;
         }
     }
@@ -558,13 +566,13 @@ int si468x_stop_service(void)
 
     // Send first attempt with SCIdS = 0
     int ret = send_command(cmd, 12, nullptr, 0);
-    if (ret == SI468X_SUCCESS) {
-        return SI468X_SUCCESS;
+    if (ret != SI468X_SUCCESS) {
+        // Try fallback attempt with SCIdS = 1 just like native play_station()
+        cmd[1] = 0x01;
+        ret = send_command(cmd, 12, nullptr, 0);
     }
 
-    // Try fallback attempt with SCIdS = 1 just like native play_station()
-    cmd[1] = 0x01;
-    return send_command(cmd, 12, nullptr, 0);
+    return ret;
 }
 
 int si468x_set_volume(uint8_t volume)
