@@ -220,7 +220,7 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
 
     // 3. Open SPI Bus
 #ifdef HAVE_WIRINGPI
-    spi_fd = wiringPiSPISetup(0, 10000000); // 10 MHz
+    spi_fd = wiringPiSPISetup(0, 32000000); // 32 MHz (matches radio_cli exactly)
     if (spi_fd < 0) {
         std::cerr << "libsi468x: Error opening SPI bus via wiringPi!" << std::endl;
         gpio_shutdown();
@@ -299,6 +299,18 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     // Enable I2S digital output by default upon system init
     if (si468x_set_audio_output(1) != SI468X_SUCCESS) {
         std::cerr << "libsi468x: Warning: Failed to configure default I2S output." << std::endl;
+    }
+
+    // Diagnostic query: Print raw chip revision info over SPI
+    uint8_t rev_cmd[1] = { 0x10 };
+    uint8_t rev_resp[16];
+    std::memset(rev_resp, 0, sizeof(rev_resp));
+    if (send_command(rev_cmd, 1, rev_resp, 16) == SI468X_SUCCESS) {
+        std::clog << "libsi468x: Raw GET_REV_INFO Response: ";
+        for (int i = 0; i < 16; i++) {
+            std::clog << "0x" << std::hex << (int)rev_resp[i] << " ";
+        }
+        std::clog << std::dec << std::endl;
     }
 
     std::clog << "libsi468x: Boot complete. Chip running successfully!" << std::endl;
