@@ -902,12 +902,12 @@ int si468x_set_audio_output(int enable_i2s)
     }
 
     if (enable_i2s) {
-        // Set Property 0x0200 to 0x8000 (enable digital audio IO block) unconditionally
+        // Set Property 0x0200 to 0xC000 (enable digital audio IO block as I2S Master!)
         cmd[0] = SI468X_CMD_SET_PROPERTY;
         cmd[1] = 0x00;
         cmd[2] = 0x02;
         cmd[3] = 0x00;
-        cmd[4] = 0x80;
+        cmd[4] = 0xC0; // Bit 15 (I2S Enable) | Bit 14 (I2S Master)
         cmd[5] = 0x00;
         ret = send_command(cmd, 6, nullptr, 0);
         if (ret != SI468X_SUCCESS) {
