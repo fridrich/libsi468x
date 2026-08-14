@@ -267,6 +267,15 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         return SI468X_ERROR_FIRMWARE;
     }
 
+    // Boot the ROM patch (must be 5 bytes) to transition the chip's internal bootloader
+    std::clog << "libsi468x: Booting ROM patch..." << std::endl;
+    uint8_t boot_cmd_rom[5] = { SI468X_CMD_BOOT, 0x00, 0x00, 0x00, 0x00 };
+    if (send_command(boot_cmd_rom, 5, nullptr, 0) != SI468X_SUCCESS) {
+        si468x_shutdown();
+        return SI468X_ERROR_BOOT;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
     // 6. Select and upload statically embedded Application Firmware
     const unsigned char* app_fw = nullptr;
     unsigned int app_fw_len = 0;
