@@ -36,11 +36,11 @@ static bool write_sysfs(const std::string& path, const std::string& value)
 static bool gpio_init(int pin)
 {
     rst_gpio_pin = pin;
-    
+
     // Export pin
     write_sysfs("/sys/class/gpio/export", std::to_string(pin));
     std::this_thread::sleep_for(std::chrono::milliseconds(50)); // Wait for export
-    
+
     std::string dir_path = "/sys/class/gpio/gpio" + std::to_string(pin) + "/direction";
     if (!write_sysfs(dir_path, "out")) {
         return false;
@@ -206,28 +206,28 @@ int si468x_init(const char* spi_device, int rst_pin, const char* patch_path, con
         ioctl(spi_fd, SPI_IOC_WR_BITS_PER_WORD, &bits) < 0 ||
         ioctl(spi_fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed) < 0) {
         std::cerr << "libsi468x: Error configuring SPI bus parameters!" << std::endl;
-        si_shutdown();
+        si468x_shutdown();
         return SI468X_ERROR_SPI;
     }
 
     // 4. Send POWER_UP (0x01)
     uint8_t power_up_cmd[5] = { SI468X_CMD_POWER_UP, 0x00, 0x00, 0x00, 0x00 };
     if (send_command(power_up_cmd, 5, nullptr, 0) != SI468X_SUCCESS) {
-        si_shutdown();
+        si468x_shutdown();
         return SI468X_ERROR_TIMEOUT;
     }
 
     // 5. Upload ROM Patch
     std::clog << "libsi468x: Loading ROM patch..." << std::endl;
     if (upload_firmware_file(patch_path) != SI468X_SUCCESS) {
-        si_shutdown();
+        si468x_shutdown();
         return SI468X_ERROR_FIRMWARE;
     }
 
     // 6. Upload Application Firmware
     std::clog << "libsi468x: Loading application firmware..." << std::endl;
     if (upload_firmware_file(fw_path) != SI468X_SUCCESS) {
-        si_shutdown();
+        si468x_shutdown();
         return SI468X_ERROR_FIRMWARE;
     }
 
@@ -235,7 +235,7 @@ int si468x_init(const char* spi_device, int rst_pin, const char* patch_path, con
     std::clog << "libsi468x: Booting application image..." << std::endl;
     uint8_t boot_cmd[1] = { SI468X_CMD_BOOT };
     if (send_command(boot_cmd, 1, nullptr, 0) != SI468X_SUCCESS) {
-        si_shutdown();
+        si468x_shutdown();
         return SI468X_ERROR_BOOT;
     }
 
@@ -246,7 +246,7 @@ int si468x_init(const char* spi_device, int rst_pin, const char* patch_path, con
 int si468x_shutdown(void)
 {
     std::clog << "libsi468x: Shutting down chip and releasing bus..." << std::endl;
-    
+
     // Hold in reset
     gpio_set_rst(false);
 
@@ -281,7 +281,7 @@ uint32_t si468x_get_frequency(void)
 
 int si468x_play_service(uint32_t service_id, uint32_t component_id)
 {
-    std::clog << "libsi468x: Starting service playback (SId: 0x" 
+    std::clog << "libsi468x: Starting service playback (SId: 0x"
               << std::hex << service_id << ", CompId: " << std::dec << component_id << ")..." << std::endl;
 
     uint8_t cmd[9];
@@ -335,10 +335,10 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         return 0;
     }
 
-    // In a physical hardware environment, we would parse the raw service database 
+    // In a physical hardware environment, we would parse the raw service database
     // structure returned by the chip's DSP to extract active service components.
     // For this build/checkout phase, we write mock/simulated services to list.
-    
+
     int services_count = 3;
     if (services_count > max_services) services_count = max_services;
 
@@ -347,7 +347,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         list[i].component_id = i;
         list[i].bitrate = 128;
         list[i].audio_type = 1; // DABPlus
-        
+
         std::string label = "Station " + std::to_string(i + 1);
         std::strncpy(list[i].label, label.c_str(), 16);
         list[i].label[16] = '\0';
