@@ -116,6 +116,15 @@ int si468x_get_ensemble_info(char* label, uint16_t* ueid);
  */
 int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint8_t* subchannel_id);
 
+/*
+ * Retrieve the current live Dynamic Label Segment (DLS) scrolling text (up to 128 characters, UTF-8 encoded)
+ * from the actively playing DAB+ service component.
+ *
+ * Returns 1 if a new/updated DLS label is available (and copies it to out_text),
+ * returns 0 if the DLS label has not changed, or a negative error code on failure.
+ */
+int si468x_get_dls_text(char* out_text, int max_len);
+
 #ifdef __cplusplus
 }
 #endif

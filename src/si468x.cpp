@@ -907,3 +907,44 @@ int si468x_set_audio_output(int enable_i2s)
     }
     return ret;
 }
+
+int si468x_get_dls_text(char* out_text, int max_len)
+{
+    if (!out_text || max_len <= 0) {
+        return -1;
+    }
+
+    // Command 0x84 (DAB_GET_DIGITAL_SERVICE_DATA) with parameter 0x01 (DLS Text)
+    uint8_t cmd[2] = { 0x84, 0x01 };
+    std::vector<uint8_t> resp(2073, 0x00);
+
+    if (send_command(cmd, 2, resp.data(), 2073) != SI468X_SUCCESS) {
+        return -2;
+    }
+
+    // Parameter Byte 14-15 (resp[18..19]) store the 16-bit text length
+    uint16_t dls_len = resp[18] | ((uint16_t)resp[19] << 8);
+
+    if (dls_len == 0 || dls_len > 128) {
+        out_text[0] = '\0';
+        return 0; // No active or valid DLS text
+    }
+
+    if (dls_len >= max_len) {
+        dls_len = max_len - 1;
+    }
+
+    // Parameter Byte 16+ (resp[20+]) contains the raw UTF-8 DLS string
+    std::memcpy(out_text, &resp[20], dls_len);
+    out_text[dls_len] = '\0';
+
+    static std::string last_dls_text = "";
+    std::string current_dls(out_text);
+
+    if (current_dls != last_dls_text) {
+        last_dls_text = current_dls;
+        return 1; // New/updated DLS text available!
+    }
+
+    return 0; // DLS has not changed
+}
