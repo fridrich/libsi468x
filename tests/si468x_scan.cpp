@@ -1,6 +1,6 @@
 /*
  *    Copyright (C) 2026
- *    si468x_scan.cpp - Diagnostic DAB Frequency Scanner Utility
+ *    si468x_scan.cpp - Diagnostic DAB Frequency Scanner Utility with Active Playback Test
  */
 
 #include <iostream>
@@ -62,6 +62,7 @@ int main(int argc, char** argv)
 {
     std::cout << "==================================================" << std::endl;
     std::cout << "  libsi468x DAB Band III Diagnostic Frequency Scan" << std::endl;
+    std::cout << "  (Active 10-Second Headphone Audio Playback Test) " << std::endl;
     std::cout << "==================================================" << std::endl;
 
     const char* spi_dev = "/dev/spidev0.0";
@@ -78,7 +79,7 @@ int main(int argc, char** argv)
     std::cout << "Reset Pin:  GPIO " << rst_pin << std::endl;
     std::cout << "==================================================" << std::endl;
 
-    // Boot the chip in DAB mode
+    // Boot the chip in DAB mode (analog audio is unconditionally enabled by default on init!)
     int ret = si468x_init(spi_dev, rst_pin, SI468X_BOOT_DAB);
     if (ret != SI468X_SUCCESS) {
         std::cerr << "Initialization failed! (Code: " << ret << ")" << std::endl;
@@ -152,6 +153,38 @@ int main(int argc, char** argv)
                 total_stations++;
             }
             std::cout << "    ================================================" << std::endl;
+
+            // ACTIVE AUDIO PLAYBACK DIAGNOSTIC TEST (Plays the 1st discovered station for 10 seconds!)
+            std::cout << "    >>> [TEST] Activating 10-Second Hardware Headphone Playback..." << std::endl;
+            std::cout << "    >>> Station: '" << services[0].label << "' (SId: 0x" << std::hex << services[0].service_id
+                      << ", CompId: " << std::dec << services[0].component_id << ")" << std::endl;
+
+            // Trigger actual hardware play command
+            int play_ret = si468x_play_service(services[0].service_id, services[0].component_id);
+            if (play_ret == SI468X_SUCCESS) {
+                // Un-mute the analog DAC by setting hardware volume property 0x0300 to 55
+                si468x_set_volume(55);
+
+                std::cout << "    >>> Playback active! Streaming analog audio directly to board headphone jack..." << std::endl;
+                for (int sec = 1; sec <= 10; sec++) {
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+                    // Periodically print signal updates during playback to monitor stability
+                    si468x_signal_status_t play_status;
+                    if (si468x_get_signal_status(&play_status) == SI468X_SUCCESS) {
+                        std::cout << "        [Play Sec " << sec << "/10] RSSI: " << (int)play_status.rssi
+                                  << " dBuV | SNR: " << (int)play_status.snr << " dB" << std::endl;
+                    }
+                }
+
+                std::cout << "    >>> Stopping playback..." << std::endl;
+                si468x_stop_service();
+            }
+            else {
+                std::cerr << "    >>> [ERROR] START_DIGITAL play command rejected by chip! (Code: " << play_ret << ")" << std::endl;
+            }
+            std::cout << "    ================================================" << std::endl;
+
         }
         else {
             std::cout << "      (Ensemble locked, but no active service tables read)" << std::endl;
