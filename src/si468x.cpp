@@ -267,15 +267,8 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         return SI468X_ERROR_FIRMWARE;
     }
 
-    // Boot the ROM patch (must be 5 bytes) and read the 2-byte response to unblock the co-processor
-    std::clog << "libsi468x: Booting ROM patch..." << std::endl;
-    uint8_t boot_cmd_rom[5] = { SI468X_CMD_BOOT, 0x00, 0x00, 0x00, 0x00 };
-    uint8_t boot_resp_rom[2];
-    if (send_command(boot_cmd_rom, 5, boot_resp_rom, 2) != SI468X_SUCCESS) {
-        si468x_shutdown();
-        return SI468X_ERROR_BOOT;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    // Post-ROM upload settling delay (50ms)
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     // 6. Select and upload statically embedded Application Firmware
     const unsigned char* app_fw = nullptr;
@@ -303,7 +296,10 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         return SI468X_ERROR_FIRMWARE;
     }
 
-    // 7. Send BOOT (0x07, must be 5 bytes) and read 2-byte response
+    // Post-Application upload settling delay (100ms)
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // 7. Send BOOT (0x07, must be 5 bytes) and read 2-byte response to boot both ROM + App images
     std::clog << "libsi468x: Booting application image..." << std::endl;
     uint8_t boot_cmd[5] = { SI468X_CMD_BOOT, 0x00, 0x00, 0x00, 0x00 };
     uint8_t boot_resp[2];
