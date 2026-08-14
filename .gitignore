@@ -1,0 +1,48 @@
+# Backup files
+*~
+
+# Autotools generated files
+Makefile
+Makefile.in
+configure
+config.h
+config.h.in
+config.h.in~
+config.log
+config.status
+aclocal.m4
+autom4te.cache/
+libtool
+ltmain.sh
+ar-lib
+compile
+depcomp
+install-sh
+missing
+stamp-h1
+m4/
+config.guess
+config.sub
+libsi468x.pc
+test-driver
+
+# Libtool build files
+.deps/
+.libs/
+*.o
+*.lo
+*.la
+
+# Archive files
+*.tar.*
+
+# Test outputs
+tests/*.log
+tests/*.trs
+tests/test_si468x
+
+# Generated firmware sources
+src/si468x_firmware.cpp
+
+# Local uncommitted firmware binaries
+firmware/*.bin
