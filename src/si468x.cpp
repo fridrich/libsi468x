@@ -350,24 +350,36 @@ int si468x_shutdown(void)
 
 int si468x_set_frequency(uint32_t frequency_hz)
 {
-    // Convert Hz to kHz if necessary (Silicon Labs expects kHz)
-    uint32_t frequency_khz = frequency_hz;
-    if (frequency_hz > 300000) {
-        frequency_khz = frequency_hz / 1000;
-    }
     active_frequency = frequency_hz;
 
-    std::clog << "libsi468x: Tuning chip to " << frequency_khz << " kHz..." << std::endl;
+    // Map the requested frequency (in Hz) to its standard European Frequency Index (0-37)
+    uint8_t freq_index = 0;
+    uint32_t freqs[] = {
+        174928000, 176640000, 178352000, 180064000, 181936000, 183648000, 185360000, 187072000,
+        188928000, 190640000, 192352000, 194064000, 195936000, 197648000, 199360000, 201072000,
+        202928000, 204640000, 206352000, 208064000, 209936000, 211648000, 213360000, 215072000,
+        216928000, 218640000, 220352000, 222064000, 223936000, 225648000, 227360000, 229072000,
+        230784000, 232496000, 234208000, 235776000, 237488000, 239200000
+    };
+    for (int i = 0; i < 38; i++) {
+        if (freqs[i] == frequency_hz) {
+            freq_index = i;
+            break;
+        }
+    }
 
-    // Build DAB_TUNE_FREQ packet
-    uint8_t cmd[5];
+    std::clog << "libsi468x: Tuning chip to freq_index " << (int)freq_index << " (" << frequency_hz << " Hz)..." << std::endl;
+
+    // Build DAB_TUNE_FREQ packet (must be exactly 6 bytes)
+    uint8_t cmd[6];
     cmd[0] = SI468X_CMD_DAB_TUNE_FREQ;
     cmd[1] = 0x00;
-    cmd[2] = (frequency_khz >> 16) & 0xFF;
-    cmd[3] = (frequency_khz >> 8) & 0xFF;
-    cmd[4] = frequency_khz & 0xFF;
+    cmd[2] = 0x00;
+    cmd[3] = 0x00;
+    cmd[4] = 0x00;
+    cmd[5] = freq_index; // Pass the frequency index
 
-    return send_command(cmd, 5, nullptr, 0);
+    return send_command(cmd, 6, nullptr, 0);
 }
 
 uint32_t si468x_get_frequency(void)
