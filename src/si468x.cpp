@@ -301,6 +301,9 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         return SI468X_ERROR_BOOT;
     }
 
+    // Wait for the on-chip application operating system to boot and stabilize
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+
     // Enable I2S digital output by default upon system init
     if (si468x_set_audio_output(1) != SI468X_SUCCESS) {
         std::cerr << "libsi468x: Warning: Failed to configure default I2S output." << std::endl;
