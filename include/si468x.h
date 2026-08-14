@@ -56,6 +56,12 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode);
 int si468x_shutdown(void);
 
 /*
+ * Cleanly clear the co-processor's internal service list database.
+ * Returns SI468X_SUCCESS on success, or negative error code.
+ */
+int si468x_clear_service_list(void);
+
+/*
  * Tune the hardware receiver to a specified frequency in Hz (e.g. 227360000 for 12C).
  */
 int si468x_set_frequency(uint32_t frequency_hz);
@@ -97,6 +103,18 @@ int si468x_get_signal_status(si468x_signal_status_t* status);
  * Pass 0 to enable Analog output to the 3.5mm headphone jack.
  */
 int si468x_set_audio_output(int enable_i2s);
+
+/*
+ * Retrieve the current tuned DAB ensemble label and Ensemble ID (EId/UEID).
+ * Returns SI468X_SUCCESS on success, or negative error code.
+ */
+int si468x_get_ensemble_info(char* label, uint16_t* ueid);
+
+/*
+ * Retrieve detailed component specifications dynamically from the co-processor over SPI (Opcode 0x82).
+ * Returns SI468X_SUCCESS on success, or negative error code.
+ */
+int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint8_t* subchannel_id);
 
 #ifdef __cplusplus
 }
