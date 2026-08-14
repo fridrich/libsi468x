@@ -404,9 +404,9 @@ int si468x_set_frequency(uint32_t frequency_hz)
         return SI468X_ERROR_SPI;
     }
 
-    // Wait for the RF synthesizers to lock and acquire OFDM sync (up to 10 seconds)
+    // Wait for the RF synthesizers to lock and acquire OFDM sync (up to 1 second)
     bool locked = false;
-    for (int i = 0; i < 50; i++) {
+    for (int i = 0; i < 5; i++) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
         // Poll signal status using correct 2-byte command
