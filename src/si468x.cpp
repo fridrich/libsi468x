@@ -577,11 +577,11 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
         return -1;
     }
 
-    // 2-byte packet required (Opcode + INTACK)
+    // 2-byte packet required (Opcode + INTACK) and 24-byte response payload (total 28 bytes)
     uint8_t cmd[2] = { SI468X_CMD_DAB_DIGRAD_STATUS, 0x00 };
-    std::vector<uint8_t> resp(12, 0x00); // 4 status/padding bytes + 8 response parameter bytes
+    std::vector<uint8_t> resp(28, 0x00);
 
-    if (send_command(cmd, 2, resp.data(), 12) != SI468X_SUCCESS) {
+    if (send_command(cmd, 2, resp.data(), 28) != SI468X_SUCCESS) {
         // Return simulated parameters if physical bus is closed (mock fallback)
         if (spi_fd < 0) {
             status->rssi = 45;       // 45 dBuV (decent signal)
@@ -593,24 +593,24 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
         return SI468X_ERROR_SPI;
     }
 
-    // Parse DAB_DIGRAD_STATUS Response:
+    // Parse DAB_DIGRAD_STATUS Response (24 parameter bytes):
     // resp[0..3] : SPI status and padding bytes (Byte 0 is STATUS, Bytes 1-3 is padding)
     // resp[4]    : Response parameter Byte 0 (state/status)
-    // resp[5]    : Response parameter Byte 1 (digital status)
-    // resp[6]    : Response parameter Byte 2 (RSSI in dBuV)
-    // resp[7]    : Response parameter Byte 3 (SNR in dB)
-    // resp[8..9] : Response parameter Byte 4-5 (Frequency Offset in kHz, Big Endian signed 16-bit)
-    // resp[10]   : Response parameter Byte 6 (Sync status: Bit 0 is SYNC flag)
+    // resp[5]    : Response parameter Byte 1 (digital status: Bit 1 is SYNC, Bit 2 is FIC_SYNC)
+    // resp[6]    : Response parameter Byte 2 (acq status: Bit 2 is ACQ)
+    // resp[17]   : Response parameter Byte 13 (RSSI in dBuV)
+    // resp[18]   : Response parameter Byte 14 (SNR in dB)
+    // resp[19..20] : Response parameter Byte 15-16 (Frequency Offset in kHz, Big Endian signed 16-bit)
     std::clog << "libsi468x: Raw DIGRAD_STATUS: ";
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < 28; i++) {
         std::clog << "0x" << std::hex << (int)resp[i] << " ";
     }
     std::clog << std::dec << std::endl;
 
-    status->rssi = resp[6];
-    status->snr = resp[7];
-    status->freq_offset = (int16_t)(((uint16_t)resp[8] << 8) | resp[9]);
-    status->sync_status = (resp[10] & 0x01);
+    status->rssi = resp[17];
+    status->snr = resp[18];
+    status->freq_offset = (int16_t)(((uint16_t)resp[19] << 8) | resp[20]);
+    status->sync_status = ((resp[5] & 0x02) >> 1); // SYNC flag (Bit 1)
 
     return SI468X_SUCCESS;
 }
