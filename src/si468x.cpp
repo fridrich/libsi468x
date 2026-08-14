@@ -516,17 +516,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         return 0;
     }
 
-    // Print raw database payload hex dump for direct visual offset extraction
-    std::clog << "libsi468x: Raw Service Database Hex Dump:" << std::endl;
-    for (uint16_t x = 0; x < full_resp_len; x++) {
-        std::clog << "0x" << std::hex << (int)resp[x] << " ";
-        if ((x + 1) % 16 == 0) {
-            std::clog << std::endl;
-        }
-    }
-    std::clog << std::dec << std::endl;
-
-    // Shift index by 4 to bypass the 4-byte SPI status/padding overhead
+    // Shift index by 7 to bypass the 4-byte SPI status/padding overhead and 3 header bytes
     uint8_t num_services = resp[7];
     std::clog << "libsi468x: Chip reported " << (int)num_services << " active services." << std::endl;
 
@@ -535,46 +525,45 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
     }
 
     int services_count = 0;
-    size_t offset = 8; // Data payload starts at index 8 after 4 status/padding + 4 header bytes
+    size_t offset = 8; // Data payload starts at index 8 of the response parameters
 
     for (int i = 0; i < num_services; i++) {
         if (services_count >= max_services) {
             break;
         }
-        if (offset + 24 > full_resp_len) {
+        if (offset + 26 > full_resp_len) {
             break;    // Buffer boundary safety guard
         }
 
-        // 1. Service ID (SId): 32-bit Big Endian (offset 0-3)
-        uint32_t service_id = ((uint32_t)resp[offset] << 24) |
-                              ((uint32_t)resp[offset + 1] << 16) |
-                              ((uint32_t)resp[offset + 2] << 8) |
-                              ((uint32_t)resp[offset + 3]);
+        // 1. Service ID (SId): 32-bit Little Endian (offset 0-3)
+        uint32_t service_id = resp[offset] |
+                              ((uint32_t)resp[offset + 1] << 8) |
+                              ((uint32_t)resp[offset + 2] << 16) |
+                              ((uint32_t)resp[offset + 3] << 24);
 
-        // 2. Number of Components (offset 4)
-        uint8_t num_components = resp[offset + 4];
+        // 2. Number of Components (offset 5)
+        uint8_t num_components = resp[offset + 5];
 
-        // 3. Label: 16-character array (offset 5-20)
+        // 3. Label: 16-character array (offset 8-23)
         char service_label[17];
-        std::memcpy(service_label, &resp[offset + 5], 16);
+        std::memcpy(service_label, &resp[offset + 8], 16);
         service_label[16] = '\0';
 
-        // 4. Short Label Abbreviation Mask: 16-bit Big Endian (offset 21-22)
-        uint16_t char_mask = ((uint16_t)resp[offset + 21] << 8) |
-                             ((uint16_t)resp[offset + 22]);
+        // 4. Short Label Abbreviation Mask: 16-bit Little Endian (offset 24-25)
+        uint16_t char_mask = resp[offset + 24] | ((uint16_t)resp[offset + 25] << 8);
 
-        // Offset advancement: Service Header is 24 bytes (including alignment/padding)
-        offset += 24;
+        // Offset advancement past the 26-byte Service Header
+        offset += 26;
 
         // 5. Parse Components of this service
         for (int c = 0; c < num_components; c++) {
-            if (offset + 4 > 2048) {
+            if (offset + 4 > full_resp_len) {
                 break;
             }
 
             // Component block is 4 bytes:
-            // - Component ID: 16-bit Big Endian (offset 0-1)
-            uint16_t component_id = ((uint16_t)resp[offset] << 8) | resp[offset + 1];
+            // - Component ID: 16-bit Little Endian (offset 0-1)
+            uint16_t component_id = resp[offset] | ((uint16_t)resp[offset + 1] << 8);
             // - Service Component Type: 8-bit (offset 2)
             uint8_t audio_type = resp[offset + 2];
             // - Bitrate: 8-bit (offset 3). Represented in units of 8 kbps
