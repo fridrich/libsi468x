@@ -293,10 +293,10 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         return SI468X_ERROR_FIRMWARE;
     }
 
-    // 7. Send BOOT (0x07)
+    // 7. Send BOOT (0x07, must be 5 bytes)
     std::clog << "libsi468x: Booting application image..." << std::endl;
-    uint8_t boot_cmd[1] = { SI468X_CMD_BOOT };
-    if (send_command(boot_cmd, 1, nullptr, 0) != SI468X_SUCCESS) {
+    uint8_t boot_cmd[5] = { SI468X_CMD_BOOT, 0x00, 0x00, 0x00, 0x00 };
+    if (send_command(boot_cmd, 5, nullptr, 0) != SI468X_SUCCESS) {
         si468x_shutdown();
         return SI468X_ERROR_BOOT;
     }
