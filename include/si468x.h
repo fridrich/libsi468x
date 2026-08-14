@@ -91,6 +91,13 @@ int si468x_get_service_list(si468x_service_t* list, int max_services);
  */
 int si468x_get_signal_status(si468x_signal_status_t* status);
 
+/*
+ * Configure the audio output path.
+ * Pass 1 to enable I2S digital output (analog out will be deactivated).
+ * Pass 0 to enable Analog output to the 3.5mm headphone jack.
+ */
+int si468x_set_audio_output(int enable_i2s);
+
 #ifdef __cplusplus
 }
 #endif
