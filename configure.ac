@@ -37,17 +37,17 @@ AC_SUBST([LIBS_WIRINGPI])
 # Configure options for firmware paths
 AC_ARG_WITH([fw-rom-patch],
     [AS_HELP_STRING([--with-fw-rom-patch=PATH], [Path to fw_rom_patch.bin (default: firmware/fw_rom_patch.bin)])],
-    [FW_ROM_PATCH="$withval"],
+    [FW_ROM_PATCH="$(cd "$(dirname "$withval")" 2>/dev/null && pwd)/$(basename "$withval")"],
     [FW_ROM_PATCH="\$(top_srcdir)/firmware/fw_rom_patch.bin"])
 
 AC_ARG_WITH([fw-dab-radio],
     [AS_HELP_STRING([--with-fw-dab-radio=PATH], [Path to fw_dab_radio.bin (default: firmware/fw_dab_radio.bin)])],
-    [FW_DAB_RADIO="$withval"],
+    [FW_DAB_RADIO="$(cd "$(dirname "$withval")" 2>/dev/null && pwd)/$(basename "$withval")"],
     [FW_DAB_RADIO="\$(top_srcdir)/firmware/fw_dab_radio.bin"])
 
 AC_ARG_WITH([fw-fmhd-radio],
     [AS_HELP_STRING([--with-fw-fmhd-radio=PATH], [Path to fw_fmhd_radio.bin (default: firmware/fw_fmhd_radio.bin)])],
-    [FW_FMHD_RADIO="$withval"],
+    [FW_FMHD_RADIO="$(cd "$(dirname "$withval")" 2>/dev/null && pwd)/$(basename "$withval")"],
     [FW_FMHD_RADIO="\$(top_srcdir)/firmware/fw_fmhd_radio.bin"])
 
 # Substitute firmware variables in Makefiles
