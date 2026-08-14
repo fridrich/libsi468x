@@ -210,7 +210,7 @@ static int upload_firmware_memory(const unsigned char* data, size_t length)
         // Transmit packet and read the 7-byte response to unblock the bootloader
         uint8_t fut_resp[7];
         if (send_command(packet.data(), bytes_to_write + 4, fut_resp, 7) != SI468X_SUCCESS) {
-            return SI468X_ERROR_SPI;
+            return SI468X_ERROR_FIRMWARE;
         }
 
         ptr += bytes_to_write;
@@ -360,9 +360,18 @@ int si468x_shutdown(void)
     return SI468X_SUCCESS;
 }
 
+int si468x_clear_service_list(void)
+{
+    uint8_t cmd[2] = { 0x80, 0x02 }; // Opcode 0x80 + ACTION 0x02 (Clear Service List)
+    return send_command(cmd, 2, nullptr, 0);
+}
+
 int si468x_set_frequency(uint32_t frequency_hz)
 {
     active_frequency = frequency_hz;
+
+    // Cleanly wipe the on-chip service database list to prevent cross-frequency accumulation
+    si468x_clear_service_list();
 
     // Map the requested frequency (in Hz) to its standard European Frequency Index (0-37)
     uint8_t freq_index = 0;
@@ -473,7 +482,7 @@ void si468x_decode_short_label(const char* long_label, uint16_t char_mask, char*
     int dst = 0;
     for (int i = 0; i < 16; i++) {
         // Bit 15 represents the first character (index 0) of the long label
-        if ((char_mask >> (15 - i)) & 0x01) {
+        if ((char_mask & (0x8000 >> i))) {
             short_label[dst++] = long_label[i];
             if (dst >= 8) {
                 break;    // Short label is max 8 characters
@@ -481,6 +490,75 @@ void si468x_decode_short_label(const char* long_label, uint16_t char_mask, char*
         }
     }
     short_label[dst] = '\0';
+}
+
+int si468x_get_ensemble_info(char* label, uint16_t* ueid)
+{
+    if (!label) {
+        return -1;
+    }
+
+    // Write { 0xB4, 0x00 } (2 bytes) and read 26 response parameter bytes over SPI
+    uint8_t cmd[2] = { 0xB4, 0x00 };
+    uint8_t resp[26];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 2, resp, 26) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    if (ueid) {
+        *ueid = resp[5] | ((uint16_t)resp[6] << 8);
+    }
+
+    // Extract Ensemble Label (16 bytes starting exactly at resp[7] past 16-bit Ensemble ID)
+    std::memcpy(label, &resp[7], 16);
+    label[16] = '\0';
+    return 0;
+}
+
+int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint8_t* subchannel_id)
+{
+    // Write 12-byte command: Opcode 0xBB + Service ID + 32-bit global Component ID
+    uint8_t cmd[12] = {
+        0xBB, 0x00, 0x00, 0x00,
+        (uint8_t)(service_id & 0xFF),
+        (uint8_t)((service_id >> 8) & 0xFF),
+        (uint8_t)((service_id >> 16) & 0xFF),
+        (uint8_t)((service_id >> 24) & 0xFF),
+        (uint8_t)(component_id & 0xFF),
+        (uint8_t)((component_id >> 8) & 0xFF),
+        (uint8_t)((component_id >> 16) & 0xFF),
+        (uint8_t)((component_id >> 24) & 0xFF)
+    };
+    uint8_t resp[29];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 12, resp, 29) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    // Subchannel ID is at resp[7] & 0x3F (low 6 bits)
+    if (subchannel_id) {
+        *subchannel_id = resp[7] & 0x3F;
+    }
+
+    // Component Label starts at resp[9] (16 bytes)
+    char comp_label[17];
+    std::memcpy(comp_label, &resp[9], 16);
+    comp_label[16] = '\0';
+    if (label) {
+        std::strcpy(label, comp_label);
+    }
+
+    // Short Label Character flag mask is at resp[25..26] (16-bit Little-Endian)
+    uint16_t char_mask = resp[25] | ((uint16_t)resp[26] << 8);
+
+    if (short_label) {
+        si468x_decode_short_label(comp_label, char_mask, short_label);
+    }
+
+    return 0;
 }
 
 int si468x_get_service_list(si468x_service_t* list, int max_services)
@@ -491,15 +569,32 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
 
     std::clog << "libsi468x: Querying on-chip service database..." << std::endl;
 
-    // Send GET_DIGITAL_SERVICE_LIST (0xB5)
-    uint8_t cmd[2] = { SI468X_CMD_GET_DIGITAL_LIST, 0x00 };
-    std::vector<uint8_t> resp(2048, 0x00); // 2KB buffer to capture the database reply
+    // Step 1: Send GET_DIGITAL_SERVICE_LIST (0x80) command to query database size (7-byte read)
+    uint8_t size_cmd[2] = { 0x80, 0x00 };
+    uint8_t size_resp[7];
+    std::memset(size_resp, 0, sizeof(size_resp));
 
-    if (send_command(cmd, 2, resp.data(), 2048) != SI468X_SUCCESS) {
+    if (send_command(size_cmd, 2, size_resp, 7) != SI468X_SUCCESS) {
         return 0;
     }
 
-    // Shift index by 4 to bypass the 4-byte SPI status/padding overhead
+    // Bytes 5-6 (Response Parameter Bytes 1-2) store the 16-bit database size in Little-Endian
+    uint16_t db_size = size_resp[5] | ((uint16_t)size_resp[6] << 8);
+    std::clog << "libsi468x: Chip reported database payload size: " << db_size << " bytes." << std::endl;
+
+    if (db_size == 0 || db_size > 2048) {
+        return 0;
+    }
+
+    // Step 2: Send GET_DIGITAL_SERVICE_LIST (0x80) again to download full payload (db_size + 7 bytes)
+    uint16_t full_resp_len = db_size + 7;
+    std::vector<uint8_t> resp(full_resp_len, 0x00);
+
+    if (send_command(size_cmd, 2, resp.data(), full_resp_len) != SI468X_SUCCESS) {
+        return 0;
+    }
+
+    // Shift index by 7 to bypass the 4-byte SPI status/padding overhead and 3 header bytes
     uint8_t num_services = resp[7];
     std::clog << "libsi468x: Chip reported " << (int)num_services << " active services." << std::endl;
 
@@ -508,63 +603,67 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
     }
 
     int services_count = 0;
-    size_t offset = 8; // Data payload starts at index 8 after 4 status/padding + 4 header bytes
+    size_t offset = 13; // Data payload starts at index 13 of the response parameters (after 5-byte header)
 
     for (int i = 0; i < num_services; i++) {
         if (services_count >= max_services) {
             break;
         }
-        if (offset + 24 > 2048) {
+        if (offset + 24 > full_resp_len) {
             break;    // Buffer boundary safety guard
         }
 
-        // 1. Service ID (SId): 32-bit Big Endian (offset 0-3)
-        uint32_t service_id = ((uint32_t)resp[offset] << 24) |
-                              ((uint32_t)resp[offset + 1] << 16) |
-                              ((uint32_t)resp[offset + 2] << 8) |
-                              ((uint32_t)resp[offset + 3]);
+        // 1. Service ID (SId): 32-bit Little Endian (offset 0-3)
+        uint32_t service_id = resp[offset] |
+                              ((uint32_t)resp[offset + 1] << 8) |
+                              ((uint32_t)resp[offset + 2] << 16) |
+                              ((uint32_t)resp[offset + 3] << 24);
 
-        // 2. Number of Components (offset 4)
-        uint8_t num_components = resp[offset + 4];
+        // 2. Number of Components (offset 5, low 4 bits)
+        uint8_t num_components = resp[offset + 5] & 0x0F;
 
-        // 3. Label: 16-character array (offset 5-20)
+        // 3. Label: 16-character array (offset 8-23)
         char service_label[17];
-        std::memcpy(service_label, &resp[offset + 5], 16);
+        std::memcpy(service_label, &resp[offset + 8], 16);
         service_label[16] = '\0';
 
-        // 4. Short Label Abbreviation Mask: 16-bit Big Endian (offset 21-22)
-        uint16_t char_mask = ((uint16_t)resp[offset + 21] << 8) |
-                             ((uint16_t)resp[offset + 22]);
+        // 4. Subchannel ID (SubChId) is stored at offset 24
+        uint8_t subchannel_id = resp[offset + 24];
 
-        // Offset advancement: Service Header is 24 bytes (including alignment/padding)
+        // Offset advancement past the 24-byte Service Header
         offset += 24;
 
         // 5. Parse Components of this service
         for (int c = 0; c < num_components; c++) {
-            if (offset + 4 > 2048) {
+            if (offset + 4 > full_resp_len) {
                 break;
             }
 
-            // Component block is 4 bytes:
-            // - Component ID: 16-bit Big Endian (offset 0-1)
-            uint16_t component_id = ((uint16_t)resp[offset] << 8) | resp[offset + 1];
-            // - Service Component Type: 8-bit (offset 2)
-            uint8_t audio_type = resp[offset + 2];
-            // - Bitrate: 8-bit (offset 3). Represented in units of 8 kbps
-            uint16_t bitrate = resp[offset + 3] * 8;
+            // Component block is exactly 4 bytes:
+            // - Component ID: 12-bit value packed in a 16-bit Little Endian word (offset 0-1)
+            uint16_t component_id = (resp[offset] | ((uint16_t)resp[offset + 1] << 8)) & 0x0FFF;
 
             // Store the first audio component of the service in our output list
             if (c == 0) {
                 list[services_count].service_id = service_id;
                 list[services_count].component_id = component_id;
-                list[services_count].audio_type = audio_type;
-                list[services_count].bitrate = bitrate;
+                list[services_count].audio_type = subchannel_id; // Reuse audio_type to pass Subchannel ID cleanly!
+                list[services_count].bitrate = 0;                // Resolved dynamically during playback
 
                 std::strncpy(list[services_count].label, service_label, 16);
                 list[services_count].label[16] = '\0';
 
-                // Decode short label natively from the real Character Flag Mask!
-                si468x_decode_short_label(service_label, char_mask, list[services_count].short_label);
+                // Reconstruct clean fallback short label dynamically (copy first 8 characters and strip trailing spaces)
+                std::strncpy(list[services_count].short_label, service_label, 8);
+                list[services_count].short_label[8] = '\0';
+                for (int len = 7; len >= 0; len--) {
+                    if (list[services_count].short_label[len] == ' ' || list[services_count].short_label[len] == '\0') {
+                        list[services_count].short_label[len] = '\0';
+                    }
+                    else {
+                        break;
+                    }
+                }
 
                 services_count++;
             }
