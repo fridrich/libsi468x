@@ -519,14 +519,17 @@ int si468x_get_ensemble_info(char* label, uint16_t* ueid)
 
 int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint8_t* subchannel_id)
 {
-    // Write 12-byte command: Opcode 0xBB + Service ID + SCIdS (component index 0-based within service)
+    // Write 12-byte command: Opcode 0xBB + Service ID + 32-bit global Component ID
     uint8_t cmd[12] = {
         0xBB, 0x00, 0x00, 0x00,
         (uint8_t)(service_id & 0xFF),
         (uint8_t)((service_id >> 8) & 0xFF),
         (uint8_t)((service_id >> 16) & 0xFF),
         (uint8_t)((service_id >> 24) & 0xFF),
-        0x00, 0x00, 0x00, 0x00 // Pass primary component index 0 dynamically (SCIdS)
+        (uint8_t)(component_id & 0xFF),
+        (uint8_t)((component_id >> 8) & 0xFF),
+        (uint8_t)((component_id >> 16) & 0xFF),
+        (uint8_t)((component_id >> 24) & 0xFF)
     };
     uint8_t resp[29];
     std::memset(resp, 0, sizeof(resp));
@@ -619,10 +622,18 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         // 2. Number of Components (offset 5, low 4 bits)
         uint8_t num_components = resp[offset + 5] & 0x0F;
 
+        // 3. Label: 16-character array (offset 8-23)
+        char service_label[17];
+        std::memcpy(service_label, &resp[offset + 8], 16);
+        service_label[16] = '\0';
+
+        // 4. Subchannel ID (SubChId) is stored at offset 24
+        uint8_t subchannel_id = resp[offset + 24];
+
         // Offset advancement past the 24-byte Service Header
         offset += 24;
 
-        // 3. Parse Components of this service
+        // 5. Parse Components of this service
         for (int c = 0; c < num_components; c++) {
             if (offset + 4 > full_resp_len) {
                 break;
@@ -636,17 +647,17 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
             if (c == 0) {
                 char dynamic_label[17];
                 char dynamic_short_label[9];
-                uint8_t subchannel_id = 0;
+                uint8_t subchannel_id_dynamic = 0;
 
                 std::memset(dynamic_label, 0, sizeof(dynamic_label));
                 std::memset(dynamic_short_label, 0, sizeof(dynamic_short_label));
 
-                // Dynamically fetch actual over-the-air labels and subchannel parameters using 0xBB (SCIdS = 0)!
-                if (si468x_get_component_info(service_id, 0, dynamic_label, dynamic_short_label, &subchannel_id) == 0) {
+                // Dynamically fetch actual over-the-air labels and subchannel parameters using 0xBB (valid component_id)!
+                if (si468x_get_component_info(service_id, component_id, dynamic_label, dynamic_short_label, &subchannel_id_dynamic) == 0) {
                     list[services_count].service_id = service_id;
                     list[services_count].component_id = component_id;
-                    list[services_count].audio_type = subchannel_id; // Reuse audio_type to pass Subchannel ID cleanly!
-                    list[services_count].bitrate = 0;                // Resolved dynamically during playback
+                    list[services_count].audio_type = subchannel_id_dynamic; // Reuse audio_type to pass Subchannel ID cleanly!
+                    list[services_count].bitrate = 0;                        // Resolved dynamically during playback
 
                     std::strncpy(list[services_count].label, dynamic_label, 16);
                     list[services_count].label[16] = '\0';
