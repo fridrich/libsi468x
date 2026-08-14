@@ -495,8 +495,8 @@ int si468x_set_frequency(uint32_t frequency_hz)
         return SI468X_ERROR_TIMEOUT; // No signal found on this frequency
     }
 
-    // Give the co-processor 1000ms to accumulate and decode the FIC database tables from the air
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // Give the co-processor 3000ms to accumulate and decode the complete FIC database tables from the air
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
     return SI468X_SUCCESS;
 }
 
