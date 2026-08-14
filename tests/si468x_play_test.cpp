@@ -27,9 +27,9 @@ int main()
         return 1;
     }
 
-    // 2. Tune to Channel 12A (224096000 Hz / 224.096 MHz)
-    uint32_t frequency_hz = 224096000;
-    std::cout << "Tuning to Channel 12A (224.096 MHz)..." << std::endl;
+    // 2. Tune to Channel 12A (223936000 Hz / 223.936 MHz, aligns with library's frequency mapping)
+    uint32_t frequency_hz = 223936000;
+    std::cout << "Tuning to Channel 12A (223.936 MHz)..." << std::endl;
     ret = si468x_set_frequency(frequency_hz);
     if (ret != 0) {
         std::cerr << "Tuning failed! Code: " << ret << std::endl;
