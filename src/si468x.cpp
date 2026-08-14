@@ -513,9 +513,9 @@ int si468x_get_ensemble_info(char* label, uint16_t* ueid)
 
 int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint8_t* subchannel_id)
 {
-    // Write 12-byte command: Opcode 0x82 + Service ID + Component ID
+    // Write 12-byte command: Opcode 0xBB + Service ID + Component ID
     uint8_t cmd[12] = {
-        0x82, 0x00, 0x00, 0x00,
+        0xBB, 0x00, 0x00, 0x00,
         (uint8_t)(service_id & 0xFF),
         (uint8_t)((service_id >> 8) & 0xFF),
         (uint8_t)((service_id >> 16) & 0xFF),
