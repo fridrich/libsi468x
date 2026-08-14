@@ -771,7 +771,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         if (services_count >= max_services) {
             break;
         }
-        if (offset + 26 > full_resp_len) {
+        if (offset + 24 > full_resp_len) {
             break;    // Buffer boundary safety guard
         }
 
@@ -789,19 +789,19 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         std::memcpy(service_label, &resp[offset + 8], 16);
         service_label[16] = '\0';
 
-        // 4. Short Label Mask: 16-bit Little Endian (offset 24-25)
-        uint16_t short_label_mask = resp[offset + 24] | ((uint16_t)resp[offset + 25] << 8);
+        // 4. Subchannel ID (SubChId) is stored at offset 24
+        uint8_t subchannel_id = resp[offset + 24];
 
-        // Offset advancement past the 26-byte Service Header
-        offset += 26;
+        // Offset advancement past the 24-byte Service Header
+        offset += 24;
 
         // 5. Parse Components of this service
         for (int c = 0; c < num_components; c++) {
-            if (offset + 2 > full_resp_len) {
+            if (offset + 4 > full_resp_len) {
                 break;
             }
 
-            // Component block is exactly 2 bytes:
+            // Component block is exactly 4 bytes:
             // - Component ID: 12-bit value packed in a 16-bit Little Endian word (offset 0-1)
             uint16_t component_id = (resp[offset] | ((uint16_t)resp[offset + 1] << 8)) & 0x0FFF;
 
@@ -809,19 +809,28 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
             if (c == 0) {
                 list[services_count].service_id = service_id;
                 list[services_count].component_id = component_id;
-                list[services_count].audio_type = 0; // Subchannel ID resolved dynamically via si468x_get_component_info
-                list[services_count].bitrate = 0;    // Resolved dynamically during playback
+                list[services_count].audio_type = subchannel_id; // Reuse audio_type to pass Subchannel ID cleanly!
+                list[services_count].bitrate = 0;                // Resolved dynamically during playback
 
                 std::strncpy(list[services_count].label, service_label, 16);
                 list[services_count].label[16] = '\0';
 
-                // Reconstruct exact Short Label using the character flag mask and the decoded helper!
-                si468x_decode_short_label(service_label, short_label_mask, list[services_count].short_label);
+                // Reconstruct clean fallback short label dynamically (copy first 8 characters and strip trailing spaces)
+                std::strncpy(list[services_count].short_label, service_label, 8);
+                list[services_count].short_label[8] = '\0';
+                for (int len = 7; len >= 0; len--) {
+                    if (list[services_count].short_label[len] == ' ' || list[services_count].short_label[len] == '\0') {
+                        list[services_count].short_label[len] = '\0';
+                    }
+                    else {
+                        break;
+                    }
+                }
 
                 services_count++;
             }
 
-            offset += 2; // Component Entry is 2 bytes
+            offset += 4; // Component Entry is 4 bytes
         }
     }
 
