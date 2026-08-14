@@ -555,6 +555,12 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
     // resp[7]    : Response parameter Byte 3 (SNR in dB)
     // resp[8..9] : Response parameter Byte 4-5 (Frequency Offset in kHz, Big Endian signed 16-bit)
     // resp[10]   : Response parameter Byte 6 (Sync status: Bit 0 is SYNC flag)
+    std::clog << "libsi468x: Raw DIGRAD_STATUS: ";
+    for (int i = 0; i < 12; i++) {
+        std::clog << "0x" << std::hex << (int)resp[i] << " ";
+    }
+    std::clog << std::dec << std::endl;
+
     status->rssi = resp[6];
     status->snr = resp[7];
     status->freq_offset = (int16_t)(((uint16_t)resp[8] << 8) | resp[9]);
