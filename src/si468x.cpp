@@ -116,57 +116,64 @@ static int spi_transfer(const uint8_t* tx, uint8_t* rx, size_t length)
 #endif
 }
 
-/* Polling the CTS (Clear To Send) flag over SPI */
-static bool wait_for_cts(int timeout_ms = 1000, bool suppress_errors = false)
-{
-    auto start = std::chrono::steady_clock::now();
-    uint8_t tx_byte = 0x00;
-    uint8_t rx_byte = 0x00;
-
-    while (true) {
-        // Poll status byte
-        if (spi_transfer(&tx_byte, &rx_byte, 1) == 0) {
-            if (rx_byte & SI468X_CTS_MASK) {
-                // Check for Command Error (ERR bit 6)
-                if ((rx_byte & 0x40) && !suppress_errors) {
-                    std::cerr << "libsi468x: WARNING: Command Error (Status: 0x"
-                              << std::hex << (int)rx_byte << std::dec << ")" << std::endl;
-                }
-                return true; // CTS is high!
-            }
-        }
-
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::steady_clock::now() - start
-                       ).count();
-        if (elapsed >= timeout_ms) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-    return false;
-}
-
-/* Transmit a command packet and wait for response */
+/*
+ * Transmit a command packet and wait for response.
+ * Uses reference polling loop to check CTS via 7-byte READ_RESP queries.
+ */
 static int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_len, int timeout_ms = 1000)
 {
-    // Write command
+    // 1. Write command over SPI
     if (spi_transfer(cmd, nullptr, cmd_len) < 0) {
         return SI468X_ERROR_SPI;
     }
 
-    // Wait for CTS with configurable timeout
-    if (!wait_for_cts(timeout_ms)) {
+    // 2. Poll CTS using 7-byte READ_RESP (0x00) transfers in a loop
+    bool cts_high = false;
+    auto start_time = std::chrono::steady_clock::now();
+
+    for (int retry = 0; retry < 50; retry++) {
+        uint8_t poll_tx[7] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+        uint8_t poll_rx[7] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
+        if (spi_transfer(poll_tx, poll_rx, 7) == 0) {
+            // poll_rx[1] is the co-processor's status byte; Bit 7 (0x80) is the CTS flag
+            if (poll_rx[1] & 0x80) {
+                // Check for Command Error (ERR bit 6)
+                if (poll_rx[1] & 0x40) {
+                    std::cerr << "libsi468x: WARNING: Command Error (Status: 0x"
+                              << std::hex << (int)poll_rx[1] << std::dec << ")" << std::endl;
+                }
+                cts_high = true;
+                break;
+            }
+        }
+
+        // Enforce maximum execution timeout window
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - start_time
+                       ).count();
+        if (elapsed >= timeout_ms) {
+            break;
+        }
+
+        // Progressive delay: ((retry * 5) + 1) * 50 microseconds
+        int delay_us = ((retry * 5) + 1) * 50;
+        std::this_thread::sleep_for(std::chrono::microseconds(delay_us));
+    }
+
+    if (!cts_high) {
         return SI468X_ERROR_TIMEOUT;
     }
 
-    // Read reply
+    // 3. Read the response payload if requested
     if (resp && resp_len > 0) {
         std::vector<uint8_t> tx_dummy(resp_len, 0x00);
+        std::memset(resp, 0, resp_len);
         if (spi_transfer(tx_dummy.data(), resp, resp_len) < 0) {
             return SI468X_ERROR_SPI;
         }
     }
+
     return SI468X_SUCCESS;
 }
 
@@ -388,20 +395,12 @@ int si468x_set_frequency(uint32_t frequency_hz)
     for (int i = 0; i < 50; i++) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-        // Poll signal status (2-byte packet: Opcode + INTACK)
-        uint8_t stat_cmd[2] = { SI468X_CMD_DAB_DIGRAD_STATUS, 0x00 };
-        std::vector<uint8_t> resp(12, 0x00);
-
-        // We bypass the global send_command here to ignore 0xc0 Command Errors,
-        // as the chip routinely rejects status queries while actively seeking RF lock.
-        spi_transfer(stat_cmd, nullptr, 2);
-        if (wait_for_cts(100, true)) {
-            std::vector<uint8_t> tx_dummy(12, 0x00);
-            if (spi_transfer(tx_dummy.data(), resp.data(), 12) == 0) {
-                if (resp[4] != 0xc0 && (resp[10] & 0x01) == 1) { // SYNC flag high
-                    locked = true;
-                    break;
-                }
+        // Poll signal status using correct 2-byte command
+        si468x_signal_status_t status;
+        if (si468x_get_signal_status(&status) == SI468X_SUCCESS) {
+            if (status.sync_status == 1) {
+                locked = true;
+                break;
             }
         }
     }
