@@ -192,7 +192,19 @@ int main(int argc, char** argv)
                     si468x_signal_status_t play_status;
                     if (si468x_get_signal_status(&play_status) == SI468X_SUCCESS) {
                         std::cout << "        [Play Sec " << sec << "/10] RSSI: " << (int)play_status.rssi
-                                  << " dBuV | SNR: " << (int)play_status.snr << " dB" << std::endl;
+                                  << " dBuV | SNR: " << (int)play_status.snr << " dB";
+
+                        // Query dynamic component info during playback of the active service!
+                        char play_comp_label[17];
+                        char play_comp_short[9];
+                        uint8_t play_subchannel_id = 0;
+                        std::memset(play_comp_label, 0, sizeof(play_comp_label));
+                        std::memset(play_comp_short, 0, sizeof(play_comp_short));
+
+                        if (si468x_get_component_info(services[0].service_id, services[0].component_id, play_comp_label, play_comp_short, &play_subchannel_id) == 0) {
+                            std::cout << " | PlayLabel: '" << play_comp_label << "' (" << play_comp_short << ") | SubChId: " << (int)play_subchannel_id;
+                        }
+                        std::cout << std::endl;
                     }
                 }
 
