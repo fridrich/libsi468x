@@ -491,11 +491,28 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
 
     std::clog << "libsi468x: Querying on-chip service database..." << std::endl;
 
-    // Send GET_DIGITAL_SERVICE_LIST (0xB5)
-    uint8_t cmd[2] = { SI468X_CMD_GET_DIGITAL_LIST, 0x00 };
-    std::vector<uint8_t> resp(2048, 0x00); // 2KB buffer to capture the database reply
+    // Step 1: Send GET_DIGITAL_SERVICE_LIST (0x80) command to query database size (7-byte read)
+    uint8_t size_cmd[2] = { 0x80, 0x00 };
+    uint8_t size_resp[7];
+    std::memset(size_resp, 0, sizeof(size_resp));
 
-    if (send_command(cmd, 2, resp.data(), 2048) != SI468X_SUCCESS) {
+    if (send_command(size_cmd, 2, size_resp, 7) != SI468X_SUCCESS) {
+        return 0;
+    }
+
+    // Bytes 5-6 (Response Parameter Bytes 1-2) store the 16-bit database size
+    uint16_t db_size = ((uint16_t)size_resp[5] << 8) | size_resp[6];
+    std::clog << "libsi468x: Chip reported database payload size: " << db_size << " bytes." << std::endl;
+
+    if (db_size == 0 || db_size > 2048) {
+        return 0;
+    }
+
+    // Step 2: Send GET_DIGITAL_SERVICE_LIST (0x80) again to download full payload (db_size + 7 bytes)
+    uint16_t full_resp_len = db_size + 7;
+    std::vector<uint8_t> resp(full_resp_len, 0x00);
+
+    if (send_command(size_cmd, 2, resp.data(), full_resp_len) != SI468X_SUCCESS) {
         return 0;
     }
 
@@ -514,7 +531,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         if (services_count >= max_services) {
             break;
         }
-        if (offset + 24 > 2048) {
+        if (offset + 24 > full_resp_len) {
             break;    // Buffer boundary safety guard
         }
 
