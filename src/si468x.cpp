@@ -195,8 +195,9 @@ static int upload_firmware_memory(const unsigned char* data, size_t length)
         packet[3] = 0x00;
         std::memcpy(&packet[4], ptr, bytes_to_write);
 
-        // Transmit packet
-        if (send_command(packet.data(), bytes_to_write + 4, nullptr, 0) != SI468X_SUCCESS) {
+        // Transmit packet and read the 7-byte response to unblock the bootloader
+        uint8_t fut_resp[7];
+        if (send_command(packet.data(), bytes_to_write + 4, fut_resp, 7) != SI468X_SUCCESS) {
             return SI468X_ERROR_SPI;
         }
 
