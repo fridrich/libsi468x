@@ -173,9 +173,9 @@ static int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_
 /* Streams a firmware image from RAM arrays using WRITE_FUT packets */
 static int upload_firmware_memory(const unsigned char* data, size_t length)
 {
-    // Send LOAD_INIT
-    uint8_t load_init_cmd[1] = { SI468X_CMD_LOAD_INIT };
-    if (send_command(load_init_cmd, 1, nullptr, 0) != SI468X_SUCCESS) {
+    // Send LOAD_INIT (must be 2 bytes: 0x06, 0x00)
+    uint8_t load_init_cmd[2] = { SI468X_CMD_LOAD_INIT, 0x00 };
+    if (send_command(load_init_cmd, 2, nullptr, 0) != SI468X_SUCCESS) {
         return SI468X_ERROR_FIRMWARE;
     }
 
@@ -188,11 +188,11 @@ static int upload_firmware_memory(const unsigned char* data, size_t length)
     while (remaining > 0) {
         size_t bytes_to_write = (remaining < chunk_size) ? remaining : chunk_size;
 
-        // Build WRITE_FUT command packet
+        // Build WRITE_FUT command packet (header must be 0x04, 0x00, 0x00, 0x00)
         packet[0] = SI468X_CMD_WRITE_FUT;
         packet[1] = 0x00;
-        packet[2] = (bytes_to_write >> 8) & 0xFF;
-        packet[3] = bytes_to_write & 0xFF;
+        packet[2] = 0x00;
+        packet[3] = 0x00;
         std::memcpy(&packet[4], ptr, bytes_to_write);
 
         // Transmit packet
