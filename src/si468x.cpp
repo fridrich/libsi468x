@@ -970,14 +970,6 @@ int si468x_get_dls_text(char* out_text, int max_len)
 
     // Check DLS presence flag (Bit 0 of resp[5])
     bool dls_present = resp[5] & 0x01;
-    if (dls_present) {
-        std::clog << "libsi468x: DEBUG DLS Raw Bytes 0-39: ";
-        for (int i = 0; i < 40; i++) {
-            std::clog << "0x" << std::hex << (int)resp[i] << " ";
-        }
-        std::clog << std::dec << std::endl;
-    }
-
     if (!dls_present) {
         out_text[0] = '\0';
         return 0; // No active DLS text present
