@@ -613,25 +613,6 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
             break;    // Buffer boundary safety guard
         }
 
-        // Extract num_components early for printing block
-        uint8_t num_components_print = resp[offset + 5] & 0x0F;
-
-        // Print raw 24-byte service header in raw hex to clog
-        std::clog << "libsi468x: Raw Service Header " << i + 1 << " Hex: ";
-        for (int b = 0; b < 24; b++) {
-            std::clog << "0x" << std::hex << (int)resp[offset + b] << " ";
-        }
-        std::clog << std::dec << std::endl;
-
-        // Print raw 4-byte component entries
-        for (int c = 0; c < num_components_print; c++) {
-            std::clog << "  libsi468x: Component " << c + 1 << " Hex: ";
-            for (int b = 0; b < 4; b++) {
-                std::clog << "0x" << std::hex << (int)resp[offset + 24 + (c * 4) + b] << " ";
-            }
-            std::clog << std::dec << std::endl;
-        }
-
         // 1. Service ID (SId): 32-bit Little Endian (offset 0-3)
         uint32_t service_id = resp[offset] |
                               ((uint32_t)resp[offset + 1] << 8) |
@@ -672,11 +653,11 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
                 std::strncpy(list[services_count].label, service_label, 16);
                 list[services_count].label[16] = '\0';
 
-                // Generate clean fallback short label dynamically (welle.io logic: copy 8 chars and strip trailing spaces)
+                // Reconstruct clean fallback short label dynamically (copy first 8 characters and strip trailing spaces)
                 std::strncpy(list[services_count].short_label, service_label, 8);
                 list[services_count].short_label[8] = '\0';
                 for (int len = 7; len >= 0; len--) {
-                    if (list[services_count].short_label[len] == ' ') {
+                    if (list[services_count].short_label[len] == ' ' || list[services_count].short_label[len] == '\0') {
                         list[services_count].short_label[len] = '\0';
                     }
                     else {
