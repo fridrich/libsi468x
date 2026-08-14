@@ -16,7 +16,7 @@ extern "C" {
 #define SI468X_CMD_POWER_UP          0x01
 #define SI468X_CMD_LOAD_INIT         0x06
 #define SI468X_CMD_BOOT              0x07
-#define SI468X_CMD_WRITE_FUT         0x08
+#define SI468X_CMD_WRITE_FUT         0x04
 
 /* Application Opcodes */
 #define SI468X_CMD_GET_SYS_STATE     0x10
