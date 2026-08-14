@@ -127,6 +127,11 @@ static bool wait_for_cts(int timeout_ms = 1000)
         // Poll status byte
         if (spi_transfer(&tx_byte, &rx_byte, 1) == 0) {
             if (rx_byte & SI468X_CTS_MASK) {
+                // Check for Command Error (ERR bit 6)
+                if (rx_byte & 0x40) {
+                    std::cerr << "libsi468x: WARNING: Command Error (Status: 0x"
+                              << std::hex << (int)rx_byte << std::dec << ")" << std::endl;
+                }
                 return true; // CTS is high!
             }
         }
