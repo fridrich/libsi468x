@@ -324,9 +324,9 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     // Wait for the on-chip application operating system to boot and stabilize
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
 
-    // Enable I2S digital output by default upon system init
-    if (si468x_set_audio_output(1) != SI468X_SUCCESS) {
-        std::cerr << "libsi468x: Warning: Failed to configure default I2S output." << std::endl;
+    // Enable direct onboard analog headphone output unconditionally upon system init
+    if (si468x_set_audio_output(0) != SI468X_SUCCESS) {
+        std::cerr << "libsi468x: Warning: Failed to configure default Analog output." << std::endl;
     }
 
     // Diagnostic query: Print raw chip revision info over SPI
@@ -510,18 +510,33 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
     std::clog << "libsi468x: Starting service playback (SId: 0x"
               << std::hex << service_id << ", CompId: " << std::dec << component_id << ")..." << std::endl;
 
-    uint8_t cmd[9];
-    cmd[0] = SI468X_CMD_START_DIGITAL;
-    cmd[1] = 0x00;
-    cmd[2] = (service_id >> 24) & 0xFF;
-    cmd[3] = (service_id >> 16) & 0xFF;
-    cmd[4] = (service_id >> 8) & 0xFF;
-    cmd[5] = service_id & 0xFF;
-    cmd[6] = (component_id >> 16) & 0xFF;
-    cmd[7] = (component_id >> 8) & 0xFF;
-    cmd[8] = component_id & 0xFF;
+    // Build 12-byte command packet matching native binary exactly:
+    // - Byte 0: Opcode 0xB3 (START_DIGITAL)
+    // - Byte 1: SCIdS index (try 0 first, if fails try 1)
+    // - Byte 2..3: 0x00 (reserved)
+    // - Byte 4..7: Service ID (32-bit Little-Endian)
+    // - Byte 8..11: Global Component ID (32-bit Little-Endian)
+    uint8_t cmd[12] = {
+        0xB3, 0x00, 0x00, 0x00,
+        (uint8_t)(service_id & 0xFF),
+        (uint8_t)((service_id >> 8) & 0xFF),
+        (uint8_t)((service_id >> 16) & 0xFF),
+        (uint8_t)((service_id >> 24) & 0xFF),
+        (uint8_t)(component_id & 0xFF),
+        (uint8_t)((component_id >> 8) & 0xFF),
+        (uint8_t)((component_id >> 16) & 0xFF),
+        (uint8_t)((component_id >> 24) & 0xFF)
+    };
 
-    return send_command(cmd, 9, nullptr, 0);
+    // Send first attempt with SCIdS = 0
+    int ret = send_command(cmd, 12, nullptr, 0);
+    if (ret == SI468X_SUCCESS) {
+        return SI468X_SUCCESS;
+    }
+
+    // Try fallback attempt with SCIdS = 1 just like native play_station()
+    cmd[1] = 0x01;
+    return send_command(cmd, 12, nullptr, 0);
 }
 
 int si468x_stop_service(void)
