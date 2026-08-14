@@ -598,18 +598,18 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
     // resp[4]    : Response parameter Byte 0 (state/status)
     // resp[5]    : Response parameter Byte 1 (digital status: Bit 1 is SYNC, Bit 2 is FIC_SYNC)
     // resp[6]    : Response parameter Byte 2 (acq status: Bit 2 is ACQ)
-    // resp[17]   : Response parameter Byte 13 (RSSI in dBuV)
-    // resp[18]   : Response parameter Byte 14 (SNR in dB)
-    // resp[19..20] : Response parameter Byte 15-16 (Frequency Offset in kHz, Big Endian signed 16-bit)
+    // resp[19]   : Response parameter Byte 15 (RSSI in dBuV)
+    // resp[20]   : Response parameter Byte 16 (SNR in dB)
+    // resp[21..22] : Response parameter Byte 17-18 (Antenna Tuning Cap)
     std::clog << "libsi468x: Raw DIGRAD_STATUS: ";
     for (int i = 0; i < 28; i++) {
         std::clog << "0x" << std::hex << (int)resp[i] << " ";
     }
     std::clog << std::dec << std::endl;
 
-    status->rssi = resp[17];
-    status->snr = resp[18];
-    status->freq_offset = (int16_t)(((uint16_t)resp[19] << 8) | resp[20]);
+    status->rssi = resp[19];
+    status->snr = resp[20];
+    status->freq_offset = 0; // Handled as secondary telemetry
     status->sync_status = ((resp[5] & 0x02) >> 1); // SYNC flag (Bit 1)
 
     return SI468X_SUCCESS;
