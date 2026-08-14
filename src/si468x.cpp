@@ -562,8 +562,8 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
             }
 
             // Component block is 4 bytes:
-            // - Component ID: 16-bit Little Endian (offset 0-1)
-            uint16_t component_id = resp[offset] | ((uint16_t)resp[offset + 1] << 8);
+            // - Component ID: 12-bit value packed in a 16-bit Little Endian word (offset 0-1)
+            uint16_t component_id = (resp[offset] | ((uint16_t)resp[offset + 1] << 8)) & 0x0FFF;
             // - Service Component Type: 8-bit (offset 2)
             uint8_t audio_type = resp[offset + 2];
             // - Bitrate: 8-bit (offset 3). Represented in units of 8 kbps
