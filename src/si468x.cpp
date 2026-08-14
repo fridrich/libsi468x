@@ -645,28 +645,27 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
 
             // Store the first audio component of the service in our output list
             if (c == 0) {
-                char dynamic_label[17];
-                char dynamic_short_label[9];
-                uint8_t subchannel_id_dynamic = 0;
+                list[services_count].service_id = service_id;
+                list[services_count].component_id = component_id;
+                list[services_count].audio_type = subchannel_id; // Reuse audio_type to pass Subchannel ID cleanly!
+                list[services_count].bitrate = 0;                // Resolved dynamically during playback
 
-                std::memset(dynamic_label, 0, sizeof(dynamic_label));
-                std::memset(dynamic_short_label, 0, sizeof(dynamic_short_label));
+                std::strncpy(list[services_count].label, service_label, 16);
+                list[services_count].label[16] = '\0';
 
-                // Dynamically fetch actual over-the-air labels and subchannel parameters using 0xBB (valid component_id)!
-                if (si468x_get_component_info(service_id, component_id, dynamic_label, dynamic_short_label, &subchannel_id_dynamic) == 0) {
-                    list[services_count].service_id = service_id;
-                    list[services_count].component_id = component_id;
-                    list[services_count].audio_type = subchannel_id_dynamic; // Reuse audio_type to pass Subchannel ID cleanly!
-                    list[services_count].bitrate = 0;                        // Resolved dynamically during playback
-
-                    std::strncpy(list[services_count].label, dynamic_label, 16);
-                    list[services_count].label[16] = '\0';
-
-                    std::strncpy(list[services_count].short_label, dynamic_short_label, 8);
-                    list[services_count].short_label[8] = '\0';
-
-                    services_count++;
+                // Generate clean fallback short label dynamically (welle.io logic: copy 8 chars and strip trailing spaces)
+                std::strncpy(list[services_count].short_label, service_label, 8);
+                list[services_count].short_label[8] = '\0';
+                for (int len = 7; len >= 0; len--) {
+                    if (list[services_count].short_label[len] == ' ') {
+                        list[services_count].short_label[len] = '\0';
+                    }
+                    else {
+                        break;
+                    }
                 }
+
+                services_count++;
             }
 
             offset += 4; // Component Entry is 4 bytes
