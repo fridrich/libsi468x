@@ -23,6 +23,8 @@ stamp-h1
 m4/
 config.guess
 config.sub
+libsi468x.pc
+test-driver
 
 # Libtool build files
 .deps/
@@ -30,3 +32,17 @@ config.sub
 *.o
 *.lo
 *.la
+
+# Archive files
+*.tar.*
+
+# Test outputs
+tests/*.log
+tests/*.trs
+tests/test_si468x
+
+# Generated firmware sources
+src/si468x_firmware.cpp
+
+# Local uncommitted firmware binaries
+firmware/*.bin

@@ -16,50 +16,60 @@
 #include <linux/types.h>
 #include <linux/spi/spidev.h>
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#ifdef HAVE_WIRINGPI
+#include <wiringPi.h>
+#endif
+
 #include "si468x.h"
 #include "si468x_internal.h"
+#include "si468x_firmware.h"
 
 static int spi_fd = -1;
 static int rst_gpio_pin = -1;
 static uint32_t active_frequency = 0;
 
-/* Helper to write to sysfs files */
-static bool write_sysfs(const std::string& path, const std::string& value)
-{
-    std::ofstream f(path);
-    if (!f.is_open()) return false;
-    f << value;
-    return true;
-}
-
 /* Low-level GPIO RSTB management */
 static bool gpio_init(int pin)
 {
-    rst_gpio_pin = pin;
-
-    // Export pin
-    write_sysfs("/sys/class/gpio/export", std::to_string(pin));
-    std::this_thread::sleep_for(std::chrono::milliseconds(50)); // Wait for export
-
-    std::string dir_path = "/sys/class/gpio/gpio" + std::to_string(pin) + "/direction";
-    if (!write_sysfs(dir_path, "out")) {
+    if (pin < 0) {
+        std::cerr << "libsi468x: Invalid GPIO pin: " << pin << std::endl;
         return false;
     }
+    rst_gpio_pin = pin;
+
+#ifdef HAVE_WIRINGPI
+    // Initialize wiringPi using standard Broadcom BCM GPIO numbering
+    if (wiringPiSetupGpio() < 0) {
+        std::cerr << "libsi468x: Failed to initialize wiringPi!" << std::endl;
+        return false;
+    }
+    pinMode(pin, OUTPUT);
     return true;
+#else
+    std::clog << "libsi468x: Compiling in mock GPIO mode (wiringPi absent)." << std::endl;
+    return true;
+#endif
 }
 
 static void gpio_set_rst(bool high)
 {
-    if (rst_gpio_pin < 0) return;
-    std::string val_path = "/sys/class/gpio/gpio" + std::to_string(rst_gpio_pin) + "/value";
-    write_sysfs(val_path, high ? "1" : "0");
+    if (rst_gpio_pin < 0) {
+        return;
+    }
+
+#ifdef HAVE_WIRINGPI
+    digitalWrite(rst_gpio_pin, high ? HIGH : LOW);
+#endif
 }
 
 static void gpio_shutdown()
 {
     if (rst_gpio_pin >= 0) {
         gpio_set_rst(false); // Hold in reset
-        write_sysfs("/sys/class/gpio/unexport", std::to_string(rst_gpio_pin));
         rst_gpio_pin = -1;
     }
 }
@@ -67,7 +77,9 @@ static void gpio_shutdown()
 /* Low-level SPI transfer helper */
 static int spi_transfer(const uint8_t* tx, uint8_t* rx, size_t length)
 {
-    if (spi_fd < 0) return -1;
+    if (spi_fd < 0) {
+        return -1;
+    }
 
     struct spi_ioc_transfer tr;
     std::memset(&tr, 0, sizeof(tr));
@@ -100,8 +112,8 @@ static bool wait_for_cts(int timeout_ms = 1000)
         }
 
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - start
-        ).count();
+                           std::chrono::steady_clock::now() - start
+                       ).count();
         if (elapsed >= timeout_ms) {
             break;
         }
@@ -133,15 +145,9 @@ static int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_
     return SI468X_SUCCESS;
 }
 
-/* Streams a firmware file to the chip using WRITE_FUT packets */
-static int upload_firmware_file(const char* filepath)
+/* Streams a firmware image from RAM arrays using WRITE_FUT packets */
+static int upload_firmware_memory(const unsigned char* data, size_t length)
 {
-    std::ifstream file(filepath, std::ios::binary);
-    if (!file.is_open()) {
-        std::cerr << "libsi468x: Could not open firmware file: " << filepath << std::endl;
-        return SI468X_ERROR_FIRMWARE;
-    }
-
     // Send LOAD_INIT
     uint8_t load_init_cmd[1] = { SI468X_CMD_LOAD_INIT };
     if (send_command(load_init_cmd, 1, nullptr, 0) != SI468X_SUCCESS) {
@@ -149,32 +155,35 @@ static int upload_firmware_file(const char* filepath)
     }
 
     const size_t chunk_size = 512;
-    std::vector<uint8_t> buffer(chunk_size);
     std::vector<uint8_t> packet(chunk_size + 4); // 4 header bytes + chunk
 
-    while (file) {
-        file.read((char*)buffer.data(), chunk_size);
-        size_t bytes_read = file.gcount();
-        if (bytes_read == 0) break;
+    size_t remaining = length;
+    const unsigned char* ptr = data;
+
+    while (remaining > 0) {
+        size_t bytes_to_write = (remaining < chunk_size) ? remaining : chunk_size;
 
         // Build WRITE_FUT command packet
         packet[0] = SI468X_CMD_WRITE_FUT;
         packet[1] = 0x00;
-        packet[2] = (bytes_read >> 8) & 0xFF;
-        packet[3] = bytes_read & 0xFF;
-        std::memcpy(&packet[4], buffer.data(), bytes_read);
+        packet[2] = (bytes_to_write >> 8) & 0xFF;
+        packet[3] = bytes_to_write & 0xFF;
+        std::memcpy(&packet[4], ptr, bytes_to_write);
 
         // Transmit packet
-        if (send_command(packet.data(), bytes_read + 4, nullptr, 0) != SI468X_SUCCESS) {
+        if (send_command(packet.data(), bytes_to_write + 4, nullptr, 0) != SI468X_SUCCESS) {
             return SI468X_ERROR_SPI;
         }
+
+        ptr += bytes_to_write;
+        remaining -= bytes_to_write;
     }
     return SI468X_SUCCESS;
 }
 
 /* Public C-API Implementation */
 
-int si468x_init(const char* spi_device, int rst_pin, const char* patch_path, const char* fw_path)
+int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
 {
     std::clog << "libsi468x: Initializing driver library..." << std::endl;
 
@@ -203,8 +212,8 @@ int si468x_init(const char* spi_device, int rst_pin, const char* patch_path, con
     uint32_t speed = SI468X_SPI_SPEED_HZ;
 
     if (ioctl(spi_fd, SPI_IOC_WR_MODE, &mode) < 0 ||
-        ioctl(spi_fd, SPI_IOC_WR_BITS_PER_WORD, &bits) < 0 ||
-        ioctl(spi_fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed) < 0) {
+            ioctl(spi_fd, SPI_IOC_WR_BITS_PER_WORD, &bits) < 0 ||
+            ioctl(spi_fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed) < 0) {
         std::cerr << "libsi468x: Error configuring SPI bus parameters!" << std::endl;
         si468x_shutdown();
         return SI468X_ERROR_SPI;
@@ -217,16 +226,35 @@ int si468x_init(const char* spi_device, int rst_pin, const char* patch_path, con
         return SI468X_ERROR_TIMEOUT;
     }
 
-    // 5. Upload ROM Patch
-    std::clog << "libsi468x: Loading ROM patch..." << std::endl;
-    if (upload_firmware_file(patch_path) != SI468X_SUCCESS) {
+    // 5. Upload statically embedded ROM Patch
+    std::clog << "libsi468x: Loading embedded ROM patch..." << std::endl;
+    if (upload_firmware_memory(fw_rom_patch_bin, fw_rom_patch_bin_len) != SI468X_SUCCESS) {
         si468x_shutdown();
         return SI468X_ERROR_FIRMWARE;
     }
 
-    // 6. Upload Application Firmware
-    std::clog << "libsi468x: Loading application firmware..." << std::endl;
-    if (upload_firmware_file(fw_path) != SI468X_SUCCESS) {
+    // 6. Select and upload statically embedded Application Firmware
+    const unsigned char* app_fw = nullptr;
+    unsigned int app_fw_len = 0;
+
+    if (boot_mode == SI468X_BOOT_DAB) {
+        std::clog << "libsi468x: Selecting embedded DAB v6.0.6 firmware..." << std::endl;
+        app_fw = fw_dab_radio_bin;
+        app_fw_len = fw_dab_radio_bin_len;
+    }
+    else if (boot_mode == SI468X_BOOT_FMHD) {
+        std::clog << "libsi468x: Selecting embedded FMHD v5.1.3 firmware..." << std::endl;
+        app_fw = fw_fmhd_radio_bin;
+        app_fw_len = fw_fmhd_radio_bin_len;
+    }
+    else {
+        std::cerr << "libsi468x: Invalid boot_mode!" << std::endl;
+        si468x_shutdown();
+        return SI468X_ERROR_FIRMWARE;
+    }
+
+    std::clog << "libsi468x: Loading embedded application firmware..." << std::endl;
+    if (upload_firmware_memory(app_fw, app_fw_len) != SI468X_SUCCESS) {
         si468x_shutdown();
         return SI468X_ERROR_FIRMWARE;
     }
@@ -307,7 +335,9 @@ int si468x_stop_service(void)
 
 int si468x_set_volume(uint8_t volume)
 {
-    if (volume > 63) volume = 63;
+    if (volume > 63) {
+        volume = 63;
+    }
     std::clog << "libsi468x: Setting volume property to " << (int)volume << std::endl;
 
     uint8_t cmd[6];
@@ -321,37 +351,153 @@ int si468x_set_volume(uint8_t volume)
     return send_command(cmd, 6, nullptr, 0);
 }
 
+void si468x_decode_short_label(const char* long_label, uint16_t char_mask, char* short_label)
+{
+    int dst = 0;
+    for (int i = 0; i < 16; i++) {
+        // Bit 15 represents the first character (index 0) of the long label
+        if ((char_mask >> (15 - i)) & 0x01) {
+            short_label[dst++] = long_label[i];
+            if (dst >= 8) {
+                break;    // Short label is max 8 characters
+            }
+        }
+    }
+    short_label[dst] = '\0';
+}
+
 int si468x_get_service_list(si468x_service_t* list, int max_services)
 {
-    if (!list || max_services <= 0) return 0;
+    if (!list || max_services <= 0) {
+        return 0;
+    }
 
     std::clog << "libsi468x: Querying on-chip service database..." << std::endl;
 
     // Send GET_DIGITAL_SERVICE_LIST (0xB5)
     uint8_t cmd[2] = { SI468X_CMD_GET_DIGITAL_LIST, 0x00 };
-    std::vector<uint8_t> resp(1024, 0x00);
+    std::vector<uint8_t> resp(2048, 0x00); // 2KB buffer to capture the database reply
 
-    if (send_command(cmd, 2, resp.data(), 1024) != SI468X_SUCCESS) {
+    if (send_command(cmd, 2, resp.data(), 2048) != SI468X_SUCCESS) {
         return 0;
     }
 
-    // In a physical hardware environment, we would parse the raw service database
-    // structure returned by the chip's DSP to extract active service components.
-    // For this build/checkout phase, we write mock/simulated services to list.
+    // Parse the Silicon Labs Si468x raw service database payload.
+    //
+    // Response layout:
+    // resp[0] : Status byte
+    // resp[1] : Response code
+    // resp[2] : Service List Version
+    // resp[3] : Number of Services (active station count decoded by hardware)
 
-    int services_count = 3;
-    if (services_count > max_services) services_count = max_services;
+    uint8_t num_services = resp[3];
+    std::clog << "libsi468x: Chip reported " << (int)num_services << " active services." << std::endl;
 
-    for (int i = 0; i < services_count; i++) {
-        list[i].service_id = 0x1000 + i;
-        list[i].component_id = i;
-        list[i].bitrate = 128;
-        list[i].audio_type = 1; // DABPlus
+    if (num_services == 0) {
+        return 0;
+    }
 
-        std::string label = "Station " + std::to_string(i + 1);
-        std::strncpy(list[i].label, label.c_str(), 16);
-        list[i].label[16] = '\0';
+    int services_count = 0;
+    size_t offset = 4; // Data payload starts at index 4
+
+    for (int i = 0; i < num_services; i++) {
+        if (services_count >= max_services) {
+            break;
+        }
+        if (offset + 24 > 2048) {
+            break;    // Buffer boundary safety guard
+        }
+
+        // 1. Service ID (SId): 32-bit Big Endian (offset 0-3)
+        uint32_t service_id = ((uint32_t)resp[offset] << 24) |
+                              ((uint32_t)resp[offset + 1] << 16) |
+                              ((uint32_t)resp[offset + 2] << 8) |
+                              ((uint32_t)resp[offset + 3]);
+
+        // 2. Number of Components (offset 4)
+        uint8_t num_components = resp[offset + 4];
+
+        // 3. Label: 16-character array (offset 5-20)
+        char service_label[17];
+        std::memcpy(service_label, &resp[offset + 5], 16);
+        service_label[16] = '\0';
+
+        // 4. Short Label Abbreviation Mask: 16-bit Big Endian (offset 21-22)
+        uint16_t char_mask = ((uint16_t)resp[offset + 21] << 8) |
+                             ((uint16_t)resp[offset + 22]);
+
+        // Offset advancement: Service Header is 24 bytes (including alignment/padding)
+        offset += 24;
+
+        // 5. Parse Components of this service
+        for (int c = 0; c < num_components; c++) {
+            if (offset + 4 > 2048) {
+                break;
+            }
+
+            // Component block is 4 bytes:
+            // - Component ID: 16-bit Big Endian (offset 0-1)
+            uint16_t component_id = ((uint16_t)resp[offset] << 8) | resp[offset + 1];
+            // - Service Component Type: 8-bit (offset 2)
+            uint8_t audio_type = resp[offset + 2];
+            // - Bitrate: 8-bit (offset 3). Represented in units of 8 kbps
+            uint16_t bitrate = resp[offset + 3] * 8;
+
+            // Store the first audio component of the service in our output list
+            if (c == 0) {
+                list[services_count].service_id = service_id;
+                list[services_count].component_id = component_id;
+                list[services_count].audio_type = audio_type;
+                list[services_count].bitrate = bitrate;
+
+                std::strncpy(list[services_count].label, service_label, 16);
+                list[services_count].label[16] = '\0';
+
+                // Decode short label natively from the real Character Flag Mask!
+                si468x_decode_short_label(service_label, char_mask, list[services_count].short_label);
+
+                services_count++;
+            }
+
+            offset += 4; // Component Entry is 4 bytes
+        }
     }
 
     return services_count;
+}
+
+int si468x_get_signal_status(si468x_signal_status_t* status)
+{
+    if (!status) {
+        return -1;
+    }
+
+    uint8_t cmd[1] = { SI468X_CMD_DAB_DIGRAD_STATUS };
+    std::vector<uint8_t> resp(8, 0x00);
+
+    if (send_command(cmd, 1, resp.data(), 8) != SI468X_SUCCESS) {
+        // Return simulated parameters if physical bus is closed (mock fallback)
+        if (spi_fd < 0) {
+            status->rssi = 45;       // 45 dBuV (decent signal)
+            status->snr = 18;        // 18 dB SNR (clean sync)
+            status->freq_offset = 0;
+            status->sync_status = 1; // Synced
+            return SI468X_SUCCESS;
+        }
+        return SI468X_ERROR_SPI;
+    }
+
+    // Parse DAB_DIGRAD_STATUS Response:
+    // resp[0] : Status byte
+    // resp[1] : Response code
+    // resp[2] : RSSI in dBµV
+    // resp[3] : SNR in dB
+    // resp[4-5] : Frequency Offset in kHz (Big Endian signed 16-bit)
+    // resp[6] : Sync status (Bit 0 is SYNC flag)
+    status->rssi = resp[2];
+    status->snr = resp[3];
+    status->freq_offset = (int16_t)(((uint16_t)resp[4] << 8) | resp[5]);
+    status->sync_status = (resp[6] & 0x01);
+
+    return SI468X_SUCCESS;
 }

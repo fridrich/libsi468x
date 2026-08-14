@@ -6,6 +6,12 @@
 #ifndef __SI468X_INTERNAL_H__
 #define __SI468X_INTERNAL_H__
 
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Bootloader Opcodes */
 #define SI468X_CMD_POWER_UP          0x01
 #define SI468X_CMD_LOAD_INIT         0x06
@@ -18,6 +24,7 @@
 #define SI468X_CMD_GET_PROPERTY      0x13
 #define SI468X_CMD_GET_STATUS        0x14
 #define SI468X_CMD_DAB_TUNE_FREQ     0xB0
+#define SI468X_CMD_DAB_DIGRAD_STATUS 0xB2
 #define SI468X_CMD_START_DIGITAL     0xB3
 #define SI468X_CMD_STOP_DIGITAL      0xB4
 #define SI468X_CMD_GET_DIGITAL_LIST  0xB5
@@ -37,5 +44,12 @@
 
 /* Helper macros */
 #define SI468X_CTS_MASK              0x80
+
+/* Private Internal Helper Functions (tested via unit tests) */
+void si468x_decode_short_label(const char* long_label, uint16_t char_mask, char* short_label);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* __SI468X_INTERNAL_H__ */

@@ -1,0 +1,10 @@
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+includedir=@includedir@
+
+Name: libsi468x
+Description: C-API Driver for Silicon Labs Si468x Receivers
+Version: @PACKAGE_VERSION@
+Libs: -L${libdir} -lsi468x
+Cflags: -I${includedir}

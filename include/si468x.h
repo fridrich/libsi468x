@@ -19,25 +19,36 @@ extern "C" {
 #define SI468X_ERROR_BOOT      -4
 #define SI468X_ERROR_TIMEOUT   -5
 
+/* Bootloader / Application firmware modes */
+#define SI468X_BOOT_DAB         0
+#define SI468X_BOOT_FMHD        1
+
 typedef struct {
     uint32_t service_id;
     uint32_t component_id;
     char label[17];            /* 16-character DAB Label + null-terminator */
+    char short_label[9];       /* 8-character Short Label + null-terminator */
     uint16_t bitrate;
     uint8_t audio_type;        /* 0 for DAB, 1 for DAB+, etc. */
 } si468x_service_t;
 
+typedef struct {
+    uint8_t rssi;              /* RSSI in dBµV */
+    uint8_t snr;               /* SNR in dB */
+    int16_t freq_offset;       /* Frequency offset in kHz */
+    uint8_t sync_status;       /* 1 if synced, 0 otherwise */
+} si468x_signal_status_t;
+
 /*
  * Initialize the hardware, reset the chip, upload the patch, stream the
- * selected application firmware (DAB vs FMHD), and boot the receiver.
+ * selected application firmware (statically embedded DAB vs FMHD), and boot.
  *
  * Params:
  *   spi_device: Path to the SPI character device (e.g. "/dev/spidev0.0")
  *   rst_pin: GPIO pin number used for RSTB reset line (e.g. 16)
- *   patch_path: Path to the ROM patch file (fw_rom00_patch016.bin)
- *   fw_path: Path to the main application firmware (.bin or .bif file)
+ *   boot_mode: SI468X_BOOT_DAB (for DAB mode) or SI468X_BOOT_FMHD (for FM-HD)
  */
-int si468x_init(const char* spi_device, int rst_pin, const char* patch_path, const char* fw_path);
+int si468x_init(const char* spi_device, int rst_pin, int boot_mode);
 
 /*
  * Shut down the chip, close open file handles, and drive RSTB low (safety state).
@@ -74,6 +85,11 @@ int si468x_set_volume(uint8_t volume);
  * Returns the number of services written to the list array.
  */
 int si468x_get_service_list(si468x_service_t* list, int max_services);
+
+/*
+ * Query the on-chip DSP for digital radio signal metrics (RSSI, SNR, Frequency Offset, and Sync status).
+ */
+int si468x_get_signal_status(si468x_signal_status_t* status);
 
 #ifdef __cplusplus
 }
