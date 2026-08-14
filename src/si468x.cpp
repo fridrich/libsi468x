@@ -144,8 +144,8 @@ static int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_
         if (spi_transfer(poll_tx, poll_rx, 7) == 0) {
             // poll_rx[1] is the co-processor's status byte; Bit 7 (0x80) is the CTS flag
             if (poll_rx[1] & 0x80) {
-                // Check for Command Error (ERR bit 6)
-                if (poll_rx[1] & 0x40) {
+                // Check for Command Error (ERR bit 6), silencing expected queue-empty codes for 0x84/0xBB/0x80
+                if ((poll_rx[1] & 0x40) && cmd && cmd[0] != 0x84 && cmd[0] != 0xBB && cmd[0] != 0x80) {
                     std::cerr << "libsi468x: WARNING: Command Error (Status: 0x"
                               << std::hex << (int)poll_rx[1] << std::dec << ")" << std::endl;
                 }
