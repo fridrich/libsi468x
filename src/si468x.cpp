@@ -517,6 +517,43 @@ uint32_t si468x_get_frequency(void)
     return active_frequency;
 }
 
+static int si468x_enable_service_data(void)
+{
+    std::clog << "libsi468x: Enabling on-chip PAD/XPAD decoder (Properties 0xB200-0xB204)..." << std::endl;
+    uint8_t cmd[6];
+
+    // Set Property 0xB200 to 0x003F (63) to enable PAD/XPAD decoding
+    cmd[0] = SI468X_CMD_SET_PROPERTY;
+    cmd[1] = 0x00;
+    cmd[2] = 0xB2;
+    cmd[3] = 0x00;
+    cmd[4] = 0x00;
+    cmd[5] = 0x3F;
+    send_command(cmd, 6, nullptr, 0);
+
+    // Set Property 0xB201 to 0x000C (12)
+    cmd[3] = 0x01;
+    cmd[4] = 0x00;
+    cmd[5] = 0x0C;
+    send_command(cmd, 6, nullptr, 0);
+
+    // Set Property 0xB202 to 0x07D0 (2000)
+    cmd[3] = 0x02;
+    cmd[4] = 0x07;
+    cmd[5] = 0xD0;
+    send_command(cmd, 6, nullptr, 0);
+
+    // Set Property 0xB203 to 0x07D0 (2000)
+    cmd[3] = 0x03;
+    send_command(cmd, 6, nullptr, 0);
+
+    // Set Property 0xB204 to 0x07D0 (2000)
+    cmd[3] = 0x04;
+    send_command(cmd, 6, nullptr, 0);
+
+    return SI468X_SUCCESS;
+}
+
 int si468x_play_service(uint32_t service_id, uint32_t component_id)
 {
     std::clog << "libsi468x: Starting service playback (SId: 0x"
@@ -554,6 +591,10 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
     if (ret == SI468X_SUCCESS) {
         // Re-apply the active configured audio output path upon service play
         si468x_set_audio_output(active_audio_mode);
+
+        // Turn on the on-chip PAD/XPAD decoder so that DLS text and MOT slideshow are dynamically decoded
+        si468x_enable_service_data();
+
         return SI468X_SUCCESS;
     }
 
