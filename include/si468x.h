@@ -98,6 +98,12 @@ int si468x_get_signal_status(si468x_signal_status_t* status);
  */
 int si468x_set_audio_output(int enable_i2s);
 
+/*
+ * Retrieve the current tuned DAB ensemble label and Ensemble ID (EId/UEID).
+ * Returns SI468X_SUCCESS on success, or negative error code.
+ */
+int si468x_get_ensemble_info(char* label, uint16_t* ueid);
+
 #ifdef __cplusplus
 }
 #endif

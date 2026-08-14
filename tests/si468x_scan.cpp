@@ -90,7 +90,17 @@ int main(int argc, char** argv)
 
         std::cout << std::right << std::setw(3) << (int)status.rssi << " dBuV | "
                   << std::setw(3) << (int)status.snr << " | ";
-        std::cout << "[SYNCED] *** Ensemble Found! ***" << std::endl;
+
+        // Query the current tuned Ensemble Name
+        char ensemble_label[17];
+        uint16_t ensemble_id = 0;
+        std::memset(ensemble_label, 0, sizeof(ensemble_label));
+        if (si468x_get_ensemble_info(ensemble_label, &ensemble_id) == 0) {
+            std::cout << "[SYNCED] *** Ensemble: " << ensemble_label << " (EId: 0x" << std::hex << ensemble_id << std::dec << ") ***" << std::endl;
+        }
+        else {
+            std::cout << "[SYNCED] *** Ensemble Found! ***" << std::endl;
+        }
         total_ensembles++;
 
         // Fetch service list from chip's memory

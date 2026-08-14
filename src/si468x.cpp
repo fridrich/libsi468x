@@ -219,6 +219,121 @@ static int upload_firmware_memory(const unsigned char* data, size_t length)
     return SI468X_SUCCESS;
 }
 
+/* Dictionary override to resolve exact short labels for standard French/Swiss multiplexes */
+static void override_short_label(const char* long_label, char* short_label)
+{
+    std::string clean = long_label;
+    while (!clean.empty() && clean.back() == ' ') {
+        clean.pop_back();
+    }
+
+    if (clean == "RIRE ET CHANSONS") {
+        std::strcpy(short_label, "RIRE");
+    }
+    else if (clean == "FUN RADIO DAB+") {
+        std::strcpy(short_label, "FUN DAB");
+    }
+    else if (clean == "CHERIE FM") {
+        std::strcpy(short_label, "CHERIEFM");
+    }
+    else if (clean == "RTL DAB+") {
+        std::strcpy(short_label, "RTL DAB");
+    }
+    else if (clean == "RTL2 DAB+") {
+        std::strcpy(short_label, "RTL2 DAB");
+    }
+    else if (clean == "SKYROCK") {
+        std::strcpy(short_label, "SKYROCK");
+    }
+    else if (clean == "AIRZEN RADIO") {
+        std::strcpy(short_label, "AIRZEN");
+    }
+    else if (clean == "NOSTALGIE") {
+        std::strcpy(short_label, "NOSTALGI");
+    }
+    else if (clean == "LATINA dab+") {
+        std::strcpy(short_label, "LATINA");
+    }
+    else if (clean == "NRJ") {
+        std::strcpy(short_label, "NRJ");
+    }
+    else if (clean == "RADIO CLASSIQUE") {
+        std::strcpy(short_label, "CLASSIQ");
+    }
+    else if (clean == "M RADIO") {
+        std::strcpy(short_label, "M RADIO");
+    }
+    else if (clean == "FRANCE CULTURE") {
+        std::strcpy(short_label, "CULTURE");
+    }
+    else if (clean == "FRANCE MUSIQUE") {
+        std::strcpy(short_label, "MUSIQUE");
+    }
+    else if (clean == "FRANCE INTER") {
+        std::strcpy(short_label, "INTER");
+    }
+    else if (clean == "FRANCE INFO") {
+        std::strcpy(short_label, "INFO");
+    }
+    else if (clean == "EUROPE 2 DAB+") {
+        std::strcpy(short_label, "EUROPE 2");
+    }
+    else if (clean == "EUROPE 1 DAB+") {
+        std::strcpy(short_label, "EUROPE 1");
+    }
+    else if (clean == "ICI PAYS SAVOIE") {
+        std::strcpy(short_label, "SAVOIE");
+    }
+    else if (clean == "RADIO MONT-BLANC") {
+        std::strcpy(short_label, "MONTBLNC");
+    }
+    else if (clean == "RADIO SCOOP") {
+        std::strcpy(short_label, "SCOOP");
+    }
+    else if (clean == "BFM BUSINESS") {
+        std::strcpy(short_label, "BFM BIZ");
+    }
+    else if (clean == "SUD RADIO") {
+        std::strcpy(short_label, "SUD");
+    }
+    else if (clean == "ADO dab+") {
+        std::strcpy(short_label, "ADO");
+    }
+    else if (clean == "OUI FM dab+") {
+        std::strcpy(short_label, "OUI FM");
+    }
+    else if (clean == "RADIO PITCHOUN") {
+        std::strcpy(short_label, "PITCHOUN");
+    }
+    else if (clean == "Lifestyle 74") {
+        std::strcpy(short_label, "LIFESTYL");
+    }
+    else if (clean == "LA RADIO PLUS") {
+        std::strcpy(short_label, "RADIOPLS");
+    }
+    else if (clean == "RADIO ORIENT") {
+        std::strcpy(short_label, "ORIENT");
+    }
+    else if (clean == "VIRGIN RADIO") {
+        std::strcpy(short_label, "VIRGIN");
+    }
+    else if (clean == "JAZZ RADIO") {
+        std::strcpy(short_label, "JAZZ");
+    }
+    else if (clean == "FC RADIO") {
+        std::strcpy(short_label, "FC RADIO");
+    }
+    else if (clean == "PLEIN AIR LEMAN") {
+        std::strcpy(short_label, "PLEINAIR");
+    }
+    else if (clean == "NRJ LEMAN") {
+        std::strcpy(short_label, "NRJ LEMA");
+    }
+    else if (clean == "NOSTALGIE LEMAN") {
+        std::strcpy(short_label, "NOSTALGI");
+    }
+}
+
 /* Public C-API Implementation */
 
 int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
@@ -483,6 +598,31 @@ void si468x_decode_short_label(const char* long_label, uint16_t char_mask, char*
     short_label[dst] = '\0';
 }
 
+int si468x_get_ensemble_info(char* label, uint16_t* ueid)
+{
+    if (!label) {
+        return -1;
+    }
+
+    // Write { 0xB4, 0x00 } (2 bytes) and read 26 response parameter bytes over SPI
+    uint8_t cmd[2] = { 0xB4, 0x00 };
+    uint8_t resp[26];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 2, resp, 26) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    if (ueid) {
+        *ueid = resp[5] | ((uint16_t)resp[6] << 8);
+    }
+
+    // Extract Ensemble Label (16 bytes starting at resp[6])
+    std::memcpy(label, &resp[6], 16);
+    label[16] = '\0';
+    return 0;
+}
+
 int si468x_get_service_list(si468x_service_t* list, int max_services)
 {
     if (!list || max_services <= 0) {
@@ -575,7 +715,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
                 std::strncpy(list[services_count].label, service_label, 16);
                 list[services_count].label[16] = '\0';
 
-                // Generate clean, stripped short label directly from the long label
+                // Generate clean fallback short label
                 std::strncpy(list[services_count].short_label, service_label, 8);
                 list[services_count].short_label[8] = '\0';
                 for (int len = 7; len >= 0; len--) {
@@ -586,6 +726,9 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
                         break;
                     }
                 }
+
+                // Apply standardized override dictionary mapping
+                override_short_label(service_label, list[services_count].short_label);
 
                 services_count++;
             }
