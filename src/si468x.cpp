@@ -542,8 +542,23 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
 int si468x_stop_service(void)
 {
     std::clog << "libsi468x: Stopping service playback..." << std::endl;
-    uint8_t cmd[1] = { SI468X_CMD_STOP_DIGITAL };
-    return send_command(cmd, 1, nullptr, 0);
+
+    // Build 12-byte STOP_DIGITAL command matching native binary exactly (using opcode 0xB4)
+    uint8_t cmd[12] = {
+        0xB4, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00
+    };
+
+    // Send first attempt with SCIdS = 0
+    int ret = send_command(cmd, 12, nullptr, 0);
+    if (ret == SI468X_SUCCESS) {
+        return SI468X_SUCCESS;
+    }
+
+    // Try fallback attempt with SCIdS = 1 just like native play_station()
+    cmd[1] = 0x01;
+    return send_command(cmd, 12, nullptr, 0);
 }
 
 int si468x_set_volume(uint8_t volume)
@@ -789,8 +804,8 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
     // resp[4]    : Response parameter Byte 0 (state/status)
     // resp[5]    : Response parameter Byte 1 (digital status: Bit 1 is SYNC, Bit 2 is FIC_SYNC)
     // resp[6]    : Response parameter Byte 2 (acq status: Bit 2 is ACQ)
-    // resp[19]   : Response parameter Byte 15 (RSSI in dBuV)
-    // resp[20]   : Response parameter Byte 16 (SNR in dB)
+    // resp[7]    : Response parameter Byte 3 (RSSI value in dBuV!)
+    // resp[10]   : Response parameter Byte 6 (SNR value in dB!)
     // resp[21..22] : Response parameter Byte 17-18 (Antenna Tuning Cap)
     std::clog << "libsi468x: Raw DIGRAD_STATUS: ";
     for (int i = 0; i < 28; i++) {
@@ -798,8 +813,8 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
     }
     std::clog << std::dec << std::endl;
 
-    status->rssi = resp[19];
-    status->snr = resp[20];
+    status->rssi = resp[7];  // Aligned with native binary offset (Byte 3)
+    status->snr = resp[10];  // Aligned with native binary offset (Byte 6)
     status->freq_offset = 0; // Handled as secondary telemetry
 
     // Lock achieved if OFDM Frame Sync (Bit 1 of Byte 1), FIC Sync (Bit 2 of Byte 1),
