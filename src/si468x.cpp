@@ -32,6 +32,7 @@
 static int spi_fd = -1;
 static int rst_gpio_pin = -1;
 static uint32_t active_frequency = 0;
+static int active_audio_mode = 0; // 0 = Analog Only, 1 = I2S Digital
 
 /* Low-level GPIO RSTB management */
 static bool gpio_init(int pin)
@@ -332,9 +333,9 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     // Wait for the on-chip application operating system to boot and stabilize
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
 
-    // Enable I2S digital output by default upon system init
-    if (si468x_set_audio_output(1) != SI468X_SUCCESS) {
-        std::cerr << "libsi468x: Warning: Failed to configure default I2S output." << std::endl;
+    // Enable default audio output upon system init
+    if (si468x_set_audio_output(active_audio_mode) != SI468X_SUCCESS) {
+        std::cerr << "libsi468x: Warning: Failed to configure default audio output." << std::endl;
     }
 
     // Diagnostic query: Print raw chip revision info over SPI
@@ -560,8 +561,8 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
     }
 
     if (ret == SI468X_SUCCESS && !(resp[1] & 0x40)) {
-        // Unconditionally configure I2S digital output by default upon play
-        si468x_set_audio_output(1);
+        // Re-apply the active configured audio output path upon service play
+        si468x_set_audio_output(active_audio_mode);
         return SI468X_SUCCESS;
     }
 
@@ -770,7 +771,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         if (services_count >= max_services) {
             break;
         }
-        if (offset + 24 > full_resp_len) {
+        if (offset + 26 > full_resp_len) {
             break;    // Buffer boundary safety guard
         }
 
@@ -788,19 +789,19 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         std::memcpy(service_label, &resp[offset + 8], 16);
         service_label[16] = '\0';
 
-        // 4. Subchannel ID (SubChId) is stored at offset 24
-        uint8_t subchannel_id = resp[offset + 24];
+        // 4. Short Label Mask: 16-bit Little Endian (offset 24-25)
+        uint16_t short_label_mask = resp[offset + 24] | ((uint16_t)resp[offset + 25] << 8);
 
-        // Offset advancement past the 24-byte Service Header
-        offset += 24;
+        // Offset advancement past the 26-byte Service Header
+        offset += 26;
 
         // 5. Parse Components of this service
         for (int c = 0; c < num_components; c++) {
-            if (offset + 4 > full_resp_len) {
+            if (offset + 2 > full_resp_len) {
                 break;
             }
 
-            // Component block is exactly 4 bytes:
+            // Component block is exactly 2 bytes:
             // - Component ID: 12-bit value packed in a 16-bit Little Endian word (offset 0-1)
             uint16_t component_id = (resp[offset] | ((uint16_t)resp[offset + 1] << 8)) & 0x0FFF;
 
@@ -808,28 +809,19 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
             if (c == 0) {
                 list[services_count].service_id = service_id;
                 list[services_count].component_id = component_id;
-                list[services_count].audio_type = subchannel_id; // Reuse audio_type to pass Subchannel ID cleanly!
-                list[services_count].bitrate = 0;                // Resolved dynamically during playback
+                list[services_count].audio_type = 0; // Subchannel ID resolved dynamically via si468x_get_component_info
+                list[services_count].bitrate = 0;    // Resolved dynamically during playback
 
                 std::strncpy(list[services_count].label, service_label, 16);
                 list[services_count].label[16] = '\0';
 
-                // Reconstruct clean fallback short label dynamically (copy first 8 characters and strip trailing spaces)
-                std::strncpy(list[services_count].short_label, service_label, 8);
-                list[services_count].short_label[8] = '\0';
-                for (int len = 7; len >= 0; len--) {
-                    if (list[services_count].short_label[len] == ' ' || list[services_count].short_label[len] == '\0') {
-                        list[services_count].short_label[len] = '\0';
-                    }
-                    else {
-                        break;
-                    }
-                }
+                // Reconstruct exact Short Label using the character flag mask and the decoded helper!
+                si468x_decode_short_label(service_label, short_label_mask, list[services_count].short_label);
 
                 services_count++;
             }
 
-            offset += 4; // Component Entry is 4 bytes
+            offset += 2; // Component Entry is 2 bytes
         }
     }
 
@@ -885,9 +877,10 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
 
 int si468x_set_audio_output(int enable_i2s)
 {
-    std::clog << "libsi468x: Configuring dual-active audio output path (Analog + I2S)..." << std::endl;
+    active_audio_mode = enable_i2s;
+    std::clog << "libsi468x: Configuring audio output path (I2S: " << enable_i2s << ")..." << std::endl;
 
-    // Set Property 0x0800 to 0x0003 to enable BOTH Analog L/R DAC and Digital I2S outputs simultaneously!
+    // Set Property 0x0800 to 0x0003 for dual Analog+I2S, or 0x0001 for Analog Only
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
@@ -920,6 +913,16 @@ int si468x_set_audio_output(int enable_i2s)
         cmd[2] = 0x02;
         cmd[3] = 0x02;
         cmd[4] = 0x10;
+        cmd[5] = 0x00;
+        ret = send_command(cmd, 6, nullptr, 0);
+    }
+    else {
+        // Set Property 0x0200 to 0x0000 (disable the digital audio block to prevent contention/conflict)
+        cmd[0] = SI468X_CMD_SET_PROPERTY;
+        cmd[1] = 0x00;
+        cmd[2] = 0x02;
+        cmd[3] = 0x00;
+        cmd[4] = 0x00;
         cmd[5] = 0x00;
         ret = send_command(cmd, 6, nullptr, 0);
     }
