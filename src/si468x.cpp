@@ -530,13 +530,19 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
 
     // Send first attempt with SCIdS = 0
     int ret = send_command(cmd, 12, nullptr, 0);
-    if (ret == SI468X_SUCCESS) {
-        return SI468X_SUCCESS;
+    if (ret != SI468X_SUCCESS) {
+        // Try fallback attempt with SCIdS = 1 just like native play_station()
+        cmd[1] = 0x01;
+        ret = send_command(cmd, 12, nullptr, 0);
     }
 
-    // Try fallback attempt with SCIdS = 1 just like native play_station()
-    cmd[1] = 0x01;
-    return send_command(cmd, 12, nullptr, 0);
+    if (ret == SI468X_SUCCESS) {
+        // Unconditionally force the analog headphone routing property (Property 0x0800 = 0x0001)
+        // right after triggering playback to ensure the physical DAC audio path is connected!
+        si468x_set_audio_output(0);
+    }
+
+    return ret;
 }
 
 int si468x_stop_service(void)
