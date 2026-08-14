@@ -22,6 +22,7 @@
 
 #ifdef HAVE_WIRINGPI
 #include <wiringPi.h>
+#include <wiringPiSPI.h>
 #endif
 
 #include "si468x.h"
