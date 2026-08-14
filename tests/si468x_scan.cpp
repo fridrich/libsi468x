@@ -143,13 +143,32 @@ int main(int argc, char** argv)
             std::cout << "      Discovered " << num_services << " active services on Channel " << ch.label << ":" << std::endl;
             std::cout << "    ================================================" << std::endl;
             for (int s = 0; s < num_services; s++) {
+                // Dynamically fetch detailed component info and short label directly from the chip over SPI (Opcode 0xBB)
+                char comp_label[17];
+                char comp_short_label[9];
+                uint8_t subchannel_id = 0;
+                std::memset(comp_label, 0, sizeof(comp_label));
+                std::memset(comp_short_label, 0, sizeof(comp_short_label));
+
+                int comp_ret = si468x_get_component_info(services[s].service_id, services[s].component_id, comp_label, comp_short_label, &subchannel_id);
+
                 std::cout << "      " << std::setw(2) << (s + 1) << ". "
-                          << std::left << std::setw(17) << services[s].label
-                          << " (" << std::left << std::setw(8) << services[s].short_label << ") "
-                          << " | SId: 0x" << std::hex << services[s].service_id
-                          << " | CompId: " << std::dec << services[s].component_id
-                          << " | SubChId: " << (int)services[s].audio_type
-                          << " | DAB+ AAC" << std::endl;
+                          << std::left << std::setw(17) << services[s].label;
+
+                if (comp_ret == 0) {
+                    std::cout << " (" << std::left << std::setw(8) << comp_short_label << ") "
+                              << " | SId: 0x" << std::hex << services[s].service_id
+                              << " | CompId: " << std::dec << services[s].component_id
+                              << " | SubChId: " << (int)subchannel_id
+                              << " | CompLabel: '" << comp_label << "'";
+                }
+                else {
+                    std::cout << " (" << std::left << std::setw(8) << services[s].short_label << ") "
+                              << " | SId: 0x" << std::hex << services[s].service_id
+                              << " | CompId: " << std::dec << services[s].component_id
+                              << " | SubChId: N/A";
+                }
+                std::cout << " | DAB+ AAC" << std::endl;
                 total_stations++;
             }
             std::cout << "    ================================================" << std::endl;
