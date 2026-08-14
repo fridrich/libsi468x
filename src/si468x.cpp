@@ -559,14 +559,7 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
         std::clog << std::dec << " (ret: " << ret << ")" << std::endl;
     }
 
-    if (ret == SI468X_SUCCESS && !(resp[1] & 0x40)) {
-        // Unconditionally configure DUAL ACTIVE audio output path:
-        // Set Property 0x0800 to 0x0003 (enables BOTH Analog headphone DAC and Digital I2S outputs simultaneously!)
-        si468x_set_audio_output(1);
-        return SI468X_SUCCESS;
-    }
-
-    return SI468X_ERROR_SPI;
+    return ret;
 }
 
 int si468x_stop_service(void)
