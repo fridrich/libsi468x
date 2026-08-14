@@ -793,8 +793,8 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
             // - Component ID: 12-bit value packed in a 16-bit Little Endian word (offset 0-1)
             uint16_t component_id = (resp[offset] | ((uint16_t)resp[offset + 1] << 8)) & 0x0FFF;
 
-            // - Short Label Character Flag Mask: 16-bit Little Endian word (offset 2-3)
-            uint16_t short_label_mask = resp[offset + 2] | ((uint16_t)resp[offset + 3] << 8);
+            // - Short Label Character Flag Mask: 16-bit Big Endian word (offset 2-3)
+            uint16_t short_label_mask = ((uint16_t)resp[offset + 2] << 8) | resp[offset + 3];
 
             // Store the first audio component of the service in our output list
             if (c == 0) {
