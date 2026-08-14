@@ -267,6 +267,11 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         return SI468X_ERROR_BOOT;
     }
 
+    // Enable I2S digital output by default upon system init
+    if (si468x_set_audio_output(1) != SI468X_SUCCESS) {
+        std::cerr << "libsi468x: Warning: Failed to configure default I2S output." << std::endl;
+    }
+
     std::clog << "libsi468x: Boot complete. Chip running successfully!" << std::endl;
     return SI468X_SUCCESS;
 }
@@ -499,5 +504,51 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
     status->freq_offset = (int16_t)(((uint16_t)resp[4] << 8) | resp[5]);
     status->sync_status = (resp[6] & 0x01);
 
+    return SI468X_SUCCESS;
+}
+
+int si468x_set_audio_output(int enable_i2s)
+{
+    std::clog << "libsi468x: Configuring audio output path (I2S: " << enable_i2s << ")..." << std::endl;
+
+    // Set Property 0x0800 (output pin config enable)
+    uint8_t cmd[6];
+    cmd[0] = SI468X_CMD_SET_PROPERTY;
+    cmd[1] = 0x00;
+    cmd[2] = 0x08;
+    cmd[3] = 0x00;
+    cmd[4] = 0x00;
+    cmd[5] = enable_i2s ? 0x02 : 0x01; // 0x02 = Digital I2S, 0x01 = Analog
+
+    int ret = send_command(cmd, 6, nullptr, 0);
+    if (ret != SI468X_SUCCESS) {
+        return ret;
+    }
+
+    if (enable_i2s) {
+        // Set Property 0x0200 to 0x8000 (enable digital audio IO block)
+        cmd[0] = SI468X_CMD_SET_PROPERTY;
+        cmd[1] = 0x00;
+        cmd[2] = 0x02;
+        cmd[3] = 0x00;
+        cmd[4] = 0x80;
+        cmd[5] = 0x00;
+        ret = send_command(cmd, 6, nullptr, 0);
+        if (ret != SI468X_SUCCESS) {
+            return ret;
+        }
+
+        // Set Property 0x0202 to 0x1000 (digital audio format select)
+        cmd[0] = SI468X_CMD_SET_PROPERTY;
+        cmd[1] = 0x00;
+        cmd[2] = 0x02;
+        cmd[3] = 0x02;
+        cmd[4] = 0x10;
+        cmd[5] = 0x00;
+        ret = send_command(cmd, 6, nullptr, 0);
+        if (ret != SI468X_SUCCESS) {
+            return ret;
+        }
+    }
     return SI468X_SUCCESS;
 }
