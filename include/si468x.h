@@ -104,6 +104,12 @@ int si468x_set_audio_output(int enable_i2s);
  */
 int si468x_get_ensemble_info(char* label, uint16_t* ueid);
 
+/*
+ * Retrieve detailed component specifications dynamically from the co-processor over SPI (Opcode 0x82).
+ * Returns SI468X_SUCCESS on success, or negative error code.
+ */
+int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint8_t* subchannel_id);
+
 #ifdef __cplusplus
 }
 #endif

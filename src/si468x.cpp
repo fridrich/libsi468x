@@ -219,121 +219,6 @@ static int upload_firmware_memory(const unsigned char* data, size_t length)
     return SI468X_SUCCESS;
 }
 
-/* Dictionary override to resolve exact short labels for standard French/Swiss multiplexes */
-static void override_short_label(const char* long_label, char* short_label)
-{
-    std::string clean = long_label;
-    while (!clean.empty() && clean.back() == ' ') {
-        clean.pop_back();
-    }
-
-    if (clean == "RIRE ET CHANSONS") {
-        std::strcpy(short_label, "RIRE");
-    }
-    else if (clean == "FUN RADIO DAB+") {
-        std::strcpy(short_label, "FUN DAB");
-    }
-    else if (clean == "CHERIE FM") {
-        std::strcpy(short_label, "CHERIEFM");
-    }
-    else if (clean == "RTL DAB+") {
-        std::strcpy(short_label, "RTL DAB");
-    }
-    else if (clean == "RTL2 DAB+") {
-        std::strcpy(short_label, "RTL2 DAB");
-    }
-    else if (clean == "SKYROCK") {
-        std::strcpy(short_label, "SKYROCK");
-    }
-    else if (clean == "AIRZEN RADIO") {
-        std::strcpy(short_label, "AIRZEN");
-    }
-    else if (clean == "NOSTALGIE") {
-        std::strcpy(short_label, "NOSTALGI");
-    }
-    else if (clean == "LATINA dab+") {
-        std::strcpy(short_label, "LATINA");
-    }
-    else if (clean == "NRJ") {
-        std::strcpy(short_label, "NRJ");
-    }
-    else if (clean == "RADIO CLASSIQUE") {
-        std::strcpy(short_label, "CLASSIQ");
-    }
-    else if (clean == "M RADIO") {
-        std::strcpy(short_label, "M RADIO");
-    }
-    else if (clean == "FRANCE CULTURE") {
-        std::strcpy(short_label, "CULTURE");
-    }
-    else if (clean == "FRANCE MUSIQUE") {
-        std::strcpy(short_label, "MUSIQUE");
-    }
-    else if (clean == "FRANCE INTER") {
-        std::strcpy(short_label, "INTER");
-    }
-    else if (clean == "FRANCE INFO") {
-        std::strcpy(short_label, "INFO");
-    }
-    else if (clean == "EUROPE 2 DAB+") {
-        std::strcpy(short_label, "EUROPE 2");
-    }
-    else if (clean == "EUROPE 1 DAB+") {
-        std::strcpy(short_label, "EUROPE 1");
-    }
-    else if (clean == "ICI PAYS SAVOIE") {
-        std::strcpy(short_label, "SAVOIE");
-    }
-    else if (clean == "RADIO MONT-BLANC") {
-        std::strcpy(short_label, "MONTBLNC");
-    }
-    else if (clean == "RADIO SCOOP") {
-        std::strcpy(short_label, "SCOOP");
-    }
-    else if (clean == "BFM BUSINESS") {
-        std::strcpy(short_label, "BFM BIZ");
-    }
-    else if (clean == "SUD RADIO") {
-        std::strcpy(short_label, "SUD");
-    }
-    else if (clean == "ADO dab+") {
-        std::strcpy(short_label, "ADO");
-    }
-    else if (clean == "OUI FM dab+") {
-        std::strcpy(short_label, "OUI FM");
-    }
-    else if (clean == "RADIO PITCHOUN") {
-        std::strcpy(short_label, "PITCHOUN");
-    }
-    else if (clean == "Lifestyle 74") {
-        std::strcpy(short_label, "LIFESTYL");
-    }
-    else if (clean == "LA RADIO PLUS") {
-        std::strcpy(short_label, "RADIOPLS");
-    }
-    else if (clean == "RADIO ORIENT") {
-        std::strcpy(short_label, "ORIENT");
-    }
-    else if (clean == "VIRGIN RADIO") {
-        std::strcpy(short_label, "VIRGIN");
-    }
-    else if (clean == "JAZZ RADIO") {
-        std::strcpy(short_label, "JAZZ");
-    }
-    else if (clean == "FC RADIO") {
-        std::strcpy(short_label, "FC RADIO");
-    }
-    else if (clean == "PLEIN AIR LEMAN") {
-        std::strcpy(short_label, "PLEINAIR");
-    }
-    else if (clean == "NRJ LEMAN") {
-        std::strcpy(short_label, "NRJ LEMA");
-    }
-    else if (clean == "NOSTALGIE LEMAN") {
-        std::strcpy(short_label, "NOSTALGI");
-    }
-}
-
 /* Public C-API Implementation */
 
 int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
@@ -617,9 +502,56 @@ int si468x_get_ensemble_info(char* label, uint16_t* ueid)
         *ueid = resp[5] | ((uint16_t)resp[6] << 8);
     }
 
-    // Extract Ensemble Label (16 bytes starting at resp[6])
-    std::memcpy(label, &resp[6], 16);
-    label[16] = '\0';
+    // Extract Ensemble Label (16 bytes starting at resp[6], skip SICharset if < 0x20)
+    int start_offset = (resp[6] < 0x20) ? 7 : 6;
+    int len_to_copy = (resp[6] < 0x20) ? 15 : 16;
+
+    std::memcpy(label, &resp[start_offset], len_to_copy);
+    label[len_to_copy] = '\0';
+    return 0;
+}
+
+int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint8_t* subchannel_id)
+{
+    // Write 12-byte command: Opcode 0x82 + Service ID + Component ID
+    uint8_t cmd[12] = {
+        0x82, 0x00, 0x00, 0x00,
+        (uint8_t)(service_id & 0xFF),
+        (uint8_t)((service_id >> 8) & 0xFF),
+        (uint8_t)((service_id >> 16) & 0xFF),
+        (uint8_t)((service_id >> 24) & 0xFF),
+        (uint8_t)(component_id & 0xFF),
+        (uint8_t)((component_id >> 8) & 0xFF),
+        (uint8_t)((component_id >> 16) & 0xFF),
+        (uint8_t)((component_id >> 24) & 0xFF)
+    };
+    uint8_t resp[29];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 12, resp, 29) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    // Subchannel ID is at resp[7] & 0x3F (low 6 bits)
+    if (subchannel_id) {
+        *subchannel_id = resp[7] & 0x3F;
+    }
+
+    // Component Label starts at resp[9] (16 bytes)
+    char comp_label[17];
+    std::memcpy(comp_label, &resp[9], 16);
+    comp_label[16] = '\0';
+    if (label) {
+        std::strcpy(label, comp_label);
+    }
+
+    // Short Label Character flag mask is at resp[25..26] (16-bit Little-Endian)
+    uint16_t char_mask = resp[25] | ((uint16_t)resp[26] << 8);
+
+    if (short_label) {
+        si468x_decode_short_label(comp_label, char_mask, short_label);
+    }
+
     return 0;
 }
 
@@ -684,18 +616,10 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         // 2. Number of Components (offset 5)
         uint8_t num_components = resp[offset + 5];
 
-        // 3. Label: 16-character array (offset 8-23)
-        char service_label[17];
-        std::memcpy(service_label, &resp[offset + 8], 16);
-        service_label[16] = '\0';
-
-        // 4. Subchannel ID (SubChId) is stored at offset 24
-        uint8_t subchannel_id = resp[offset + 24];
-
         // Offset advancement past the 26-byte Service Header
         offset += 26;
 
-        // 5. Parse Components of this service
+        // 3. Parse Components of this service
         for (int c = 0; c < num_components; c++) {
             if (offset + 2 > full_resp_len) {
                 break;
@@ -707,30 +631,28 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
 
             // Store the first audio component of the service in our output list
             if (c == 0) {
-                list[services_count].service_id = service_id;
-                list[services_count].component_id = component_id;
-                list[services_count].audio_type = subchannel_id; // Reuse audio_type to pass Subchannel ID cleanly!
-                list[services_count].bitrate = 0;    // Resolved dynamically during playback
+                char dynamic_label[17];
+                char dynamic_short_label[9];
+                uint8_t subchannel_id = 0;
 
-                std::strncpy(list[services_count].label, service_label, 16);
-                list[services_count].label[16] = '\0';
+                std::memset(dynamic_label, 0, sizeof(dynamic_label));
+                std::memset(dynamic_short_label, 0, sizeof(dynamic_short_label));
 
-                // Generate clean fallback short label
-                std::strncpy(list[services_count].short_label, service_label, 8);
-                list[services_count].short_label[8] = '\0';
-                for (int len = 7; len >= 0; len--) {
-                    if (list[services_count].short_label[len] == ' ') {
-                        list[services_count].short_label[len] = '\0';
-                    }
-                    else {
-                        break;
-                    }
+                // Dynamically fetch actual over-the-air labels and subchannel parameters using 0x82!
+                if (si468x_get_component_info(service_id, component_id, dynamic_label, dynamic_short_label, &subchannel_id) == 0) {
+                    list[services_count].service_id = service_id;
+                    list[services_count].component_id = component_id;
+                    list[services_count].audio_type = subchannel_id; // Reuse audio_type to pass Subchannel ID cleanly!
+                    list[services_count].bitrate = 0;                // Resolved dynamically during playback
+
+                    std::strncpy(list[services_count].label, dynamic_label, 16);
+                    list[services_count].label[16] = '\0';
+
+                    std::strncpy(list[services_count].short_label, dynamic_short_label, 8);
+                    list[services_count].short_label[8] = '\0';
+
+                    services_count++;
                 }
-
-                // Apply standardized override dictionary mapping
-                override_short_label(service_label, list[services_count].short_label);
-
-                services_count++;
             }
 
             offset += 2; // Component Entry is 2 bytes
