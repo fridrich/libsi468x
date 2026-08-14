@@ -978,18 +978,22 @@ int si468x_get_dls_text(char* out_text, int max_len)
     // Extract DLS length (16-bit Little-Endian word at resp[19..20])
     uint16_t dls_len = resp[19] | ((uint16_t)resp[20] << 8);
 
-    if (dls_len == 0 || dls_len > 128) {
+    // The first 2 bytes (resp[25] and resp[26]) are DLS Control Bytes (header)
+    // The actual text characters start at resp[27]
+    if (dls_len <= 2 || dls_len > 130) {
         out_text[0] = '\0';
         return 0; // No active DLS text in the queue
     }
 
-    if (dls_len >= max_len) {
-        dls_len = max_len - 1;
+    uint16_t text_len = dls_len - 2;
+
+    if (text_len >= max_len) {
+        text_len = max_len - 1;
     }
 
-    // Dynamic UTF-8 DLS string payload starts exactly at resp[25]
-    std::memcpy(out_text, &resp[25], dls_len);
-    out_text[dls_len] = '\0';
+    // Dynamic UTF-8 DLS string payload starts exactly at resp[27] (bypassing control header)
+    std::memcpy(out_text, &resp[27], text_len);
+    out_text[text_len] = '\0';
 
     static std::string last_dls_text = "";
     std::string current_dls(out_text);
