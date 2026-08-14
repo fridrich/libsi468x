@@ -676,14 +676,6 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
     std::memset(resp, 0, sizeof(resp));
 
     int ret = send_command(cmd, 12, resp, 29);
-
-    std::clog << "libsi468x: GET_COMPONENT_INFO (SId: 0x" << std::hex << service_id
-              << ", CompId: " << std::dec << component_id << ") ret: " << ret << " Raw Resp: ";
-    for (int i = 0; i < 29; i++) {
-        std::clog << "0x" << std::hex << (int)resp[i] << " ";
-    }
-    std::clog << std::dec << std::endl;
-
     if (ret != SI468X_SUCCESS) {
         return -1;
     }
@@ -793,9 +785,6 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
             // - Component ID: 12-bit value packed in a 16-bit Little Endian word (offset 0-1)
             uint16_t component_id = (resp[offset] | ((uint16_t)resp[offset + 1] << 8)) & 0x0FFF;
 
-            // - Short Label Character Flag Mask: 16-bit Big Endian word (offset 2-3)
-            uint16_t short_label_mask = ((uint16_t)resp[offset + 2] << 8) | resp[offset + 3];
-
             // Store the first audio component of the service in our output list
             if (c == 0) {
                 list[services_count].service_id = service_id;
@@ -806,8 +795,17 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
                 std::strncpy(list[services_count].label, service_label, 16);
                 list[services_count].label[16] = '\0';
 
-                // Reconstruct exact Short Label using the character flag mask and the decoded helper!
-                si468x_decode_short_label(service_label, short_label_mask, list[services_count].short_label);
+                // Reconstruct clean fallback short label dynamically (copy first 8 characters and strip trailing spaces)
+                std::strncpy(list[services_count].short_label, service_label, 8);
+                list[services_count].short_label[8] = '\0';
+                for (int len = 7; len >= 0; len--) {
+                    if (list[services_count].short_label[len] == ' ' || list[services_count].short_label[len] == '\0') {
+                        list[services_count].short_label[len] = '\0';
+                    }
+                    else {
+                        break;
+                    }
+                }
 
                 services_count++;
             }
