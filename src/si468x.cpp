@@ -366,6 +366,91 @@ int si468x_clear_service_list(void)
     return send_command(cmd, 2, nullptr, 0);
 }
 
+/* Map center frequencies (in Hz) to the exact, firmware-defined co-processor channel indices */
+static uint8_t si468x_get_freq_index(uint32_t frequency_hz)
+{
+    switch (frequency_hz) {
+    case 174928000:
+        return 0;   // 5A
+    case 176640000:
+        return 1;   // 5B
+    case 178352000:
+        return 2;   // 5C
+    case 180064000:
+        return 3;   // 5D
+    case 181936000:
+        return 4;   // 6A
+    case 183648000:
+        return 5;   // 6B
+    case 185360000:
+        return 6;   // 6C
+    case 187072000:
+        return 7;   // 6D
+    case 188928000:
+        return 8;   // 7A
+    case 190640000:
+        return 9;   // 7B
+    case 192352000:
+        return 10;  // 7C
+    case 194064000:
+        return 11;  // 7D
+    case 195936000:
+        return 12;  // 8A
+    case 197648000:
+        return 13;  // 8B
+    case 199360000:
+        return 14;  // 8C
+    case 201072000:
+        return 15;  // 8D
+    case 202928000:
+        return 16;  // 9A
+    case 204640000:
+        return 17;  // 9B
+    case 206352000:
+        return 18;  // 9C
+    case 208064000:
+        return 19;  // 9D
+    case 209936000:
+        return 20;  // 10A
+    case 211648000:
+        return 21;  // 10B
+    case 213360000:
+        return 22;  // 10C
+    case 215072000:
+        return 24;  // 10D (Shifted because index 23 is interstitial!)
+    case 216928000:
+        return 25;  // 11A
+    case 218640000:
+        return 27;  // 11B (Shifted because index 26 is interstitial!)
+    case 220352000:
+        return 28;  // 11C
+    case 222064000:
+        return 29;  // 11D
+    case 223936000:
+        return 30;  // 12A (Shifted because index 31 is interstitial!)
+    case 225648000:
+        return 32;  // 12B
+    case 227360000:
+        return 33;  // 12C
+    case 229072000:
+        return 34;  // 12D
+    case 230784000:
+        return 35;  // 13A
+    case 232496000:
+        return 36;  // 13B
+    case 234208000:
+        return 37;  // 13C
+    case 235776000:
+        return 38;  // 13D
+    case 237488000:
+        return 39;  // 13E
+    case 239200000:
+        return 40;  // 13F
+    default:
+        return 0;
+    }
+}
+
 int si468x_set_frequency(uint32_t frequency_hz)
 {
     active_frequency = frequency_hz;
@@ -373,21 +458,8 @@ int si468x_set_frequency(uint32_t frequency_hz)
     // Cleanly wipe the on-chip service database list to prevent cross-frequency accumulation
     si468x_clear_service_list();
 
-    // Map the requested frequency (in Hz) to its standard European Frequency Index (0-37)
-    uint8_t freq_index = 0;
-    uint32_t freqs[] = {
-        174928000, 176640000, 178352000, 180064000, 181936000, 183648000, 185360000, 187072000,
-        188928000, 190640000, 192352000, 194064000, 195936000, 197648000, 199360000, 201072000,
-        202928000, 204640000, 206352000, 208064000, 209936000, 211648000, 213360000, 215072000,
-        216928000, 218640000, 220352000, 222064000, 223936000, 225648000, 227360000, 229072000,
-        230784000, 232496000, 234208000, 235776000, 237488000, 239200000
-    };
-    for (int i = 0; i < 38; i++) {
-        if (freqs[i] == frequency_hz) {
-            freq_index = i;
-            break;
-        }
-    }
+    // Map the requested frequency (in Hz) to its standard European Frequency Index (0-40) complied with firmware
+    uint8_t freq_index = si468x_get_freq_index(frequency_hz);
 
     std::clog << "libsi468x: Tuning chip to freq_index " << (int)freq_index << " (" << frequency_hz << " Hz)..." << std::endl;
 
