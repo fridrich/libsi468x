@@ -261,8 +261,8 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     }
 #endif
 
-    // 4. Send POWER_UP (0x01)
-    uint8_t power_up_cmd[5] = { SI468X_CMD_POWER_UP, 0x00, 0x00, 0x00, 0x00 };
+    // 4. Send POWER_UP (0x01) with reference crystal and clock dividers
+    uint8_t power_up_cmd[5] = { SI468X_CMD_POWER_UP, 0x00, 0x1F, 0x7F, 0x00 };
     if (send_command(power_up_cmd, 5, nullptr, 0) != SI468X_SUCCESS) {
         si468x_shutdown();
         return SI468X_ERROR_TIMEOUT;
