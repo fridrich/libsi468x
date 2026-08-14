@@ -676,14 +676,6 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
     std::memset(resp, 0, sizeof(resp));
 
     int ret = send_command(cmd, 12, resp, 29);
-
-    std::clog << "libsi468x: GET_COMPONENT_INFO (SId: 0x" << std::hex << service_id
-              << ", CompId: " << std::dec << component_id << ") ret: " << ret << " Raw Resp: ";
-    for (int i = 0; i < 29; i++) {
-        std::clog << "0x" << std::hex << (int)resp[i] << " ";
-    }
-    std::clog << std::dec << std::endl;
-
     if (ret != SI468X_SUCCESS) {
         return -1;
     }
