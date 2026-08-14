@@ -155,7 +155,7 @@ int main(int argc, char** argv)
                 std::cout << "      " << std::setw(2) << (s + 1) << ". "
                           << std::left << std::setw(17) << services[s].label;
 
-                if (comp_ret == 0) {
+                if (comp_ret == 0 && std::strlen(comp_short_label) > 0 && comp_short_label[0] != ' ') {
                     std::cout << " (" << std::left << std::setw(8) << comp_short_label << ") "
                               << " | SId: 0x" << std::hex << services[s].service_id
                               << " | CompId: " << std::dec << services[s].component_id
@@ -166,7 +166,7 @@ int main(int argc, char** argv)
                     std::cout << " (" << std::left << std::setw(8) << services[s].short_label << ") "
                               << " | SId: 0x" << std::hex << services[s].service_id
                               << " | CompId: " << std::dec << services[s].component_id
-                              << " | SubChId: N/A";
+                              << " | SubChId: " << (int)services[s].audio_type; // Display database Subchannel ID
                 }
                 std::cout << " | DAB+ AAC" << std::endl;
                 total_stations++;
