@@ -1,0 +1,31 @@
+# libsi468x Code Formatting Options for Artistic Style (astyle)
+
+# Do not create backup (.orig) files
+suffix=none
+
+# Bracket Style: Kernighan & Ritchie (K&R) style
+style=kr
+
+# Indentation: Use 4 spaces
+indent=spaces=4
+
+# Convert tab characters to spaces
+convert-tabs
+
+# Break closing braces from headers
+break-closing-braces
+
+# Pad operators with spaces (e.g. 'x = a + b')
+pad-oper
+
+# Pad header keywords with a space (e.g. 'if (cond)')
+pad-header
+
+# Remove spaces inside parentheses (e.g. '(cond)' instead of '( cond )')
+unpad-paren
+
+# Add braces to single-line conditional statements
+add-braces
+
+# Align pointer/reference operators to the type name
+align-pointer=type
