@@ -557,24 +557,20 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
 
         // 5. Parse Components of this service
         for (int c = 0; c < num_components; c++) {
-            if (offset + 4 > full_resp_len) {
+            if (offset + 2 > full_resp_len) {
                 break;
             }
 
-            // Component block is 4 bytes:
+            // Component block is exactly 2 bytes:
             // - Component ID: 12-bit value packed in a 16-bit Little Endian word (offset 0-1)
             uint16_t component_id = (resp[offset] | ((uint16_t)resp[offset + 1] << 8)) & 0x0FFF;
-            // - Service Component Type: 8-bit (offset 2)
-            uint8_t audio_type = resp[offset + 2];
-            // - Bitrate: 8-bit (offset 3). Represented in units of 8 kbps
-            uint16_t bitrate = resp[offset + 3] * 8;
 
             // Store the first audio component of the service in our output list
             if (c == 0) {
                 list[services_count].service_id = service_id;
                 list[services_count].component_id = component_id;
-                list[services_count].audio_type = audio_type;
-                list[services_count].bitrate = bitrate;
+                list[services_count].audio_type = 0; // Resolved dynamically during playback
+                list[services_count].bitrate = 0;    // Resolved dynamically during playback
 
                 std::strncpy(list[services_count].label, service_label, 16);
                 list[services_count].label[16] = '\0';
@@ -585,7 +581,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
                 services_count++;
             }
 
-            offset += 4; // Component Entry is 4 bytes
+            offset += 2; // Component Entry is 2 bytes
         }
     }
 
