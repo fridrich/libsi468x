@@ -516,6 +516,16 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         return 0;
     }
 
+    // Print raw database payload hex dump
+    std::clog << "libsi468x: Raw Service Database Hex Dump (" << full_resp_len << " bytes):" << std::endl;
+    for (uint16_t x = 0; x < full_resp_len; x++) {
+        std::clog << "0x" << std::hex << (int)resp[x] << " ";
+        if ((x + 1) % 16 == 0) {
+            std::clog << std::endl;
+        }
+    }
+    std::clog << std::dec << std::endl;
+
     // Shift index by 7 to bypass the 4-byte SPI status/padding overhead and 3 header bytes
     uint8_t num_services = resp[7];
     std::clog << "libsi468x: Chip reported " << (int)num_services << " active services." << std::endl;
