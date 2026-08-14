@@ -500,8 +500,8 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         return 0;
     }
 
-    // Bytes 5-6 (Response Parameter Bytes 1-2) store the 16-bit database size
-    uint16_t db_size = ((uint16_t)size_resp[5] << 8) | size_resp[6];
+    // Bytes 5-6 (Response Parameter Bytes 1-2) store the 16-bit database size in Little-Endian
+    uint16_t db_size = size_resp[5] | ((uint16_t)size_resp[6] << 8);
     std::clog << "libsi468x: Chip reported database payload size: " << db_size << " bytes." << std::endl;
 
     if (db_size == 0 || db_size > 2048) {
