@@ -560,9 +560,9 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
     }
 
     if (ret == SI468X_SUCCESS && !(resp[1] & 0x40)) {
-        // Unconditionally force the analog headphone routing property (Property 0x0800 = 0x0001)
-        // right after triggering playback to ensure the physical DAC audio path is connected!
-        si468x_set_audio_output(0);
+        // Unconditionally configure DUAL ACTIVE audio output path:
+        // Set Property 0x0800 to 0x0003 (enables BOTH Analog headphone DAC and Digital I2S outputs simultaneously!)
+        si468x_set_audio_output(1);
         return SI468X_SUCCESS;
     }
 
@@ -875,46 +875,42 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
 
 int si468x_set_audio_output(int enable_i2s)
 {
-    std::clog << "libsi468x: Configuring audio output path (I2S: " << enable_i2s << ")..." << std::endl;
+    std::clog << "libsi468x: Configuring dual-active audio output path (Analog + I2S)..." << std::endl;
 
-    // Set Property 0x0800 (output pin config enable)
+    // Set Property 0x0800 to 0x0003 to enable BOTH Analog L/R DAC and Digital I2S outputs simultaneously!
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
     cmd[2] = 0x08;
     cmd[3] = 0x00;
     cmd[4] = 0x00;
-    cmd[5] = enable_i2s ? 0x02 : 0x01; // 0x02 = Digital I2S, 0x01 = Analog
+    cmd[5] = 0x03; // Bit 0 (Analog) | Bit 1 (I2S)
 
     int ret = send_command(cmd, 6, nullptr, 0);
     if (ret != SI468X_SUCCESS) {
         return ret;
     }
 
-    if (enable_i2s) {
-        // Set Property 0x0200 to 0x8000 (enable digital audio IO block)
-        cmd[0] = SI468X_CMD_SET_PROPERTY;
-        cmd[1] = 0x00;
-        cmd[2] = 0x02;
-        cmd[3] = 0x00;
-        cmd[4] = 0x80;
-        cmd[5] = 0x00;
-        ret = send_command(cmd, 6, nullptr, 0);
-        if (ret != SI468X_SUCCESS) {
-            return ret;
-        }
-
-        // Set Property 0x0202 to 0x1000 (digital audio format select)
-        cmd[0] = SI468X_CMD_SET_PROPERTY;
-        cmd[1] = 0x00;
-        cmd[2] = 0x02;
-        cmd[3] = 0x02;
-        cmd[4] = 0x10;
-        cmd[5] = 0x00;
-        ret = send_command(cmd, 6, nullptr, 0);
-        if (ret != SI468X_SUCCESS) {
-            return ret;
-        }
+    // Set Property 0x0200 to 0x8000 (enable digital audio IO block) unconditionally
+    cmd[0] = SI468X_CMD_SET_PROPERTY;
+    cmd[1] = 0x00;
+    cmd[2] = 0x02;
+    cmd[3] = 0x00;
+    cmd[4] = 0x80;
+    cmd[5] = 0x00;
+    ret = send_command(cmd, 6, nullptr, 0);
+    if (ret != SI468X_SUCCESS) {
+        return ret;
     }
-    return SI468X_SUCCESS;
+
+    // Set Property 0x0202 to 0x1000 (digital audio format select) unconditionally
+    cmd[0] = SI468X_CMD_SET_PROPERTY;
+    cmd[1] = 0x00;
+    cmd[2] = 0x02;
+    cmd[3] = 0x02;
+    cmd[4] = 0x10;
+    cmd[5] = 0x00;
+    ret = send_command(cmd, 6, nullptr, 0);
+
+    return ret;
 }
