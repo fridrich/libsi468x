@@ -513,6 +513,9 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         std::cerr << "libsi468x: Warning: Failed to configure default audio output." << std::endl;
     }
 
+    // Explicitly initialize the on-chip audio volume to trigger active routing and power-down states
+    si468x_set_volume(50);
+
     // Enable the co-processor's decoder based on boot mode upon system init (before playback starts)
     if (boot_mode == SI468X_BOOT_DAB) {
         si468x_enable_service_data();
