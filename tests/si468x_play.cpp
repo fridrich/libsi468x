@@ -23,6 +23,7 @@ int main(int argc, char* argv[])
 
     uint32_t frequency_hz = 107000000; // Default: FM 107.0 MHz (107000 kHz)
     bool is_dab = false;
+    bool enable_i2s = false;
 
     if (argc > 1) {
         uint32_t arg_val = std::stoul(argv[1]);
@@ -38,17 +39,25 @@ int main(int argc, char* argv[])
         }
     }
 
+    if (argc > 2) {
+        std::string out_arg = argv[2];
+        if (out_arg == "i2s" || out_arg == "1") {
+            enable_i2s = true;
+        }
+    }
+
     std::cout << "==================================================" << std::endl;
-    std::cout << "     libsi468x I2S Digital Audio Playback Tool    " << std::endl;
+    std::cout << "        libsi468x Unified Playback Utility        " << std::endl;
     std::cout << "==================================================" << std::endl;
     std::cout << "Mode:             " << (is_dab ? "DAB/DAB+" : "FM Analog") << std::endl;
     std::cout << "Target Frequency: " << (frequency_hz / 1000000.0) << " MHz" << std::endl;
+    std::cout << "Audio Output:     " << (enable_i2s ? "I2S Digital (hw:3,0)" : "Analog Jack (Internal)") << std::endl;
     std::cout << "==================================================" << std::endl;
 
-    // Configure audio output to I2S digital mode BEFORE initialization!
-    std::cout << "libsi468x: Pre-configuring audio path to I2S Digital mode for boot..." << std::endl;
-    if (si468x_set_audio_output(1) != SI468X_SUCCESS) {
-        std::cerr << "Warning: Failed to pre-set audio path to I2S!" << std::endl;
+    // Configure audio output to the selected mode BEFORE initialization!
+    std::cout << "libsi468x: Pre-configuring audio path for boot..." << std::endl;
+    if (si468x_set_audio_output(enable_i2s ? 1 : 0) != SI468X_SUCCESS) {
+        std::cerr << "Warning: Failed to pre-set audio path!" << std::endl;
     }
 
     std::cout << "libsi468x: Initializing chip..." << std::endl;
@@ -106,17 +115,21 @@ int main(int argc, char* argv[])
     si468x_set_volume(50);
 
     std::cout << "\n--------------------------------------------------" << std::endl;
-    std::cout << "   Live I2S Playback Active!                      " << std::endl;
+    std::cout << "   Live Radio Playback Active!                    " << std::endl;
     std::cout << "--------------------------------------------------" << std::endl;
-    std::cout << "  To loop this digital audio to your speakers,    " << std::endl;
-    std::cout << "  run the following ALSA loopback command on      " << std::endl;
-    std::cout << "  another terminal window:                        " << std::endl;
-    std::cout << "                                                  " << std::endl;
-    std::cout << "  arecord -D hw:3,0 -f S16_LE -r 48000 -c 2 | aplay -D hw:2,0" << std::endl;
-    std::cout << "                                                  " << std::endl;
-    std::cout << "  (hw:3,0 is the 'dabboard' I2S capture card)     " << std::endl;
-    std::cout << "  (hw:2,0 is the default USB Audio output)        " << std::endl;
-    std::cout << "--------------------------------------------------" << std::endl;
+
+    if (enable_i2s) {
+        std::cout << "  To loop this digital audio to your speakers,    " << std::endl;
+        std::cout << "  run the following ALSA loopback command on      " << std::endl;
+        std::cout << "  another terminal window:                        " << std::endl;
+        std::cout << "                                                  " << std::endl;
+        std::cout << "  arecord -D hw:2,0 -f S16_LE -r 48000 -c 2 | aplay -D hw:3,0" << std::endl;
+        std::cout << "                                                  " << std::endl;
+        std::cout << "  (hw:2,0 is the 'dabboard' I2S capture card)     " << std::endl;
+        std::cout << "  (hw:3,0 is the default USB Audio output)        " << std::endl;
+        std::cout << "--------------------------------------------------" << std::endl;
+    }
+
     std::cout << "Press Ctrl+C to stop and shut down." << std::endl;
 
     while (running) {
