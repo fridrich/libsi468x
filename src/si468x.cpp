@@ -1130,6 +1130,11 @@ int si468x_set_audio_output(int enable_i2s)
     active_audio_mode = enable_i2s;
     std::clog << "libsi468x: Configuring audio output path (I2S: " << enable_i2s << ")..." << std::endl;
 
+    if (spi_fd < 0) {
+        // If SPI is not open yet, store the mode statically so si468x_init can apply it dynamically during boot
+        return SI468X_SUCCESS;
+    }
+
     // Set Property 0x0800 to 0x0002 for I2S only, or 0x0001 for Analog Only (matches radio_cli exactly)
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;

@@ -45,6 +45,12 @@ int main(int argc, char* argv[])
     std::cout << "Target Frequency: " << (frequency_hz / 1000000.0) << " MHz" << std::endl;
     std::cout << "==================================================" << std::endl;
 
+    // Configure audio output to I2S digital mode BEFORE initialization!
+    std::cout << "libsi468x: Pre-configuring audio path to I2S Digital mode for boot..." << std::endl;
+    if (si468x_set_audio_output(1) != SI468X_SUCCESS) {
+        std::cerr << "Warning: Failed to pre-set audio path to I2S!" << std::endl;
+    }
+
     std::cout << "libsi468x: Initializing chip..." << std::endl;
     int boot_mode = is_dab ? SI468X_BOOT_DAB : SI468X_BOOT_FMHD;
     if (si468x_init("/dev/spidev0.0", 23, boot_mode) != SI468X_SUCCESS) {
@@ -93,12 +99,6 @@ int main(int argc, char* argv[])
             si468x_shutdown();
             return 1;
         }
-    }
-
-    // Configure audio output to I2S digital mode AFTER tuning/playing!
-    std::cout << "libsi468x: Configuring audio path to I2S Digital out (overriding analog defaults)..." << std::endl;
-    if (si468x_set_audio_output(1) != SI468X_SUCCESS) {
-        std::cerr << "Warning: Failed to set audio path to I2S!" << std::endl;
     }
 
     std::cout << "\n--------------------------------------------------" << std::endl;
