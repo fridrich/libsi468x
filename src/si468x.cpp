@@ -1478,14 +1478,14 @@ int si468x_get_event_status(si468x_event_status_t* status)
 
 int si468x_set_rds_region(int region)
 {
-    // Configure FM_DEEMPHASIS property (0x1100) dynamically
-    uint16_t deemph_val = (region == SI468X_REGION_US) ? 0x0002 : 0x0001; // 0x01 = 50us (Europe), 0x02 = 75us (US)
+    // Configure FMHD_DEEMPHASIS property (0x3900) dynamically
+    uint16_t deemph_val = (region == SI468X_REGION_EUROPE) ? 0x3900 : 0x0000; // 0x3900 = 50us (Europe), 0x0000 = 75us (US default)
 
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
-    cmd[2] = 0x11; // FM_DEEMPHASIS high byte
-    cmd[3] = 0x00; // FM_DEEMPHASIS low byte
+    cmd[2] = 0x39; // FMHD_DEEMPHASIS high byte
+    cmd[3] = 0x00; // FMHD_DEEMPHASIS low byte
     cmd[4] = (deemph_val >> 8) & 0xFF;
     cmd[5] = deemph_val & 0xFF;
 
