@@ -118,7 +118,7 @@ int main()
                 uint8_t sub_id = 0;
                 std::memset(comp_label, 0, sizeof(comp_label));
                 std::memset(comp_short, 0, sizeof(comp_short));
-                if (si468x_get_component_info(target_sid, target_comp, comp_label, comp_short, &sub_id) == 0) {
+                if (si468x_get_component_info(target_sid, target_comp, comp_label, comp_short, nullptr, &sub_id) == 0) {
                     if (std::strlen(comp_label) > 0) {
                         std::cout << " | Comp: '" << comp_label << "' (" << comp_short << ") | SubCh: " << (int)sub_id;
                     }

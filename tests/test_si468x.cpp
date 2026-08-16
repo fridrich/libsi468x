@@ -81,7 +81,7 @@ static bool test_api_signatures_uninitialized()
     uint8_t subchannel_id = 0;
 
     // 1. Verify si468x_get_component_info signature and uninitialized failure
-    int ret_comp = si468x_get_component_info(0xf226, 6, label, short_label, &subchannel_id);
+    int ret_comp = si468x_get_component_info(0xf226, 6, label, short_label, nullptr, &subchannel_id);
     ASSERT_TRUE(ret_comp == -1, "si468x_get_component_info must fail safely when uninitialized");
 
     // 2. Verify si468x_get_dls_text signature and uninitialized failure

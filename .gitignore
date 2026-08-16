@@ -44,6 +44,8 @@ tests/si468x_scan
 tests/si468x_play_test
 tests/si468x_fm_test
 tests/si468x_fm_scan
+tests/si468x_mask_compare
+tests/si468x_find_mask
 
 # Generated firmware sources
 src/si468x_firmware.cpp
