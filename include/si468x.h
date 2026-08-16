@@ -39,6 +39,14 @@ extern "C" {
 /** @} */
 
 /**
+ * @name Regional Reception Standards
+ * @{
+ */
+#define SI468X_REGION_EUROPE    0   /**< Europe and standard international world (50 us de-emphasis). */
+#define SI468X_REGION_US        1   /**< North America (75 us de-emphasis). */
+/** @} */
+
+/**
  * @brief Structure containing raw chip part revision and firmware specifications.
  */
 typedef struct {
@@ -207,6 +215,13 @@ int si468x_get_time(si468x_time_t* time);
  * @return SI468X_SUCCESS on success, or a negative error code on failure.
  */
 int si468x_get_event_status(si468x_event_status_t* status);
+
+/**
+ * @brief Configure the FM de-emphasis regional filtering standards dynamically.
+ * @param region Target region (SI468X_REGION_EUROPE for 50 us, or SI468X_REGION_US for 75 us).
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_set_rds_region(int region);
 
 /**
  * @brief Retrieve detailed component-level specifications dynamically from the on-chip database.
