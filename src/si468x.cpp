@@ -1177,6 +1177,20 @@ int si468x_set_audio_output(int enable_i2s)
         cmd[5] = 0x10; // High byte of Value (0x10)
         ret = send_command(cmd, 6, nullptr, 0);
     }
+    else {
+        // Explicitly KILL the I2S clocks on warm boots to guarantee Analog routing isolation
+        cmd[0] = SI468X_CMD_SET_PROPERTY;
+        cmd[1] = 0x00;
+        cmd[2] = 0x00;
+        cmd[3] = 0x02;
+        cmd[4] = 0x00; // Value: 0x0000 (I2S Clocks Disabled)
+        cmd[5] = 0x00;
+        send_command(cmd, 6, nullptr, 0);
+
+        cmd[2] = 0x02;
+        cmd[3] = 0x02;
+        send_command(cmd, 6, nullptr, 0);
+    }
     return ret;
 }
 
