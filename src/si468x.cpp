@@ -519,6 +519,7 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     }
     else if (boot_mode == SI468X_BOOT_FMHD) {
         si468x_enable_rds();
+        si468x_set_rds_region(SI468X_REGION_EUROPE); // Set standard European de-emphasis (50 us) by default on boot
     }
 
     // Diagnostic query: Print raw chip revision info over SPI
@@ -1466,6 +1467,26 @@ int si468x_get_event_status(si468x_event_status_t* status)
     // Extract event status bits from Parameter Byte 1 (resp[5])
     status->reconf = resp[5] & 0x01; // Bit 0 represents database reconfigurations
     status->annc = (resp[5] >> 1) & 0x01; // Bit 1 represents announcement alerts
+
+    return SI468X_SUCCESS;
+}
+
+int si468x_set_rds_region(int region)
+{
+    // Configure FMHD_DEEMPHASIS property (0x3900) dynamically
+    uint16_t deemph_val = (region == SI468X_REGION_EUROPE) ? 0x3900 : 0x0000; // 0x3900 = 50us (Europe), 0x0000 = 75us (US default)
+
+    uint8_t cmd[6];
+    cmd[0] = SI468X_CMD_SET_PROPERTY;
+    cmd[1] = 0x00;
+    cmd[2] = 0x39; // FMHD_DEEMPHASIS high byte
+    cmd[3] = 0x00; // FMHD_DEEMPHASIS low byte
+    cmd[4] = (deemph_val >> 8) & 0xFF;
+    cmd[5] = deemph_val & 0xFF;
+
+    if (send_command(cmd, 6, nullptr, 0) != SI468X_SUCCESS) {
+        return -1;
+    }
 
     return SI468X_SUCCESS;
 }
