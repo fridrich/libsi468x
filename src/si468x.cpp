@@ -506,9 +506,6 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         std::cerr << "libsi468x: Warning: Failed to configure default audio output." << std::endl;
     }
 
-    // Explicitly initialize the on-chip audio volume to trigger active routing and power-down states
-    si468x_set_volume(50);
-
     // Enable the co-processor's decoder based on boot mode upon system init (before playback starts)
     if (boot_mode == SI468X_BOOT_DAB) {
         si468x_enable_service_data();
@@ -814,10 +811,6 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
     }
 
     if (ret == SI468X_SUCCESS) {
-        // Re-apply the active configured audio output path and volume upon service play to override tuning resets
-        si468x_set_audio_output(active_audio_mode);
-        si468x_set_volume(active_volume);
-
         // Turn on the on-chip PAD/XPAD decoder so that DLS text and MOT slideshow are dynamically decoded
         si468x_enable_service_data();
 
@@ -1181,20 +1174,6 @@ int si468x_set_audio_output(int enable_i2s)
         cmd[5] = 0x10; // High byte of Value (0x10)
         ret = send_command(cmd, 6, nullptr, 0);
     }
-    else {
-        // Explicitly KILL the I2S clocks on warm boots to guarantee Analog routing isolation
-        cmd[0] = SI468X_CMD_SET_PROPERTY;
-        cmd[1] = 0x00;
-        cmd[2] = 0x00;
-        cmd[3] = 0x02;
-        cmd[4] = 0x00; // Value: 0x0000 (I2S Clocks Disabled)
-        cmd[5] = 0x00;
-        send_command(cmd, 6, nullptr, 0);
-
-        cmd[2] = 0x02;
-        cmd[3] = 0x02;
-        send_command(cmd, 6, nullptr, 0);
-    }
     return ret;
 }
 
@@ -1310,10 +1289,6 @@ int si468x_tune_fm(uint32_t frequency_khz)
 
     // Give the RF synthesizer 300ms to lock and stabilize on-chip
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
-
-    // Re-apply the active configured audio output path and volume to override co-processor's automatic analog resets on tune lock
-    si468x_set_audio_output(active_audio_mode);
-    si468x_set_volume(active_volume);
 
     return SI468X_SUCCESS;
 }
