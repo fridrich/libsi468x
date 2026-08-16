@@ -20,21 +20,54 @@
 #include "config.h"
 #endif
 
-#ifdef HAVE_WIRINGPI
-#include <wiringPi.h>
-#include <wiringPiSPI.h>
-#endif
+#include <dirent.h>
 
 #include "si468x.h"
 #include "si468x_internal.h"
 #include "si468x_firmware.h"
 
 static int spi_fd = -1;
-static int rst_gpio_pin = -1;
+static int sysfs_gpio_pin = -1;
+static int sysfs_ce1_pin = -1;
 static uint32_t active_frequency = 0;
 static int active_audio_mode = 0; // 0 = Analog Only, 1 = I2S Digital
 
 static int si468x_enable_service_data(void);
+static int si468x_enable_rds(void);
+
+// Helper to determine the sysfs GPIO base for the primary pinctrl chip
+static int get_sysfs_gpio_base(void)
+{
+    DIR* dir = opendir("/sys/class/gpio");
+    if (!dir) {
+        return 0; // fallback
+    }
+    struct dirent* entry;
+    int base_offset = 0;
+    bool found = false;
+    while ((entry = readdir(dir)) != nullptr) {
+        std::string name(entry->d_name);
+        if (name.find("gpiochip") == 0) {
+            std::string label_path = "/sys/class/gpio/" + name + "/label";
+            std::ifstream label_file(label_path);
+            if (label_file) {
+                std::string label;
+                std::getline(label_file, label);
+                if (label.find("pinctrl-") != std::string::npos) {
+                    std::string base_path = "/sys/class/gpio/" + name + "/base";
+                    std::ifstream base_file(base_path);
+                    if (base_file) {
+                        base_file >> base_offset;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    closedir(dir);
+    return found ? base_offset : 0;
+}
 
 /* Low-level GPIO RSTB management */
 static bool gpio_init(int pin)
@@ -43,43 +76,95 @@ static bool gpio_init(int pin)
         std::cerr << "libsi468x: Invalid GPIO pin: " << pin << std::endl;
         return false;
     }
-    rst_gpio_pin = pin;
 
-#ifdef HAVE_WIRINGPI
-    // Initialize wiringPi using standard Broadcom BCM GPIO numbering
-    if (wiringPiSetupGpio() < 0) {
-        std::cerr << "libsi468x: Failed to initialize wiringPi!" << std::endl;
+    int base = get_sysfs_gpio_base();
+    sysfs_gpio_pin = base + pin;
+    sysfs_ce1_pin = base + 7; // BCM GPIO 7 is CE1
+
+    std::clog << "libsi468x: Mapping BCM GPIO " << pin << " to sysfs GPIO " << sysfs_gpio_pin << std::endl;
+
+    // Export primary reset pin if not already exported
+    std::string rst_path = "/sys/class/gpio/gpio" + std::to_string(sysfs_gpio_pin);
+    if (access(rst_path.c_str(), F_OK) < 0) {
+        std::ofstream export_file("/sys/class/gpio/export");
+        if (export_file) {
+            export_file << sysfs_gpio_pin;
+            export_file.flush();
+        }
+    }
+
+    // Export CE1 pin if not already exported (to hold secondary CS high)
+    std::string ce1_path = "/sys/class/gpio/gpio" + std::to_string(sysfs_ce1_pin);
+    if (access(ce1_path.c_str(), F_OK) < 0) {
+        std::ofstream export_file("/sys/class/gpio/export");
+        if (export_file) {
+            export_file << sysfs_ce1_pin;
+            export_file.flush();
+        }
+    }
+
+    // Wait a brief moment for the sysfs nodes to register and set permissions
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Set direction of reset pin to "out"
+    std::string rst_dir_path = rst_path + "/direction";
+    std::ofstream rst_dir_file(rst_dir_path);
+    if (!rst_dir_file) {
+        std::cerr << "libsi468x: Failed to set sysfs reset GPIO direction to out!" << std::endl;
         return false;
     }
-    pinMode(pin, OUTPUT);
+    rst_dir_file << "out";
+    rst_dir_file.flush();
 
-    // Configure BCM GPIO 7 (CE1) as an input with PUD_UP (pull-up)
-    // to hold secondary chip select high, resolving bus contention
-    pinMode(7, INPUT);
-    pullUpDnControl(7, PUD_UP);
+    // Set direction of CE1 pin to "out" and drive high
+    std::string ce1_dir_path = ce1_path + "/direction";
+    std::ofstream ce1_dir_file(ce1_dir_path);
+    if (ce1_dir_file) {
+        ce1_dir_file << "out";
+        ce1_dir_file.flush();
+    }
+
+    std::string ce1_val_path = ce1_path + "/value";
+    std::ofstream ce1_val_file(ce1_val_path);
+    if (ce1_val_file) {
+        ce1_val_file << "1"; // Drive CE1 high to resolve bus contention
+        ce1_val_file.flush();
+    }
+
     return true;
-#else
-    std::clog << "libsi468x: Compiling in mock GPIO mode (wiringPi absent)." << std::endl;
-    return true;
-#endif
 }
 
 static void gpio_set_rst(bool high)
 {
-    if (rst_gpio_pin < 0) {
+    if (sysfs_gpio_pin < 0) {
         return;
     }
-
-#ifdef HAVE_WIRINGPI
-    digitalWrite(rst_gpio_pin, high ? HIGH : LOW);
-#endif
+    std::string val_path = "/sys/class/gpio/gpio" + std::to_string(sysfs_gpio_pin) + "/value";
+    std::ofstream val_file(val_path);
+    if (val_file) {
+        val_file << (high ? "1" : "0");
+        val_file.flush();
+    }
 }
 
 static void gpio_shutdown()
 {
-    if (rst_gpio_pin >= 0) {
-        gpio_set_rst(false); // Hold in reset
-        rst_gpio_pin = -1;
+    if (sysfs_gpio_pin >= 0) {
+        gpio_set_rst(false); // Hold in reset for safety
+        std::ofstream unexport_file("/sys/class/gpio/unexport");
+        if (unexport_file) {
+            unexport_file << sysfs_gpio_pin;
+            unexport_file.flush();
+        }
+        sysfs_gpio_pin = -1;
+    }
+    if (sysfs_ce1_pin >= 0) {
+        std::ofstream unexport_file("/sys/class/gpio/unexport");
+        if (unexport_file) {
+            unexport_file << sysfs_ce1_pin;
+            unexport_file.flush();
+        }
+        sysfs_ce1_pin = -1;
     }
 }
 
@@ -90,27 +175,18 @@ static int spi_transfer(const uint8_t* tx, uint8_t* rx, size_t length)
         return -1;
     }
 
-#ifdef HAVE_WIRINGPI
-    std::vector<uint8_t> buf(length);
-    if (tx) {
-        std::memcpy(buf.data(), tx, length);
-    }
-    else {
-        std::memset(buf.data(), 0, length);
-    }
-
-    if (wiringPiSPIDataRW(0, buf.data(), length) < 0) {
-        return -1;
-    }
-
-    if (rx) {
-        std::memcpy(rx, buf.data(), length);
-    }
-    return 0;
-#else
     struct spi_ioc_transfer tr;
     std::memset(&tr, 0, sizeof(tr));
-    tr.tx_buf = (unsigned long)tx;
+
+    std::vector<uint8_t> dummy_tx;
+    if (!tx && rx && length > 0) {
+        dummy_tx.assign(length, 0x00);
+        tr.tx_buf = (unsigned long)dummy_tx.data();
+    }
+    else {
+        tr.tx_buf = (unsigned long)tx;
+    }
+
     tr.rx_buf = (unsigned long)rx;
     tr.len = length;
     tr.speed_hz = SI468X_SPI_SPEED_HZ;
@@ -121,7 +197,6 @@ static int spi_transfer(const uint8_t* tx, uint8_t* rx, size_t length)
         return -1;
     }
     return 0;
-#endif
 }
 
 /*
@@ -230,6 +305,107 @@ static int upload_firmware_memory(const unsigned char* data, size_t length)
     return SI468X_SUCCESS;
 }
 
+class RDS_decode
+{
+public:
+    char radio_text[65];
+    int8_t last_segment;
+    uint8_t last_toggle;
+    uint8_t group_type;
+    uint8_t group_type_B;
+    uint8_t traffic_program;
+    uint8_t program_type;
+    uint8_t block_B_low_5;
+
+    RDS_decode()
+    {
+        std::memset(radio_text, 0, sizeof(radio_text));
+        last_segment = -1;
+        last_toggle = 0;
+        group_type = 0;
+        group_type_B = 0;
+        traffic_program = 0;
+        program_type = 0;
+        block_B_low_5 = 0;
+    }
+
+    bool is_allowed_RT_char(uint8_t c)
+    {
+        return (c >= 32 && c <= 126) || c == '\r' || c == '\n';
+    }
+
+    void decode_RT_block(uint8_t segment_address, uint8_t text_A_B_toggle, uint8_t is_block_D, uint16_t block_data)
+    {
+        uint8_t char1 = block_data >> 8;
+        uint8_t char2 = block_data & 0xFF;
+        uint8_t step_size = 2 - group_type_B;
+
+        if (last_toggle != text_A_B_toggle) {
+            if (last_segment != -1) {
+                std::memset(radio_text, 0, sizeof(radio_text));
+            }
+            last_toggle = text_A_B_toggle;
+        }
+        last_segment = segment_address;
+
+        if (is_allowed_RT_char(char1)) {
+            int pos = (segment_address * step_size * 2) + (is_block_D * step_size);
+            if (pos >= 0 && pos < 64) {
+                radio_text[pos] = char1;
+            }
+        }
+
+        if (step_size == 2 && is_allowed_RT_char(char2)) {
+            int pos = (segment_address * step_size * 2) + (is_block_D * step_size) + 1;
+            if (pos >= 0 && pos < 64) {
+                radio_text[pos] = char2;
+            }
+        }
+    }
+
+    void decode_block_A(uint16_t block_A) {}
+
+    void decode_block_B(uint16_t block_B)
+    {
+        group_type = block_B >> 12;
+        group_type_B = (block_B >> 11) & 0x01;
+        traffic_program = (block_B >> 10) & 0x01;
+        program_type = (block_B >> 5) & 0x1F;
+        block_B_low_5 = block_B & 0x1F;
+    }
+
+    void decode_block_C(uint16_t block_C)
+    {
+        if (group_type_B == 0 && group_type == 2) {
+            uint8_t segment_address = block_B_low_5 & 0x0F;
+            uint8_t text_A_B_toggle = (block_B_low_5 >> 4) & 0x01;
+            decode_RT_block(segment_address, text_A_B_toggle, 0, block_C);
+        }
+    }
+
+    void decode_block_D(uint16_t block_D)
+    {
+        if (group_type == 2) {
+            uint8_t segment_address = block_B_low_5 & 0x0F;
+            uint8_t text_A_B_toggle = (block_B_low_5 >> 4) & 0x01;
+            decode_RT_block(segment_address, text_A_B_toggle, 1, block_D);
+        }
+    }
+
+    void decode(uint16_t a, uint16_t b, uint16_t c, uint16_t d)
+    {
+        decode_block_A(a);
+        decode_block_B(b);
+        decode_block_C(c);
+        decode_block_D(d);
+    }
+};
+
+static RDS_decode rds_decoder;
+
+static uint32_t custom_freqs[48];
+static int custom_freq_count = 0;
+
 /* Public C-API Implementation */
 
 int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
@@ -248,14 +424,6 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     std::this_thread::sleep_for(std::chrono::milliseconds(50)); // Allow bootloader to stabilize
 
     // 3. Open SPI Bus
-#ifdef HAVE_WIRINGPI
-    spi_fd = wiringPiSPISetup(0, 32000000); // 32 MHz (matches radio_cli exactly)
-    if (spi_fd < 0) {
-        std::cerr << "libsi468x: Error opening SPI bus via wiringPi!" << std::endl;
-        gpio_shutdown();
-        return SI468X_ERROR_SPI;
-    }
-#else
     spi_fd = open(spi_device, O_RDWR);
     if (spi_fd < 0) {
         std::cerr << "libsi468x: Error opening SPI device: " << spi_device << std::endl;
@@ -275,7 +443,6 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         si468x_shutdown();
         return SI468X_ERROR_SPI;
     }
-#endif
 
     // 4. Send POWER_UP (0x01) with complete 16-byte reference crystal and clock configuration (matches radio_cli)
     uint8_t power_up_cmd[16] = {
@@ -343,8 +510,13 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         std::cerr << "libsi468x: Warning: Failed to configure default audio output." << std::endl;
     }
 
-    // Enable the co-processor's PAD/XPAD service data decoder upon system init (before playback starts)
-    si468x_enable_service_data();
+    // Enable the co-processor's decoder based on boot mode upon system init (before playback starts)
+    if (boot_mode == SI468X_BOOT_DAB) {
+        si468x_enable_service_data();
+    }
+    else if (boot_mode == SI468X_BOOT_FMHD) {
+        si468x_enable_rds();
+    }
 
     // Diagnostic query: Print raw chip revision info over SPI
     uint8_t rev_cmd[1] = { 0x10 };
@@ -386,6 +558,15 @@ int si468x_clear_service_list(void)
 /* Map center frequencies (in Hz) to the exact, firmware-defined co-processor channel indices */
 static uint8_t si468x_get_freq_index(uint32_t frequency_hz)
 {
+    if (custom_freq_count > 0) {
+        for (int i = 0; i < custom_freq_count; i++) {
+            if (custom_freqs[i] == frequency_hz) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
     switch (frequency_hz) {
     case 174928000:
         return 0;   // 5A
@@ -554,6 +735,33 @@ static int si468x_enable_service_data(void)
 
     // Set Property 0xB204 to 0x07D0 (2000)
     cmd[3] = 0x04;
+    send_command(cmd, 6, nullptr, 0);
+
+    return SI468X_SUCCESS;
+}
+
+static int si468x_enable_rds(void)
+{
+    std::clog << "libsi468x: Enabling on-chip RDS/RBDS decoder (Properties 0x1500-0x1502)..." << std::endl;
+    uint8_t cmd[6];
+
+    // Set Property 0x1500 to 0x0001 (FM_RDS_CONFIG: Enable RDS)
+    cmd[0] = SI468X_CMD_SET_PROPERTY;
+    cmd[1] = 0x00;
+    cmd[2] = 0x15;
+    cmd[3] = 0x00;
+    cmd[4] = 0x00;
+    cmd[5] = 0x01;
+    send_command(cmd, 6, nullptr, 0);
+
+    // Set Property 0x1501 to 0x0001 (FM_RDS_INT_SOURCE: Enable FIFO interrupt)
+    cmd[3] = 0x01;
+    cmd[5] = 0x01;
+    send_command(cmd, 6, nullptr, 0);
+
+    // Set Property 0x1502 to 0x0001 (FM_RDS_INT_FIFO_COUNT: Interrupt threshold = 1)
+    cmd[3] = 0x02;
+    cmd[5] = 0x01;
     send_command(cmd, 6, nullptr, 0);
 
     return SI468X_SUCCESS;
@@ -782,8 +990,8 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         return 0;
     }
 
-    // Shift index by 7 to bypass the 4-byte SPI status/padding overhead and 3 header bytes
-    uint8_t num_services = resp[7];
+    // Shift index to find number of services in this ensemble (Parameter Byte 5)
+    uint8_t num_services = resp[9];
     std::clog << "libsi468x: Chip reported " << (int)num_services << " active services." << std::endl;
 
     if (num_services == 0) {
@@ -1004,4 +1212,170 @@ int si468x_get_dls_text(char* out_text, int max_len)
     }
 
     return 0; // DLS has not changed
+}
+
+int si468x_get_chip_info(si468x_chip_info_t* info)
+{
+    if (!info) {
+        return -1;
+    }
+    uint8_t rev_cmd[1] = { 0x10 };
+    uint8_t rev_resp[16];
+    std::memset(rev_resp, 0, sizeof(rev_resp));
+    if (send_command(rev_cmd, 1, rev_resp, 16) != SI468X_SUCCESS) {
+        return -1;
+    }
+    info->chip_id = rev_resp[5];
+    info->rom_id = rev_resp[6];
+    info->fw_version = (rev_resp[7] << 8) | rev_resp[8];
+    info->patch_version = (rev_resp[9] << 8) | rev_resp[10];
+    return SI468X_SUCCESS;
+}
+
+int si468x_set_frequency_table(const uint32_t* freqs, int count)
+{
+    if (!freqs || count <= 0 || count > 48) {
+        return -1;
+    }
+
+    // Prepare command packet
+    size_t cmd_len = 4 + (count * 4);
+    std::vector<uint8_t> cmd(cmd_len, 0);
+    cmd[0] = 0xB8; // Opcode: DAB_SET_FREQ_LIST
+    cmd[1] = count;
+
+    for (int i = 0; i < count; i++) {
+        uint32_t f = freqs[i];
+        cmd[4 + i * 4]     = f & 0xFF;
+        cmd[5 + i * 4]     = (f >> 8) & 0xFF;
+        cmd[6 + i * 4]     = (f >> 16) & 0xFF;
+        cmd[7 + i * 4]     = (f >> 24) & 0xFF;
+        custom_freqs[i] = f;
+    }
+    custom_freq_count = count;
+
+    if (send_command(cmd.data(), cmd_len, nullptr, 0) != SI468X_SUCCESS) {
+        return -1;
+    }
+    return SI468X_SUCCESS;
+}
+
+int si468x_tune_fm(uint32_t frequency_khz)
+{
+    // Command size = 7 bytes
+    uint8_t cmd[7] = { 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+    uint32_t freq_10khz = frequency_khz / 10;
+    cmd[2] = freq_10khz & 0xFF;
+    cmd[3] = (freq_10khz >> 8) & 0xFF;
+
+    if (send_command(cmd, 7, nullptr, 0) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    // Give the RF synthesizer 300ms to lock and stabilize on-chip
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    return SI468X_SUCCESS;
+}
+
+int si468x_get_fm_status(si468x_fm_status_t* status)
+{
+    if (!status) {
+        return -1;
+    }
+
+    uint8_t cmd[2] = { 0x32, 0x01 }; // Opcode 0x32 + INTACK
+    uint8_t resp[23];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 2, resp, 23) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    uint32_t freq_10khz = resp[7] | (resp[8] << 8);
+    status->frequency_hz = freq_10khz * 10000;
+    status->rssi = resp[9];
+    status->snr = resp[10];
+    status->multipath = resp[11];
+    status->freq_offset = (int8_t)resp[12];
+
+    // HD synchronization flag: Bit 0 of Parameter Byte 1 (resp[5] & 0x01)
+    status->hd_synced = resp[5] & 0x01;
+
+    // RDS synchronization flag: Bit 0 of Parameter Byte 2 (resp[6] & 0x01)
+    status->rds_synced = resp[6] & 0x01;
+
+    return SI468X_SUCCESS;
+}
+
+int si468x_get_rds_text(char* out_text, int max_len)
+{
+    if (!out_text || max_len <= 0) {
+        return -1;
+    }
+    if (spi_fd < 0) {
+        return -1;
+    }
+
+    bool updated = false;
+    uint8_t cmd[2] = { 0x36, 0x01 }; // Opcode 0x36 + INTACK (flushes the FIFO)
+    uint8_t resp[21];
+
+    // Flush the RDS FIFO (up to 24 groups) and decode
+    for (int i = 0; i < 24; i++) {
+        std::memset(resp, 0, sizeof(resp));
+        if (send_command(cmd, 2, resp, 21) != SI468X_SUCCESS) {
+            break;
+        }
+
+        uint8_t rds_sync = resp[5] & 0x02;   // Bit 1 of Parameter Byte 1
+        uint8_t fifo_used = resp[7] & 0x1F;  // Low 5 bits of Parameter Byte 3
+
+        if (!rds_sync) {
+            if (fifo_used == 0) {
+                break;
+            }
+            continue;
+        }
+
+        // Combine blocks
+        uint16_t block_A = (resp[10] << 8) | resp[9];
+        uint16_t block_B = (resp[14] << 8) | resp[13];
+        uint16_t block_C = (resp[16] << 8) | resp[15];
+        uint16_t block_D = (resp[18] << 8) | resp[17];
+
+        // Parse block error codes
+        uint8_t err_A = resp[12] >> 6;
+        uint8_t err_B = (resp[12] >> 4) & 0x03;
+        uint8_t err_C = (resp[12] >> 2) & 0x03;
+        uint8_t err_D = resp[12] & 0x03;
+
+        // Decode only if header blocks have no uncorrectable errors
+        if (err_A < 3 && err_B < 3) {
+            uint8_t old_toggle = rds_decoder.last_toggle;
+            std::string old_text = rds_decoder.radio_text;
+
+            rds_decoder.decode_block_A(block_A);
+            rds_decoder.decode_block_B(block_B);
+
+            if (err_C < 3) {
+                rds_decoder.decode_block_C(block_C);
+            }
+            if (err_D < 3) {
+                rds_decoder.decode_block_D(block_D);
+            }
+
+            if (rds_decoder.last_toggle != old_toggle || old_text != rds_decoder.radio_text) {
+                updated = true;
+            }
+        }
+
+        if (fifo_used == 0) {
+            break;
+        }
+    }
+
+    std::strncpy(out_text, rds_decoder.radio_text, max_len - 1);
+    out_text[max_len - 1] = '\0';
+
+    return updated ? 1 : 0;
 }
