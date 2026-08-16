@@ -125,6 +125,12 @@ typedef struct {
 int si468x_init(const char* spi_device, int rst_pin, int boot_mode);
 
 /**
+ * @brief Dynamically enable or disable the library's internal diagnostic debug logging.
+ * @param enable Pass 1 to enable diagnostic logging to stderr/stdout, or 0 to keep the library silent (default).
+ */
+void si468x_enable_debug(int enable);
+
+/**
  * @brief Safely terminate the driver, close spi file descriptors, and drive RSTB reset low.
  *
  * Puts the co-processor into a safe, ultra-low-power reset standby mode.
