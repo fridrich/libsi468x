@@ -24,6 +24,13 @@ extern "C" {
 #define SI468X_BOOT_FMHD        1
 
 typedef struct {
+    uint8_t chip_id;
+    uint8_t rom_id;
+    uint16_t fw_version;
+    uint16_t patch_version;
+} si468x_chip_info_t;
+
+typedef struct {
     uint32_t service_id;
     uint32_t component_id;
     char label[17];            /* 16-character DAB Label + null-terminator */
@@ -38,6 +45,16 @@ typedef struct {
     int16_t freq_offset;       /* Frequency offset in kHz */
     uint8_t sync_status;       /* 1 if synced, 0 otherwise */
 } si468x_signal_status_t;
+
+typedef struct {
+    uint32_t frequency_hz;     /* Currently tuned frequency in Hz */
+    uint8_t rssi;              /* RSSI in dBµV */
+    uint8_t snr;               /* SNR in dB */
+    uint8_t multipath;         /* Multipath metric (0-100) */
+    int8_t freq_offset;        /* Frequency offset in kHz */
+    uint8_t hd_synced;         /* 1 if HD Radio is synced, 0 otherwise */
+    uint8_t rds_synced;        /* 1 if RDS is synced, 0 otherwise */
+} si468x_fm_status_t;
 
 /*
  * Initialize the hardware, reset the chip, upload the patch, stream the
@@ -124,6 +141,32 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
  * returns 0 if the DLS label has not changed, or a negative error code on failure.
  */
 int si468x_get_dls_text(char* out_text, int max_len);
+
+/*
+ * Expose chip revision and part information.
+ */
+int si468x_get_chip_info(si468x_chip_info_t* info);
+
+/*
+ * Set custom Band III frequency table for DAB scanning.
+ */
+int si468x_set_frequency_table(const uint32_t* freqs, int count);
+
+/*
+ * Tune to an analog/HD FM frequency in kHz (e.g. 98100 for 98.1 MHz).
+ */
+int si468x_tune_fm(uint32_t frequency_khz);
+
+/*
+ * Query the on-chip DSP for FM/FMHD signal status and RDS metrics.
+ */
+int si468x_get_fm_status(si468x_fm_status_t* status);
+
+/*
+ * Read and decode the live FM RDS RadioText (up to 64 characters, null-terminated).
+ * Returns 1 if updated text is available, 0 if unchanged, or negative error code.
+ */
+int si468x_get_rds_text(char* out_text, int max_len);
 
 #ifdef __cplusplus
 }
