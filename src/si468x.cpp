@@ -912,7 +912,7 @@ int si468x_get_ensemble_info(char* label, uint16_t* ueid)
     return 0;
 }
 
-int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint8_t* subchannel_id)
+int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint16_t* out_char_mask, uint8_t* subchannel_id)
 {
     // Write 12-byte command: Opcode 0xBB + Service ID + 32-bit global Component ID
     uint8_t cmd[12] = {
@@ -949,6 +949,9 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
 
     // Short Label Character flag mask is at resp[25..26] (16-bit Little-Endian)
     uint16_t char_mask = resp[25] | ((uint16_t)resp[26] << 8);
+    if (out_char_mask) {
+        *out_char_mask = char_mask;
+    }
 
     if (short_label) {
         si468x_decode_short_label(comp_label, char_mask, short_label);
