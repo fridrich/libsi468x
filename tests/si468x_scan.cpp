@@ -150,7 +150,8 @@ int main(int argc, char** argv)
                 std::memset(comp_label, 0, sizeof(comp_label));
                 std::memset(comp_short_label, 0, sizeof(comp_short_label));
 
-                int comp_ret = si468x_get_component_info(services[s].service_id, services[s].component_id, comp_label, comp_short_label, &subchannel_id);
+                uint16_t char_mask = 0;
+                int comp_ret = si468x_get_component_info(services[s].service_id, services[s].component_id, comp_label, comp_short_label, &char_mask, &subchannel_id);
 
                 std::cout << "      " << std::setw(2) << (s + 1) << ". "
                           << std::left << std::setw(17) << services[s].label;
@@ -160,6 +161,7 @@ int main(int argc, char** argv)
                               << " | SId: 0x" << std::hex << services[s].service_id
                               << " | CompId: " << std::dec << services[s].component_id
                               << " | SubChId: " << (int)subchannel_id
+                              << " | Mask: 0x" << std::hex << std::setw(4) << std::setfill('0') << char_mask << std::dec << std::setfill(' ')
                               << " | CompLabel: '" << comp_label << "'";
                 }
                 else {
@@ -201,7 +203,7 @@ int main(int argc, char** argv)
                         std::memset(play_comp_label, 0, sizeof(play_comp_label));
                         std::memset(play_comp_short, 0, sizeof(play_comp_short));
 
-                        if (si468x_get_component_info(services[0].service_id, services[0].component_id, play_comp_label, play_comp_short, &play_subchannel_id) == 0) {
+                        if (si468x_get_component_info(services[0].service_id, services[0].component_id, play_comp_label, play_comp_short, nullptr, &play_subchannel_id) == 0) {
                             std::cout << " | PlayLabel: '" << play_comp_label << "' (" << play_comp_short << ") | SubChId: " << (int)play_subchannel_id;
                         }
                         std::cout << std::endl;

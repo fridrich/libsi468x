@@ -131,7 +131,11 @@ int si468x_get_ensemble_info(char* label, uint16_t* ueid);
  * Retrieve detailed component specifications dynamically from the co-processor over SPI (Opcode 0x82).
  * Returns SI468X_SUCCESS on success, or negative error code.
  */
-int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint8_t* subchannel_id);
+/*
+ * Query the on-chip database for detailed component level specifications,
+ * including long label, short label, character mask, and subchannel ID.
+ */
+int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint16_t* char_mask, uint8_t* subchannel_id);
 
 /*
  * Retrieve the current live Dynamic Label Segment (DLS) scrolling text (up to 128 characters, UTF-8 encoded)
