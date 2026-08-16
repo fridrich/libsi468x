@@ -46,7 +46,7 @@ extern "C" {
 #define SI468X_CTS_MASK              0x80
 
 /* Private Internal Helper Functions (tested via unit tests) */
-void si468x_decode_short_label(const char* long_label, uint16_t char_mask, char* short_label);
+void si468x_decode_short_label(const uint8_t* raw_label, int raw_len, uint16_t char_mask, uint8_t charset, char* short_label, int max_len);
 int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_len, int timeout_ms = 1000);
 
 #ifdef __cplusplus
