@@ -1447,3 +1447,25 @@ int si468x_get_time(si468x_time_t* time)
 
     return SI468X_SUCCESS;
 }
+
+int si468x_get_event_status(si468x_event_status_t* status)
+{
+    if (!status) {
+        return -1;
+    }
+
+    // Write 2-byte command for DAB_GET_EVENT_STATUS (Opcode 0x12, Param Byte 0 = 0x01 to clear INTACK)
+    uint8_t cmd[2] = { 0x12, 0x01 };
+    uint8_t resp[6];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 2, resp, 6) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    // Extract event status bits from Parameter Byte 1 (resp[5])
+    status->reconf = resp[5] & 0x01; // Bit 0 represents database reconfigurations
+    status->annc = (resp[5] >> 1) & 0x01; // Bit 1 represents announcement alerts
+
+    return SI468X_SUCCESS;
+}
