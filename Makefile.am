@@ -6,7 +6,16 @@ pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = libsi468x.pc
 
 # Distribute formatting configurations inside the release tarball
-EXTRA_DIST = astyle.options
+EXTRA_DIST = astyle.options Doxyfile.in
+
+# Support generating Doxygen documentation automatically during the build process
+if HAVE_DOXYGEN
+all-local: Doxyfile
+	$(DOXYGEN) Doxyfile
+
+clean-local:
+	rm -rf doc/
+endif
 
 # Artistic Style (astyle) formatting target (fully recursive and future-proof)
 astyle:

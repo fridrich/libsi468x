@@ -1,0 +1,14 @@
+# Doxyfile.in - Doxygen configuration template for libsi468x
+PROJECT_NAME           = "libsi468x"
+PROJECT_NUMBER         = @PACKAGE_VERSION@
+OUTPUT_DIRECTORY       = doc
+INPUT                  = @top_srcdir@/include/si468x.h
+FILE_PATTERNS          = *.h *.cpp
+GENERATE_LATEX         = NO
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+EXTRACT_ALL            = YES
+OPTIMIZE_OUTPUT_FOR_C  = YES
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES

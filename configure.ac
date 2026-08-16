@@ -49,11 +49,19 @@ AC_SUBST([FW_ROM_PATCH])
 AC_SUBST([FW_DAB_RADIO])
 AC_SUBST([FW_FMHD_RADIO])
 
+# Check for Doxygen (gracefully disables documentation targets if not installed)
+AC_CHECK_PROG([DOXYGEN], [doxygen], [doxygen])
+AM_CONDITIONAL([HAVE_DOXYGEN], [test -n "$DOXYGEN"])
+if test -z "$DOXYGEN"; then
+    AC_MSG_WARN([doxygen tool not found! Doxygen documentation generation will be skipped during build.])
+fi
+
 # Output Makefiles and pkg-config files
 AC_CONFIG_FILES([
     Makefile
     src/Makefile
     tests/Makefile
     libsi468x.pc
+    Doxyfile
 ])
 AC_OUTPUT

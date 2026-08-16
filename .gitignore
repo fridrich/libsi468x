@@ -52,3 +52,7 @@ src/si468x_firmware.cpp
 
 # Local uncommitted firmware binaries
 firmware/*.bin
+
+# Generated Doxygen documentation
+Doxyfile
+doc/
