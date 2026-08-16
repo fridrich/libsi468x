@@ -814,10 +814,6 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
     }
 
     if (ret == SI468X_SUCCESS) {
-        // Re-apply the active configured audio output path and volume upon service play to override tuning resets
-        si468x_set_audio_output(active_audio_mode);
-        si468x_set_volume(active_volume);
-
         // Turn on the on-chip PAD/XPAD decoder so that DLS text and MOT slideshow are dynamically decoded
         si468x_enable_service_data();
 
@@ -1160,13 +1156,13 @@ int si468x_set_audio_output(int enable_i2s)
     }
 
     if (enable_i2s) {
-        // Set Property 0x0200 (DIGITAL_IO_OUTPUT_FORMAT) to 0x8000 in Little-Endian
+        // Set Property 0x0200 (DIGITAL_IO_OUTPUT_FORMAT) to 0xC000 in Little-Endian (I2S Master)
         cmd[0] = SI468X_CMD_SET_PROPERTY;
         cmd[1] = 0x00;
         cmd[2] = 0x00; // Low byte of Property ID 0x0200
         cmd[3] = 0x02; // High byte of Property ID 0x0200
         cmd[4] = 0x00; // Low byte of Value (0x00)
-        cmd[5] = 0x80; // High byte of Value (0x80)
+        cmd[5] = 0xC0; // High byte of Value (0xC0 - Master Mode)
         ret = send_command(cmd, 6, nullptr, 0);
         if (ret != SI468X_SUCCESS) {
             return ret;
@@ -1296,10 +1292,6 @@ int si468x_tune_fm(uint32_t frequency_khz)
 
     // Give the RF synthesizer 300ms to lock and stabilize on-chip
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
-
-    // Re-apply the active configured audio output path and volume to override co-processor's automatic analog resets on tune lock
-    si468x_set_audio_output(active_audio_mode);
-    si468x_set_volume(active_volume);
 
     return SI468X_SUCCESS;
 }

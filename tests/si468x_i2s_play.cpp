@@ -101,6 +101,10 @@ int main(int argc, char* argv[])
         }
     }
 
+    // Set standard operating volume AFTER tuning is complete
+    std::cout << "libsi468x: Setting audio volume to 50..." << std::endl;
+    si468x_set_volume(50);
+
     std::cout << "\n--------------------------------------------------" << std::endl;
     std::cout << "   Live I2S Playback Active!                      " << std::endl;
     std::cout << "--------------------------------------------------" << std::endl;
