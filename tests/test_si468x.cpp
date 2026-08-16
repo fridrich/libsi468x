@@ -93,6 +93,41 @@ static bool test_api_signatures_uninitialized()
     return true;
 }
 
+static bool test_new_fm_rds_api_uninitialized()
+{
+    std::cout << "Running test: test_new_fm_rds_api_uninitialized..." << std::endl;
+
+    // 1. Verify si468x_get_chip_info failures when uninitialized
+    si468x_chip_info_t info;
+    int ret_chip = si468x_get_chip_info(&info);
+    ASSERT_TRUE(ret_chip == -1, "si468x_get_chip_info must fail safely when uninitialized");
+
+    // 2. Verify si468x_set_frequency_table boundary parameters
+    uint32_t freqs[3] = { 174928000, 188928000, 223936000 };
+    int ret_freq_table_invalid = si468x_set_frequency_table(nullptr, 3);
+    ASSERT_TRUE(ret_freq_table_invalid == -1, "si468x_set_frequency_table must fail on null pointer");
+
+    int ret_freq_table_uninit = si468x_set_frequency_table(freqs, 3);
+    ASSERT_TRUE(ret_freq_table_uninit == -1, "si468x_set_frequency_table must fail when uninitialized");
+
+    // 3. Verify si468x_tune_fm signature and uninitialized failure
+    int ret_tune = si468x_tune_fm(98100);
+    ASSERT_TRUE(ret_tune == -1, "si468x_tune_fm must fail safely when uninitialized");
+
+    // 4. Verify si468x_get_fm_status signature and uninitialized failure
+    si468x_fm_status_t status;
+    int ret_status = si468x_get_fm_status(&status);
+    ASSERT_TRUE(ret_status == -1, "si468x_get_fm_status must fail safely when uninitialized");
+
+    // 5. Verify si468x_get_rds_text signature and uninitialized failure
+    char rds_text[65];
+    int ret_rds = si468x_get_rds_text(rds_text, sizeof(rds_text));
+    ASSERT_TRUE(ret_rds == -1, "si468x_get_rds_text must fail safely when uninitialized");
+
+    std::cout << "PASS: test_new_fm_rds_api_uninitialized" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -104,6 +139,7 @@ int main()
     success &= test_short_label_decoding();
     success &= test_initialization_failure();
     success &= test_api_signatures_uninitialized();
+    success &= test_new_fm_rds_api_uninitialized();
 
     std::cout << "========================================" << std::endl;
     if (success) {
