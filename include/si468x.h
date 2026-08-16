@@ -95,6 +95,14 @@ typedef struct {
 } si468x_time_t;
 
 /**
+ * @brief Structure representing the live asynchronous co-processor event status flags.
+ */
+typedef struct {
+    uint8_t reconf;            /**< 1 if multiplex reconfiguration event occurred, 0 otherwise. */
+    uint8_t annc;              /**< 1 if live service announcement event occurred, 0 otherwise. */
+} si468x_event_status_t;
+
+/**
  * @brief Initialize the driver library, perform cold reset, and boot the co-processor.
  *
  * This function exports and configures the reset GPIO, opens the SPI bus, performs a
@@ -192,6 +200,13 @@ int si468x_get_ensemble_info(char* label, uint16_t* ueid);
  * @return SI468X_SUCCESS on success, or a negative error code on failure.
  */
 int si468x_get_time(si468x_time_t* time);
+
+/**
+ * @brief Query the co-processor to retrieve the current active asynchronous event status flags.
+ * @param status Pointer to target si468x_event_status_t struct to populate.
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_get_event_status(si468x_event_status_t* status);
 
 /**
  * @brief Retrieve detailed component-level specifications dynamically from the on-chip database.
