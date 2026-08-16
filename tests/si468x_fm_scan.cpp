@@ -23,8 +23,8 @@ int main(int argc, char* argv[])
 
     const char* spi_dev = "/dev/spidev0.0";
     int rst_pin = 23;
-    int rssi_threshold = 15; // minimum RSSI in dBuV to consider a station active
-    int snr_threshold = 8;    // minimum SNR in dB
+    int rssi_threshold = 18; // minimum RSSI in dBuV to consider a station active (eliminates low-level white noise)
+    int snr_threshold = 10;   // minimum SNR in dB (ensures decent quality carrier lock)
 
     if (argc > 1) {
         spi_dev = argv[1];
@@ -79,8 +79,8 @@ int main(int argc, char* argv[])
         if (si468x_get_fm_status(&status) == SI468X_SUCCESS) {
             int8_t rssi_signed = (int8_t)status.rssi;
 
-            // Check if active station is found
-            if (rssi_signed >= rssi_threshold && status.snr >= snr_threshold) {
+            // Check if active station is found (including strict absolute frequency offset check <= 15 kHz)
+            if (rssi_signed >= rssi_threshold && status.snr >= snr_threshold && std::abs((int)status.freq_offset) <= 15) {
                 total_stations_found++;
                 std::cout << "\n--------------------------------------------------" << std::endl;
                 std::cout << "FOUND: " << std::fixed << std::setprecision(1) << mhz << " MHz" << std::endl;
@@ -89,15 +89,15 @@ int main(int argc, char* argv[])
                 std::cout << "  Offset:    " << (int)status.freq_offset << " kHz" << std::endl;
                 std::cout << "  HD Sync:   " << (status.hd_synced ? "YES" : "NO") << std::endl;
                 std::cout << "  RDS Sync:  " << (status.rds_synced ? "YES" : "NO") << std::endl;
-                std::cout << "  DWELL: Waiting up to 4s to acquire RDS Station Text..." << std::endl;
+                std::cout << "  DWELL: Waiting up to 12s to acquire RDS Station Text..." << std::endl;
 
-                // Stop and dwell on this station for up to 4 seconds to acquire RDS text
+                // Stop and dwell on this station for up to 12 seconds to acquire RDS text
                 auto dwell_start = std::chrono::steady_clock::now();
                 bool rds_text_acquired = false;
                 char rds_text[65];
                 std::memset(rds_text, 0, sizeof(rds_text));
 
-                while (std::chrono::steady_clock::now() - dwell_start < std::chrono::seconds(4)) {
+                while (std::chrono::steady_clock::now() - dwell_start < std::chrono::seconds(12)) {
                     // Update sync metrics
                     if (si468x_get_fm_status(&status) == SI468X_SUCCESS && status.rds_synced) {
                         int updated = si468x_get_rds_text(rds_text, sizeof(rds_text));

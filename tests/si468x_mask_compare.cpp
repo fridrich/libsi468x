@@ -74,11 +74,11 @@ int main()
 {
     const char* spi_dev = "/dev/spidev0.0";
     int rst_pin = 23;
-    uint32_t channel_12a_hz = 223936000; // Channel 12A (SRG SSR F01)
+    uint32_t channel_12a_hz = 223936000; // Channel 12A (SRG SSR F01, Ensemble ID 0x4041)
 
-    std::cout << "==================================================" << std::endl;
-    std::cout << "   libsi468x Short Label Mask Verification Tool   " << std::endl;
-    std::cout << "==================================================" << std::endl;
+    std::cout << "==========================================================================" << std::endl;
+    std::cout << "   libsi468x Short Label Mask Verification Tool                           " << std::endl;
+    std::cout << "==========================================================================" << std::endl;
 
     std::cout << "Loading reference labels from stations.json..." << std::endl;
     auto ref_stations = load_stations_ref();
@@ -136,32 +136,25 @@ int main()
         }
     }
 
+    // Start decoding the first valid audio service component to trigger dynamic mask compilation
     std::cout << "libsi468x: Triggering playback on audio service (SId: 0x"
-              << std::hex << services[play_index].service_id << std::dec << ") to compile station names..." << std::endl;
+              << std::hex << services[play_index].service_id << std::dec << ") to compile station masks..." << std::endl;
     si468x_play_service(services[play_index].service_id, services[play_index].component_id);
 
-    // Self-healing wait loop: wait up to 45 seconds but break early as soon as names compile
-    std::cout << "Waiting dynamically for station names to compile from air waves..." << std::endl;
-    bool compiled = false;
-    for (int i = 0; i < 45; i++) {
-        si468x_signal_status_t status;
-        si468x_get_signal_status(&status);
+    // Wait 15 seconds quietly for the background decoders to parse the FIC/FIB tables
+    std::cout << "Waiting 15 seconds quietly for station names and masks to compile..." << std::endl;
+    std::this_thread::sleep_for(std::chrono::seconds(15));
 
-        // Query the database to check if names have compiled
-        std::memset(services, 0, sizeof(services));
-        int check_num = si468x_get_service_list(services, 32);
-        if (check_num > 0 && std::strlen(services[play_index].label) > 0 && services[play_index].label[0] != ' ') {
-            compiled = true;
-            std::cout << "\nStation names compiled successfully after " << (i + 1) << " seconds!" << std::endl;
-            break;
-        }
-        std::cout << "." << std::flush;
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
-
-    // Refresh service list again to get fully compiled records (while playback is still active!)
+    // Retrieve service list again while playback is active to read fully compiled records
     std::memset(services, 0, sizeof(services));
     num_services = si468x_get_service_list(services, 32);
+
+    if (num_services <= 0) {
+        std::cerr << "No services found in database payload after waiting!" << std::endl;
+        si468x_stop_service();
+        si468x_shutdown();
+        return 1;
+    }
 
     std::cout << "\n--------------------------------------------------------------------------------------------------" << std::endl;
     std::cout << " " << std::left << std::setw(18) << "Long Label"
@@ -176,6 +169,11 @@ int main()
     int matches = 0;
 
     for (int s = 0; s < num_services; s++) {
+        // Skip data services for label comparison
+        if (services[s].service_id >= 0x10000) {
+            continue;
+        }
+
         char comp_label[17];
         char comp_short_label[9];
         uint16_t char_mask = 0;
@@ -184,14 +182,19 @@ int main()
         std::memset(comp_label, 0, sizeof(comp_label));
         std::memset(comp_short_label, 0, sizeof(comp_short_label));
 
-        int comp_ret = si468x_get_component_info(services[s].service_id, services[s].component_id, comp_label, comp_short_label, &char_mask, &subchannel_id);
+        // Construct globally-unique 32-bit Service ID (Ensemble ID 0x4041 << 16 | SId)
+        uint32_t global_sid = (0x4041 << 16) | (services[s].service_id & 0xFFFF);
+
+        // Fetch detailed component specs (Opcode 0xBB) using global SId and global Component ID
+        int comp_ret = si468x_get_component_info(global_sid, services[s].component_id, comp_label, comp_short_label, &char_mask, &subchannel_id);
 
         if (comp_ret == 0 && std::strlen(services[s].label) > 0 && services[s].label[0] != ' ') {
             total_checked++;
 
             char local_short_label[9];
             std::memset(local_short_label, 0, sizeof(local_short_label));
-            // Use the Service Label as the long label for decoding
+
+            // Use our local C-API mask decoder to reconstruct the short labels!
             si468x_decode_short_label(services[s].label, char_mask, local_short_label);
 
             std::string ref_short = "(missing)";
@@ -223,9 +226,6 @@ int main()
                       << " | " << (equal ? "YES" : "NO!") << std::endl;
         }
     }
-
-    // Stop playback decoder after verification completes
-    si468x_stop_service();
 
     std::cout << "--------------------------------------------------------------------------------------------------" << std::endl;
     std::cout << "Verification Complete!" << std::endl;

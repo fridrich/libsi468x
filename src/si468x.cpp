@@ -203,7 +203,7 @@ static int spi_transfer(const uint8_t* tx, uint8_t* rx, size_t length)
  * Transmit a command packet and wait for response.
  * Uses reference polling loop to check CTS via 7-byte READ_RESP queries.
  */
-static int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_len, int timeout_ms = 1000)
+int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_len, int timeout_ms)
 {
     // 1. Write command over SPI
     if (spi_transfer(cmd, nullptr, cmd_len) < 0) {
@@ -1286,7 +1286,7 @@ int si468x_get_fm_status(si468x_fm_status_t* status)
         return -1;
     }
 
-    uint8_t cmd[2] = { 0x32, 0x01 }; // Opcode 0x32 + INTACK
+    uint8_t cmd[2] = { 0x32, 0x01 }; // Opcode 0x32 (FM_RSQ_STATUS) with INTACK = 1
     uint8_t resp[23];
     std::memset(resp, 0, sizeof(resp));
 
@@ -1320,7 +1320,7 @@ int si468x_get_rds_text(char* out_text, int max_len)
     }
 
     bool updated = false;
-    uint8_t cmd[2] = { 0x36, 0x01 }; // Opcode 0x36 + INTACK (flushes the FIFO)
+    uint8_t cmd[2] = { 0x34, 0x00 }; // Opcode 0x34 (FM_RDS_STATUS) with INTACK = 0
     uint8_t resp[21];
 
     // Flush the RDS FIFO (up to 24 groups) and decode
@@ -1340,11 +1340,11 @@ int si468x_get_rds_text(char* out_text, int max_len)
             continue;
         }
 
-        // Combine blocks
+        // Combine blocks matching standard FMHD mode 0x34 (FM_RDS_STATUS) offsets
         uint16_t block_A = (resp[10] << 8) | resp[9];
-        uint16_t block_B = (resp[14] << 8) | resp[13];
-        uint16_t block_C = (resp[16] << 8) | resp[15];
-        uint16_t block_D = (resp[18] << 8) | resp[17];
+        uint16_t block_B = (resp[16] << 8) | resp[15];
+        uint16_t block_C = (resp[18] << 8) | resp[17];
+        uint16_t block_D = (resp[20] << 8) | resp[19];
 
         // Parse block error codes
         uint8_t err_A = resp[12] >> 6;
