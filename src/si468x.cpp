@@ -31,6 +31,7 @@ static int sysfs_gpio_pin = -1;
 static int sysfs_ce1_pin = -1;
 static uint32_t active_frequency = 0;
 static int active_audio_mode = 0; // 0 = Analog Only, 1 = I2S Digital
+static int active_volume = 50;    // Standard default volume (0 to 63)
 
 static int si468x_enable_service_data(void);
 static int si468x_enable_rds(void);
@@ -813,8 +814,9 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
     }
 
     if (ret == SI468X_SUCCESS) {
-        // Re-apply the active configured audio output path upon service play
+        // Re-apply the active configured audio output path and volume upon service play to override tuning resets
         si468x_set_audio_output(active_audio_mode);
+        si468x_set_volume(active_volume);
 
         // Turn on the on-chip PAD/XPAD decoder so that DLS text and MOT slideshow are dynamically decoded
         si468x_enable_service_data();
@@ -859,6 +861,7 @@ int si468x_set_volume(uint8_t volume)
     if (volume > 63) {
         volume = 63;
     }
+    active_volume = volume;
     std::clog << "libsi468x: Setting volume property to " << (int)volume << std::endl;
 
     uint8_t cmd[6];
@@ -1294,8 +1297,9 @@ int si468x_tune_fm(uint32_t frequency_khz)
     // Give the RF synthesizer 300ms to lock and stabilize on-chip
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
-    // Re-apply the active configured audio output path to override co-processor's automatic analog resets on tune lock
+    // Re-apply the active configured audio output path and volume to override co-processor's automatic analog resets on tune lock
     si468x_set_audio_output(active_audio_mode);
+    si468x_set_volume(active_volume);
 
     return SI468X_SUCCESS;
 }
