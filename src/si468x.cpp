@@ -248,19 +248,11 @@ int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_
         return SI468X_ERROR_TIMEOUT;
     }
 
-    // 3. Read the response payload. If none was requested, always read a 7-byte dummy response
-    // to cleanly flush the co-processor's SPI transmit FIFO and prevent bus blockages!
+    // 3. Read the response payload. If none was requested, exit immediately (matches native binary exactly!)
     if (resp && resp_len > 0) {
         std::vector<uint8_t> tx_dummy(resp_len, 0x00);
         std::memset(resp, 0, resp_len);
         if (spi_transfer(tx_dummy.data(), resp, resp_len) < 0) {
-            return SI468X_ERROR_SPI;
-        }
-    }
-    else {
-        uint8_t dummy_resp[7];
-        uint8_t tx_dummy[7] = { 0x00 };
-        if (spi_transfer(tx_dummy, dummy_resp, 7) < 0) {
             return SI468X_ERROR_SPI;
         }
     }
