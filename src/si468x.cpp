@@ -1180,12 +1180,6 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
     // resp[7]    : Response parameter Byte 3 (RSSI value in dBuV!)
     // resp[10]   : Response parameter Byte 6 (SNR value in dB!)
     // resp[21..22] : Response parameter Byte 17-18 (Antenna Tuning Cap)
-    SI468X_LOG << "libsi468x: Raw DIGRAD_STATUS: ";
-    for (int i = 0; i < 28; i++) {
-        SI468X_LOG << "0x" << std::hex << (int)resp[i] << " ";
-    }
-    SI468X_LOG << std::dec << std::endl;
-
     status->rssi = resp[7];  // Aligned with native binary offset (Byte 3)
     status->snr = resp[10];  // Aligned with native binary offset (Byte 6)
     status->freq_offset = 0; // Handled as secondary telemetry
