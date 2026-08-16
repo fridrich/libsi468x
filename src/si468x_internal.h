@@ -20,8 +20,8 @@ extern "C" {
 
 /* Application Opcodes */
 #define SI468X_CMD_GET_SYS_STATE     0x10
-#define SI468X_CMD_SET_PROPERTY      0x12
-#define SI468X_CMD_GET_PROPERTY      0x13
+#define SI468X_CMD_SET_PROPERTY      0x13
+#define SI468X_CMD_GET_PROPERTY      0x12
 #define SI468X_CMD_GET_STATUS        0x14
 #define SI468X_CMD_DAB_TUNE_FREQ     0xB0
 #define SI468X_CMD_DAB_DIGRAD_STATUS 0xB2
