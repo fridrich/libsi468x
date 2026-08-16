@@ -1214,9 +1214,22 @@ int si468x_get_dls_text(char* out_text, int max_len)
         text_len = max_len - 1;
     }
 
-    // Dynamic UTF-8 DLS string payload starts exactly at resp[27] (bypassing control header)
-    std::memcpy(out_text, &resp[27], text_len);
-    out_text[text_len] = '\0';
+    uint8_t charset = (resp[25] >> 4) & 0x0F; // Charset is typically the upper 4 bits of the DLS Control Byte
+    int out_idx = 0;
+
+    // Dynamic UTF-8 DLS string payload parsing starting exactly at resp[27]
+    for (int i = 0; i < text_len && out_idx < max_len - 2; i++) {
+        uint8_t c = resp[27 + i];
+        if (charset == 0 && c >= 0x80) {
+            // Convert EBU Latin-1 (ISO-8859-1) to UTF-8
+            out_text[out_idx++] = 0xC0 | (c >> 6);
+            out_text[out_idx++] = 0x80 | (c & 0x3F);
+        }
+        else {
+            out_text[out_idx++] = c;
+        }
+    }
+    out_text[out_idx] = '\0';
 
     static std::string last_dls_text = "";
     std::string current_dls(out_text);
