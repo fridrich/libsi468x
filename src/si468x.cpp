@@ -1157,6 +1157,18 @@ int si468x_set_audio_output(int enable_i2s)
         return ret;
     }
 
+    // Set Property 0x0001 (PIN_CONFIG) to 0x0001 for I2S, or 0x0000 for Analog Only (routes the audio pins internally!)
+    cmd[0] = SI468X_CMD_SET_PROPERTY;
+    cmd[1] = 0x00;
+    cmd[2] = 0x01; // Low byte of Property 0x0001 (PIN_CONFIG)
+    cmd[3] = 0x00; // High byte of Property 0x0001 (PIN_CONFIG)
+    cmd[4] = 0x00;
+    cmd[5] = enable_i2s ? 0x01 : 0x00; // 0x01 = I2S, 0x00 = Analog
+    ret = send_command(cmd, 6, nullptr, 0);
+    if (ret != SI468X_SUCCESS) {
+        return ret;
+    }
+
     if (enable_i2s) {
         // Set Property 0x0200 to 0x8000 (enable digital audio IO block as I2S Slave, matches radio_cli exactly!)
         cmd[0] = SI468X_CMD_SET_PROPERTY;
