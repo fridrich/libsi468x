@@ -24,14 +24,8 @@ if test -z "$XXD"; then
     AC_MSG_ERROR([xxd tool not found! Please install xxd (part of vim-common) or ensure it is in PATH.])
 fi
 
-# Check for wiringPi library (optional, with fallback to mock mode on x86_64 hosts)
-AC_CHECK_LIB([wiringPi], [wiringPiSetupGpio], [
-    AC_DEFINE([HAVE_WIRINGPI], [1], [Define if wiringPi is available])
-    LIBS_WIRINGPI="-lwiringPi"
-], [
-    LIBS_WIRINGPI=""
-    AC_MSG_WARN([wiringPi library not found. Compiling in mock/fallback GPIO mode.])
-])
+# No longer require wiringPi library; using native Linux standard driver APIs
+LIBS_WIRINGPI=""
 AC_SUBST([LIBS_WIRINGPI])
 
 # Configure options for firmware paths
