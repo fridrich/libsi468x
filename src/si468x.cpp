@@ -1286,6 +1286,10 @@ int si468x_tune_fm(uint32_t frequency_khz)
 
     // Give the RF synthesizer 300ms to lock and stabilize on-chip
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // Re-apply the active configured audio output path to override co-processor's automatic analog resets on tune lock
+    si468x_set_audio_output(active_audio_mode);
+
     return SI468X_SUCCESS;
 }
 
