@@ -326,7 +326,8 @@ public:
 
     bool is_allowed_RT_char(uint8_t c)
     {
-        return (c >= 32 && c <= 126) || c == '\r' || c == '\n';
+        // Accept all standard ASCII (32-126) and extended Latin/EBU characters (128-255), plus CR/LF
+        return (c >= 32 && c <= 126) || (c >= 128) || c == '\r' || c == '\n';
     }
 
     void decode_RT_block(uint8_t segment_address, uint8_t text_A_B_toggle, uint8_t is_block_D, uint16_t block_data)
@@ -1110,9 +1111,9 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         uint8_t num_components = resp[offset + 5] & 0x0F;
 
         // 3. Label: 16-character array (offset 8-23)
-        char service_label[17];
-        std::memcpy(service_label, &resp[offset + 8], 16);
-        service_label[16] = '\0';
+        char service_label[32];
+        uint8_t charset = (resp[offset + 7] >> 4) & 0x0F;
+        decode_dab_string_to_utf8(&resp[offset + 8], 16, charset, service_label, sizeof(service_label));
 
         // 4. Subchannel ID (SubChId) is stored at offset 24
         uint8_t subchannel_id = resp[offset + 24];
@@ -1506,8 +1507,8 @@ int si468x_get_rds_text(char* out_text, int max_len)
     }
 
     if (is_complete && !rds_decoder.complete_reported) {
-        std::strncpy(out_text, rds_decoder.radio_text, max_len - 1);
-        out_text[max_len - 1] = '\0';
+        // Expand the raw RDS string (using standard ETSI EBU Latin 0 charset) into UTF-8
+        decode_dab_string_to_utf8((const uint8_t*)rds_decoder.radio_text, check_len, 0, out_text, max_len);
         rds_decoder.complete_reported = true;
         return 1; // Return 1 to indicate a newly completed string has been assembled!
     }
