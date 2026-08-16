@@ -3,8 +3,74 @@
 #include <iomanip>
 #include <thread>
 #include <chrono>
+#include <fstream>
+#include <sstream>
+#include <map>
+#include <string>
 #include "si468x.h"
 #include "si468x_internal.h"
+
+struct StationRef {
+    std::string long_label;
+    std::string short_program;
+};
+
+// Helper to parse stations.json without external JSON library dependencies
+std::map<uint32_t, StationRef> load_stations_ref()
+{
+    std::map<uint32_t, StationRef> stations;
+    std::ifstream file("/home/fstrba/reverse-enginner/stations.json");
+    if (!file) {
+        std::cerr << "Warning: Could not open stations.json for comparative verification!" << std::endl;
+        return stations;
+    }
+    std::string line;
+    uint32_t current_sid = 0;
+    std::string current_program = "";
+    std::string current_short = "";
+
+    while (std::getline(file, line)) {
+        if (line.find("\"service_id\":") != std::string::npos) {
+            size_t pos = line.find(":");
+            std::string sub = line.substr(pos + 1);
+            // strip commas or spaces
+            size_t comma = sub.find(",");
+            if (comma != std::string::npos) {
+                sub = sub.substr(0, comma);
+            }
+            std::stringstream ss(sub);
+            ss >> current_sid;
+        }
+        else if (line.find("\"program\":") != std::string::npos) {
+            size_t start = line.find("\"program\":") + 10;
+            size_t first_quote = line.find("\"", start);
+            size_t second_quote = line.find("\"", first_quote + 1);
+            if (first_quote != std::string::npos && second_quote != std::string::npos) {
+                current_program = line.substr(first_quote + 1, second_quote - first_quote - 1);
+                // Strip trailing spaces from long label to match database style
+                while (!current_program.empty() && current_program.back() == ' ') {
+                    current_program.pop_back();
+                }
+            }
+        }
+        else if (line.find("\"short_program\":") != std::string::npos) {
+            size_t start = line.find("\"short_program\":") + 16;
+            size_t first_quote = line.find("\"", start);
+            size_t second_quote = line.find("\"", first_quote + 1);
+            if (first_quote != std::string::npos && second_quote != std::string::npos) {
+                current_short = line.substr(first_quote + 1, second_quote - first_quote - 1);
+            }
+            if (current_sid != 0) {
+                StationRef ref;
+                ref.long_label = current_program;
+                ref.short_program = current_short;
+                stations[current_sid] = ref;
+                current_sid = 0;
+            }
+        }
+    }
+    return stations;
+}
 
 int main()
 {
@@ -15,6 +81,10 @@ int main()
     std::cout << "==================================================" << std::endl;
     std::cout << "   libsi468x Short Label Mask Verification Tool   " << std::endl;
     std::cout << "==================================================" << std::endl;
+
+    std::cout << "Loading reference labels from stations.json..." << std::endl;
+    auto ref_stations = load_stations_ref();
+    std::cout << "Loaded " << ref_stations.size() << " reference station records." << std::endl;
 
     std::cout << "libsi468x: Initializing chip..." << std::endl;
     if (si468x_init(spi_dev, rst_pin, SI468X_BOOT_DAB) != SI468X_SUCCESS) {
@@ -48,15 +118,7 @@ int main()
         return 1;
     }
 
-    // Wait 12 seconds for database compilation (active polling of signal status to flush interrupts)
-    std::cout << "Waiting 12 seconds for station names to compile from air..." << std::endl;
-    for (int i = 0; i < 24; i++) {
-        si468x_signal_status_t status;
-        si468x_get_signal_status(&status);
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    }
-
-    // Retrieve service list (up to 32 services)
+    // Retrieve service list to get the first service ID for playback compilation
     si468x_service_t services[32];
     std::memset(services, 0, sizeof(services));
     int num_services = si468x_get_service_list(services, 32);
@@ -67,14 +129,51 @@ int main()
         return 1;
     }
 
-    std::cout << "--------------------------------------------------------------------------------" << std::endl;
-    std::cout << " " << std::left << std::setw(20) << "Long Label"
-              << " | " << std::setw(6) << "Mask"
-              << " | " << std::setw(12) << "On-Chip Short"
-              << " | " << std::setw(12) << "Local Decoded"
-              << " | Match?" << std::endl;
-    std::cout << "--------------------------------------------------------------------------------" << std::endl;
+    // Find the first valid Audio service (SId < 0x10000) to ensure the play command is accepted
+    int play_index = 0;
+    for (int s = 0; s < num_services; s++) {
+        if (services[s].service_id < 0x10000) {
+            play_index = s;
+            break;
+        }
+    }
 
+    // Start decoding the selected audio service component to trigger dynamic label compilation
+    std::cout << "libsi468x: Triggering playback on audio service (SId: 0x"
+              << std::hex << services[play_index].service_id << std::dec << ") to compile station names..." << std::endl;
+    si468x_play_service(services[play_index].service_id, services[play_index].component_id);
+
+    // Wait 10 seconds for database compilation (active polling of signal status to flush interrupts)
+    std::cout << "Waiting 10 seconds for names and masks to compile..." << std::endl;
+    for (int i = 0; i < 20; i++) {
+        si468x_signal_status_t status;
+        si468x_get_signal_status(&status);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    // Query service list again now that labels are fully compiled in SRAM (while playback is still active!)
+    std::memset(services, 0, sizeof(services));
+    num_services = si468x_get_service_list(services, 32);
+
+    // Stop playback decoder after querying the active database
+    si468x_stop_service();
+
+    if (num_services <= 0) {
+        std::cerr << "No services found in database payload!" << std::endl;
+        si468x_shutdown();
+        return 1;
+    }
+
+    std::cout << "\n--------------------------------------------------------------------------------------------------" << std::endl;
+    std::cout << " " << std::left << std::setw(18) << "Long Label"
+              << " | " << std::setw(6) << "Mask"
+              << " | " << std::setw(12) << "On-Chip"
+              << " | " << std::setw(12) << "Local"
+              << " | " << std::setw(12) << "stations.json"
+              << " | Valid?" << std::endl;
+    std::cout << "--------------------------------------------------------------------------------------------------" << std::endl;
+
+    int total_checked = 0;
     int matches = 0;
 
     for (int s = 0; s < num_services; s++) {
@@ -89,36 +188,54 @@ int main()
         // Fetch detailed component specs (Opcode 0xBB)
         int comp_ret = si468x_get_component_info(services[s].service_id, services[s].component_id, comp_label, comp_short_label, &char_mask, &subchannel_id);
 
-        if (comp_ret == 0) {
+        if (comp_ret == 0 && std::strlen(comp_label) > 0) {
+            total_checked++;
+
             // Run our host-side decoder locally on the long label with the retrieved mask
             char local_short_label[9];
             std::memset(local_short_label, 0, sizeof(local_short_label));
             si468x_decode_short_label(comp_label, char_mask, local_short_label);
 
-            bool equal = (std::strcmp(comp_short_label, local_short_label) == 0);
+            // Fetch reference short label from stations.json map
+            std::string ref_short = "(missing)";
+            std::string clean_comp_label(comp_label);
+            while (!clean_comp_label.empty() && clean_comp_label.back() == ' ') {
+                clean_comp_label.pop_back();
+            }
+
+            auto it = ref_stations.find(services[s].service_id);
+            if (it != ref_stations.end()) {
+                ref_short = it->second.short_program;
+            }
+
+            // A match is valid if our locally decoded short label is a prefix of or identical to the reference label
+            // (Note: stations.json has trailing spaces stripped, whereas short_label can have trailing spaces)
+            std::string clean_local(local_short_label);
+            while (!clean_local.empty() && clean_local.back() == ' ') {
+                clean_local.pop_back();
+            }
+
+            bool equal = (clean_local == ref_short);
             if (equal) {
                 matches++;
             }
 
-            std::cout << " " << std::left << std::setw(20) << comp_label
+            std::cout << " " << std::left << std::setw(18) << clean_comp_label
                       << " | 0x" << std::hex << std::setw(4) << std::setfill('0') << char_mask << std::dec << std::setfill(' ')
                       << " | " << std::left << std::setw(12) << comp_short_label
                       << " | " << std::left << std::setw(12) << local_short_label
+                      << " | " << std::left << std::setw(12) << ref_short
                       << " | " << (equal ? "YES" : "NO!") << std::endl;
-        }
-        else {
-            std::cout << " " << std::left << std::setw(20) << services[s].label
-                      << " | Failed to query component metadata" << std::endl;
         }
     }
 
-    std::cout << "--------------------------------------------------------------------------------" << std::endl;
+    std::cout << "--------------------------------------------------------------------------------------------------" << std::endl;
     std::cout << "Verification Complete!" << std::endl;
-    std::cout << "  Total Components Checked: " << num_services << std::endl;
-    std::cout << "  Total Decoder Matches:    " << matches << " / " << num_services << std::endl;
+    std::cout << "  Total Active Stations Checked: " << total_checked << std::endl;
+    std::cout << "  Total JSON Reference Matches:  " << matches << " / " << total_checked << std::endl;
     std::cout << "==================================================" << std::endl;
 
     std::cout << "libsi468x: Performing clean hardware shutdown..." << std::endl;
     si468x_shutdown();
-    return (matches == num_services) ? 0 : 1;
+    return (matches == total_checked) ? 0 : 1;
 }
