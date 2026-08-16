@@ -417,7 +417,6 @@ static int custom_freq_count = 0;
 
 int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
 {
-    SI468X_LOG << "libsi468x: Initializing driver library..." << std::endl;
 
     // 1. Initialize GPIO
     if (!gpio_init(rst_pin)) {
@@ -462,7 +461,6 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     }
 
     // 5. Upload statically embedded ROM Patch
-    SI468X_LOG << "libsi468x: Loading embedded ROM patch..." << std::endl;
     if (upload_firmware_memory(fw_rom_patch_bin, fw_rom_patch_bin_len) != SI468X_SUCCESS) {
         si468x_shutdown();
         return SI468X_ERROR_FIRMWARE;
@@ -476,12 +474,10 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     unsigned int app_fw_len = 0;
 
     if (boot_mode == SI468X_BOOT_DAB) {
-        SI468X_LOG << "libsi468x: Selecting embedded DAB v6.0.6 firmware..." << std::endl;
         app_fw = fw_dab_radio_bin;
         app_fw_len = fw_dab_radio_bin_len;
     }
     else if (boot_mode == SI468X_BOOT_FMHD) {
-        SI468X_LOG << "libsi468x: Selecting embedded FMHD v5.1.3 firmware..." << std::endl;
         app_fw = fw_fmhd_radio_bin;
         app_fw_len = fw_fmhd_radio_bin_len;
     }
@@ -491,7 +487,6 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         return SI468X_ERROR_FIRMWARE;
     }
 
-    SI468X_LOG << "libsi468x: Loading embedded application firmware..." << std::endl;
     if (upload_firmware_memory(app_fw, app_fw_len) != SI468X_SUCCESS) {
         si468x_shutdown();
         return SI468X_ERROR_FIRMWARE;
@@ -501,7 +496,6 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // 7. Send BOOT (0x07, must be 5 bytes) and read 2-byte response to boot both ROM + App images
-    SI468X_LOG << "libsi468x: Booting application image..." << std::endl;
     uint8_t boot_cmd[5] = { SI468X_CMD_BOOT, 0x00, 0x00, 0x00, 0x00 };
     uint8_t boot_resp[2];
     if (send_command(boot_cmd, 5, boot_resp, 2) != SI468X_SUCCESS) {
@@ -661,7 +655,6 @@ int si468x_set_frequency(uint32_t frequency_hz)
     // Map the requested frequency (in Hz) to its standard European Frequency Index (0-40) complied with firmware
     uint8_t freq_index = si468x_get_freq_index(frequency_hz);
 
-    SI468X_LOG << "libsi468x: Tuning chip to freq_index " << (int)freq_index << " (" << frequency_hz << " Hz)..." << std::endl;
 
     // Build DAB_TUNE_FREQ packet (must be exactly 6 bytes)
     uint8_t cmd[6];
@@ -707,7 +700,6 @@ uint32_t si468x_get_frequency(void)
 
 static int si468x_enable_service_data(void)
 {
-    SI468X_LOG << "libsi468x: Enabling on-chip PAD/XPAD decoder (Properties 0xB200-0xB204)..." << std::endl;
     uint8_t cmd[6];
 
     // Set Property 0xB200 to 0x003F (63) to enable PAD/XPAD decoding (Little-Endian)
@@ -752,7 +744,6 @@ static int si468x_enable_service_data(void)
 
 static int si468x_enable_rds(void)
 {
-    SI468X_LOG << "libsi468x: Enabling on-chip RDS/RBDS decoder (Properties 0x1500-0x1502)..." << std::endl;
     uint8_t cmd[6];
 
     // Set Property 0x1500 to 0x0001 (FM_RDS_CONFIG: Enable RDS) (Little-Endian)
@@ -856,7 +847,6 @@ int si468x_set_volume(uint8_t volume)
         volume = 63;
     }
     active_volume = volume;
-    SI468X_LOG << "libsi468x: Setting volume property to " << (int)volume << std::endl;
 
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;
@@ -1055,7 +1045,6 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         return 0;
     }
 
-    SI468X_LOG << "libsi468x: Querying on-chip service database..." << std::endl;
 
     // Step 1: Send GET_DIGITAL_SERVICE_LIST (0x80) command to query database size (7-byte read)
     uint8_t size_cmd[2] = { 0x80, 0x00 };
@@ -1068,7 +1057,6 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
 
     // Bytes 5-6 (Response Parameter Bytes 1-2) store the 16-bit database size in Little-Endian
     uint16_t db_size = size_resp[5] | ((uint16_t)size_resp[6] << 8);
-    SI468X_LOG << "libsi468x: Chip reported database payload size: " << db_size << " bytes." << std::endl;
 
     if (db_size == 0 || db_size > 2048) {
         return 0;
@@ -1084,7 +1072,6 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
 
     // Shift index to find number of services in this ensemble (Parameter Byte 5)
     uint8_t num_services = resp[9];
-    SI468X_LOG << "libsi468x: Chip reported " << (int)num_services << " active services." << std::endl;
 
     if (num_services == 0) {
         return 0;
@@ -1213,7 +1200,6 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
 int si468x_set_audio_output(int enable_i2s)
 {
     active_audio_mode = enable_i2s;
-    SI468X_LOG << "libsi468x: Configuring audio output path (I2S: " << enable_i2s << ")..." << std::endl;
 
     if (spi_fd < 0) {
         // If SPI is not open yet, store the mode statically so si468x_init can apply it dynamically during boot
