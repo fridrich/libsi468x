@@ -33,6 +33,16 @@ static uint32_t active_frequency = 0;
 static int active_audio_mode = 0; // 0 = Analog Only, 1 = I2S Digital
 static int active_volume = 50;    // Standard default volume (0 to 63)
 
+// Global debug logging status flag
+extern "C" {
+    int si468x_debug_active = 0;
+}
+
+void si468x_enable_debug(int enable)
+{
+    si468x_debug_active = enable;
+}
+
 static int si468x_enable_service_data(void);
 static int si468x_enable_rds(void);
 
@@ -74,7 +84,7 @@ static int get_sysfs_gpio_base(void)
 static bool gpio_init(int pin)
 {
     if (pin < 0) {
-        std::cerr << "libsi468x: Invalid GPIO pin: " << pin << std::endl;
+        SI468X_ERR << "libsi468x: Invalid GPIO pin: " << pin << std::endl;
         return false;
     }
 
@@ -82,7 +92,7 @@ static bool gpio_init(int pin)
     sysfs_gpio_pin = base + pin;
     sysfs_ce1_pin = base + 7; // BCM GPIO 7 is CE1
 
-    std::clog << "libsi468x: Mapping BCM GPIO " << pin << " to sysfs GPIO " << sysfs_gpio_pin << std::endl;
+    SI468X_LOG << "libsi468x: Mapping BCM GPIO " << pin << " to sysfs GPIO " << sysfs_gpio_pin << std::endl;
 
     // Export primary reset pin if not already exported
     std::string rst_path = "/sys/class/gpio/gpio" + std::to_string(sysfs_gpio_pin);
@@ -111,7 +121,7 @@ static bool gpio_init(int pin)
     std::string rst_dir_path = rst_path + "/direction";
     std::ofstream rst_dir_file(rst_dir_path);
     if (!rst_dir_file) {
-        std::cerr << "libsi468x: Failed to set sysfs reset GPIO direction to out!" << std::endl;
+        SI468X_ERR << "libsi468x: Failed to set sysfs reset GPIO direction to out!" << std::endl;
         return false;
     }
     rst_dir_file << "out";
@@ -224,8 +234,8 @@ int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_
             if (poll_rx[1] & 0x80) {
                 // Check for Command Error (ERR bit 6), silencing expected queue-empty codes for 0x84/0xBB/0x80
                 if ((poll_rx[1] & 0x40) && cmd && cmd[0] != 0x84 && cmd[0] != 0xBB && cmd[0] != 0x80) {
-                    std::cerr << "libsi468x: WARNING: Command Error (Status: 0x"
-                              << std::hex << (int)poll_rx[1] << std::dec << ")" << std::endl;
+                    SI468X_ERR << "libsi468x: WARNING: Command Error (Status: 0x"
+                               << std::hex << (int)poll_rx[1] << std::dec << ")" << std::endl;
                 }
                 cts_high = true;
                 break;
@@ -407,7 +417,7 @@ static int custom_freq_count = 0;
 
 int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
 {
-    std::clog << "libsi468x: Initializing driver library..." << std::endl;
+    SI468X_LOG << "libsi468x: Initializing driver library..." << std::endl;
 
     // 1. Initialize GPIO
     if (!gpio_init(rst_pin)) {
@@ -423,7 +433,7 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     // 3. Open SPI Bus
     spi_fd = open(spi_device, O_RDWR);
     if (spi_fd < 0) {
-        std::cerr << "libsi468x: Error opening SPI device: " << spi_device << std::endl;
+        SI468X_ERR << "libsi468x: Error opening SPI device: " << spi_device << std::endl;
         gpio_shutdown();
         return SI468X_ERROR_SPI;
     }
@@ -436,7 +446,7 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     if (ioctl(spi_fd, SPI_IOC_WR_MODE, &mode) < 0 ||
             ioctl(spi_fd, SPI_IOC_WR_BITS_PER_WORD, &bits) < 0 ||
             ioctl(spi_fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed) < 0) {
-        std::cerr << "libsi468x: Error configuring SPI bus parameters!" << std::endl;
+        SI468X_ERR << "libsi468x: Error configuring SPI bus parameters!" << std::endl;
         si468x_shutdown();
         return SI468X_ERROR_SPI;
     }
@@ -452,7 +462,7 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     }
 
     // 5. Upload statically embedded ROM Patch
-    std::clog << "libsi468x: Loading embedded ROM patch..." << std::endl;
+    SI468X_LOG << "libsi468x: Loading embedded ROM patch..." << std::endl;
     if (upload_firmware_memory(fw_rom_patch_bin, fw_rom_patch_bin_len) != SI468X_SUCCESS) {
         si468x_shutdown();
         return SI468X_ERROR_FIRMWARE;
@@ -466,22 +476,22 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     unsigned int app_fw_len = 0;
 
     if (boot_mode == SI468X_BOOT_DAB) {
-        std::clog << "libsi468x: Selecting embedded DAB v6.0.6 firmware..." << std::endl;
+        SI468X_LOG << "libsi468x: Selecting embedded DAB v6.0.6 firmware..." << std::endl;
         app_fw = fw_dab_radio_bin;
         app_fw_len = fw_dab_radio_bin_len;
     }
     else if (boot_mode == SI468X_BOOT_FMHD) {
-        std::clog << "libsi468x: Selecting embedded FMHD v5.1.3 firmware..." << std::endl;
+        SI468X_LOG << "libsi468x: Selecting embedded FMHD v5.1.3 firmware..." << std::endl;
         app_fw = fw_fmhd_radio_bin;
         app_fw_len = fw_fmhd_radio_bin_len;
     }
     else {
-        std::cerr << "libsi468x: Invalid boot_mode!" << std::endl;
+        SI468X_ERR << "libsi468x: Invalid boot_mode!" << std::endl;
         si468x_shutdown();
         return SI468X_ERROR_FIRMWARE;
     }
 
-    std::clog << "libsi468x: Loading embedded application firmware..." << std::endl;
+    SI468X_LOG << "libsi468x: Loading embedded application firmware..." << std::endl;
     if (upload_firmware_memory(app_fw, app_fw_len) != SI468X_SUCCESS) {
         si468x_shutdown();
         return SI468X_ERROR_FIRMWARE;
@@ -491,7 +501,7 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // 7. Send BOOT (0x07, must be 5 bytes) and read 2-byte response to boot both ROM + App images
-    std::clog << "libsi468x: Booting application image..." << std::endl;
+    SI468X_LOG << "libsi468x: Booting application image..." << std::endl;
     uint8_t boot_cmd[5] = { SI468X_CMD_BOOT, 0x00, 0x00, 0x00, 0x00 };
     uint8_t boot_resp[2];
     if (send_command(boot_cmd, 5, boot_resp, 2) != SI468X_SUCCESS) {
@@ -504,7 +514,7 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
 
     // Enable default audio output upon system init
     if (si468x_set_audio_output(active_audio_mode) != SI468X_SUCCESS) {
-        std::cerr << "libsi468x: Warning: Failed to configure default audio output." << std::endl;
+        SI468X_ERR << "libsi468x: Warning: Failed to configure default audio output." << std::endl;
     }
 
     // Enable the co-processor's decoder based on boot mode upon system init (before playback starts)
@@ -520,21 +530,15 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     uint8_t rev_cmd[1] = { 0x10 };
     uint8_t rev_resp[16];
     std::memset(rev_resp, 0, sizeof(rev_resp));
-    if (send_command(rev_cmd, 1, rev_resp, 16) == SI468X_SUCCESS) {
-        std::clog << "libsi468x: Raw GET_REV_INFO Response: ";
-        for (int i = 0; i < 16; i++) {
-            std::clog << "0x" << std::hex << (int)rev_resp[i] << " ";
-        }
-        std::clog << std::dec << std::endl;
-    }
+    send_command(rev_cmd, 1, rev_resp, 16);
 
-    std::clog << "libsi468x: Boot complete. Chip running successfully!" << std::endl;
+    SI468X_LOG << "libsi468x: Boot complete. Chip running successfully!" << std::endl;
     return SI468X_SUCCESS;
 }
 
 int si468x_shutdown(void)
 {
-    std::clog << "libsi468x: Shutting down chip and releasing bus..." << std::endl;
+    SI468X_LOG << "libsi468x: Shutting down chip and releasing bus..." << std::endl;
 
     // Hold in reset
     gpio_set_rst(false);
@@ -657,7 +661,7 @@ int si468x_set_frequency(uint32_t frequency_hz)
     // Map the requested frequency (in Hz) to its standard European Frequency Index (0-40) complied with firmware
     uint8_t freq_index = si468x_get_freq_index(frequency_hz);
 
-    std::clog << "libsi468x: Tuning chip to freq_index " << (int)freq_index << " (" << frequency_hz << " Hz)..." << std::endl;
+    SI468X_LOG << "libsi468x: Tuning chip to freq_index " << (int)freq_index << " (" << frequency_hz << " Hz)..." << std::endl;
 
     // Build DAB_TUNE_FREQ packet (must be exactly 6 bytes)
     uint8_t cmd[6];
@@ -703,7 +707,7 @@ uint32_t si468x_get_frequency(void)
 
 static int si468x_enable_service_data(void)
 {
-    std::clog << "libsi468x: Enabling on-chip PAD/XPAD decoder (Properties 0xB200-0xB204)..." << std::endl;
+    SI468X_LOG << "libsi468x: Enabling on-chip PAD/XPAD decoder (Properties 0xB200-0xB204)..." << std::endl;
     uint8_t cmd[6];
 
     // Set Property 0xB200 to 0x003F (63) to enable PAD/XPAD decoding (Little-Endian)
@@ -748,7 +752,7 @@ static int si468x_enable_service_data(void)
 
 static int si468x_enable_rds(void)
 {
-    std::clog << "libsi468x: Enabling on-chip RDS/RBDS decoder (Properties 0x1500-0x1502)..." << std::endl;
+    SI468X_LOG << "libsi468x: Enabling on-chip RDS/RBDS decoder (Properties 0x1500-0x1502)..." << std::endl;
     uint8_t cmd[6];
 
     // Set Property 0x1500 to 0x0001 (FM_RDS_CONFIG: Enable RDS) (Little-Endian)
@@ -779,8 +783,8 @@ static int si468x_enable_rds(void)
 
 int si468x_play_service(uint32_t service_id, uint32_t component_id)
 {
-    std::clog << "libsi468x: Starting service playback (SId: 0x"
-              << std::hex << service_id << ", CompId: " << std::dec << component_id << ")..." << std::endl;
+    SI468X_LOG << "libsi468x: Starting service playback (SId: 0x"
+               << std::hex << service_id << ", CompId: " << std::dec << component_id << ")..." << std::endl;
 
     // Build 12-byte command packet matching native binary exactly:
     // - Byte 0: Opcode 0x81 (START_SERVICE)
@@ -802,13 +806,11 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
 
     // Send first attempt with SCIdS = 0 (reads 0 response parameter bytes, matches radio_cli!)
     int ret = send_command(cmd, 12, nullptr, 0);
-    std::clog << "libsi468x: START_DIGITAL (SCIdS 0) ret: " << ret << std::endl;
 
     if (ret != SI468X_SUCCESS) {
         // Try fallback attempt with SCIdS = 1 just like native play_station()
         cmd[1] = 0x01;
         ret = send_command(cmd, 12, nullptr, 0);
-        std::clog << "libsi468x: START_DIGITAL (SCIdS 1) ret: " << ret << std::endl;
     }
 
     if (ret == SI468X_SUCCESS) {
@@ -823,7 +825,7 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
 
 int si468x_stop_service(void)
 {
-    std::clog << "libsi468x: Stopping service playback..." << std::endl;
+    SI468X_LOG << "libsi468x: Stopping service playback..." << std::endl;
 
     // Build 12-byte STOP_DIGITAL command matching native binary exactly (using opcode 0x82)
     uint8_t cmd[12] = {
@@ -834,13 +836,11 @@ int si468x_stop_service(void)
 
     // Send first attempt with SCIdS = 0 (reads 0 response parameter bytes, matches radio_cli!)
     int ret = send_command(cmd, 12, nullptr, 0);
-    std::clog << "libsi468x: STOP_DIGITAL (SCIdS 0) ret: " << ret << std::endl;
 
     if (ret != SI468X_SUCCESS) {
         // Try fallback attempt with SCIdS = 1 just like native play_station()
         cmd[1] = 0x01;
         ret = send_command(cmd, 12, nullptr, 0);
-        std::clog << "libsi468x: STOP_DIGITAL (SCIdS 1) ret: " << ret << std::endl;
     }
 
     if (ret == SI468X_SUCCESS) {
@@ -856,7 +856,7 @@ int si468x_set_volume(uint8_t volume)
         volume = 63;
     }
     active_volume = volume;
-    std::clog << "libsi468x: Setting volume property to " << (int)volume << std::endl;
+    SI468X_LOG << "libsi468x: Setting volume property to " << (int)volume << std::endl;
 
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;
@@ -871,11 +871,11 @@ int si468x_set_volume(uint8_t volume)
 
     // Capture and print the raw 7-byte response parameters for maximum debugging visibility
     int ret = send_command(cmd, 6, resp, 7);
-    std::clog << "libsi468x: SET_VOLUME Property 0x0300 Raw Response: ";
+    SI468X_LOG << "libsi468x: SET_VOLUME Property 0x0300 Raw Response: ";
     for (int i = 0; i < 7; i++) {
-        std::clog << "0x" << std::hex << (int)resp[i] << " ";
+        SI468X_LOG << "0x" << std::hex << (int)resp[i] << " ";
     }
-    std::clog << std::dec << " (ret: " << ret << ")" << std::endl;
+    SI468X_LOG << std::dec << " (ret: " << ret << ")" << std::endl;
 
     return ret;
 }
@@ -1055,7 +1055,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         return 0;
     }
 
-    std::clog << "libsi468x: Querying on-chip service database..." << std::endl;
+    SI468X_LOG << "libsi468x: Querying on-chip service database..." << std::endl;
 
     // Step 1: Send GET_DIGITAL_SERVICE_LIST (0x80) command to query database size (7-byte read)
     uint8_t size_cmd[2] = { 0x80, 0x00 };
@@ -1068,7 +1068,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
 
     // Bytes 5-6 (Response Parameter Bytes 1-2) store the 16-bit database size in Little-Endian
     uint16_t db_size = size_resp[5] | ((uint16_t)size_resp[6] << 8);
-    std::clog << "libsi468x: Chip reported database payload size: " << db_size << " bytes." << std::endl;
+    SI468X_LOG << "libsi468x: Chip reported database payload size: " << db_size << " bytes." << std::endl;
 
     if (db_size == 0 || db_size > 2048) {
         return 0;
@@ -1084,7 +1084,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
 
     // Shift index to find number of services in this ensemble (Parameter Byte 5)
     uint8_t num_services = resp[9];
-    std::clog << "libsi468x: Chip reported " << (int)num_services << " active services." << std::endl;
+    SI468X_LOG << "libsi468x: Chip reported " << (int)num_services << " active services." << std::endl;
 
     if (num_services == 0) {
         return 0;
@@ -1193,11 +1193,11 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
     // resp[7]    : Response parameter Byte 3 (RSSI value in dBuV!)
     // resp[10]   : Response parameter Byte 6 (SNR value in dB!)
     // resp[21..22] : Response parameter Byte 17-18 (Antenna Tuning Cap)
-    std::clog << "libsi468x: Raw DIGRAD_STATUS: ";
+    SI468X_LOG << "libsi468x: Raw DIGRAD_STATUS: ";
     for (int i = 0; i < 28; i++) {
-        std::clog << "0x" << std::hex << (int)resp[i] << " ";
+        SI468X_LOG << "0x" << std::hex << (int)resp[i] << " ";
     }
-    std::clog << std::dec << std::endl;
+    SI468X_LOG << std::dec << std::endl;
 
     status->rssi = resp[7];  // Aligned with native binary offset (Byte 3)
     status->snr = resp[10];  // Aligned with native binary offset (Byte 6)
@@ -1213,7 +1213,7 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
 int si468x_set_audio_output(int enable_i2s)
 {
     active_audio_mode = enable_i2s;
-    std::clog << "libsi468x: Configuring audio output path (I2S: " << enable_i2s << ")..." << std::endl;
+    SI468X_LOG << "libsi468x: Configuring audio output path (I2S: " << enable_i2s << ")..." << std::endl;
 
     if (spi_fd < 0) {
         // If SPI is not open yet, store the mode statically so si468x_init can apply it dynamically during boot

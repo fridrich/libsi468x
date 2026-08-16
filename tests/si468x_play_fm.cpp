@@ -22,6 +22,7 @@ void signal_handler(int signum)
 
 int main(int argc, char* argv[])
 {
+    si468x_enable_debug(1); // Enable diagnostic logging in tests
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
