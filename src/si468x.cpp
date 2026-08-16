@@ -316,6 +316,7 @@ public:
     uint8_t traffic_program;
     uint8_t program_type;
     uint8_t block_B_low_5;
+    bool complete_reported;
 
     RDS_decode()
     {
@@ -327,6 +328,7 @@ public:
         traffic_program = 0;
         program_type = 0;
         block_B_low_5 = 0;
+        complete_reported = false;
     }
 
     bool is_allowed_RT_char(uint8_t c)
@@ -345,6 +347,7 @@ public:
                 std::memset(radio_text, 0, sizeof(radio_text));
             }
             last_toggle = text_A_B_toggle;
+            complete_reported = false; // Reset complete state on text toggle change
         }
         last_segment = segment_address;
 
@@ -1377,8 +1380,45 @@ int si468x_get_rds_text(char* out_text, int max_len)
         }
     }
 
-    std::strncpy(out_text, rds_decoder.radio_text, max_len - 1);
-    out_text[max_len - 1] = '\0';
+    // Check if the current RadioText string is complete (no un-compiled 'holes' i.e. '\0' bytes before the end of the string)
+    // Find the end marker (either '\r' or max 64)
+    size_t check_len = 64;
+    for (size_t i = 0; i < 64; i++) {
+        if (rds_decoder.radio_text[i] == '\r') {
+            check_len = i;
+            break;
+        }
+    }
 
-    return updated ? 1 : 0;
+    // A string must have at least some non-space, non-null characters to be valid
+    bool has_content = false;
+    for (size_t i = 0; i < check_len; i++) {
+        if (rds_decoder.radio_text[i] != '\0' && rds_decoder.radio_text[i] != ' ') {
+            has_content = true;
+            break;
+        }
+    }
+
+    bool is_complete = false;
+    if (has_content) {
+        bool holes = false;
+        for (size_t i = 0; i < check_len; i++) {
+            if (rds_decoder.radio_text[i] == '\0') {
+                holes = true;
+                break;
+            }
+        }
+        if (!holes) {
+            is_complete = true;
+        }
+    }
+
+    if (is_complete && !rds_decoder.complete_reported) {
+        std::strncpy(out_text, rds_decoder.radio_text, max_len - 1);
+        out_text[max_len - 1] = '\0';
+        rds_decoder.complete_reported = true;
+        return 1; // Return 1 to indicate a newly completed string has been assembled!
+    }
+
+    return 0; // Return 0 if the string is still compiling or has already been reported
 }
