@@ -879,20 +879,13 @@ int si468x_set_volume(uint8_t volume)
     return ret;
 }
 
-void si468x_decode_short_label(const char* long_label, uint16_t char_mask, char* short_label)
-{
-    int dst = 0;
-    for (int i = 0; i < 16; i++) {
-        // Bit 15 represents the first character (index 0) of the long label
-        if ((char_mask & (0x8000 >> i))) {
-            short_label[dst++] = long_label[i];
-            if (dst >= 8) {
-                break;    // Short label is max 8 characters
-            }
-        }
-    }
-    short_label[dst] = '\0';
-}
+// Strict ETSI TS 101 756 EBU Latin (Charset 0) table for the 0x80 to 0x9F range
+static const uint16_t ebu_latin_80_9F[32] = {
+    0x00E1, 0x00E0, 0x00E9, 0x00E8, 0x00ED, 0x00EC, 0x00F3, 0x00F2, // 80 - 87
+    0x00FA, 0x00F9, 0x00D1, 0x00C7, 0x015E, 0x00DF, 0x00A1, 0x0132, // 88 - 8F
+    0x00E2, 0x00E4, 0x00EA, 0x00EB, 0x00EE, 0x00EF, 0x00F4, 0x00F6, // 90 - 97
+    0x00FB, 0x00FC, 0x00F1, 0x00E7, 0x015F, 0x011F, 0x0131, 0x0133  // 98 - 9F
+};
 
 static void decode_dab_string_to_utf8(const uint8_t* in, int in_len, uint8_t charset, char* out, int max_out_len)
 {
@@ -921,15 +914,36 @@ static void decode_dab_string_to_utf8(const uint8_t* in, int in_len, uint8_t cha
     }
     else {
         // Charset 0 (EBU Latin) or Charset 15 (UTF-8 fallback)
-        for (int i = 0; i < in_len && out_idx < max_out_len - 2; i++) {
+        for (int i = 0; i < in_len && out_idx < max_out_len - 4; i++) {
             uint8_t c = in[i];
             if (c == 0x00) {
                 break;
             }
-            if (charset == 0 && c >= 0x80) {
-                // Standard EBU Latin-1 mapping to UTF-8
-                out[out_idx++] = 0xC0 | (c >> 6);
-                out[out_idx++] = 0x80 | (c & 0x3F);
+            if (charset == 0) {
+                if (c >= 0x80 && c <= 0x9F) {
+                    // ETSI Specific EBU Latin range (e.g. 0x82 is 'é')
+                    uint16_t codepoint = ebu_latin_80_9F[c - 0x80];
+                    if (codepoint < 0x0080) {
+                        out[out_idx++] = (char)codepoint;
+                    }
+                    else if (codepoint < 0x0800) {
+                        out[out_idx++] = 0xC0 | (codepoint >> 6);
+                        out[out_idx++] = 0x80 | (codepoint & 0x3F);
+                    }
+                    else {
+                        out[out_idx++] = 0xE0 | (codepoint >> 12);
+                        out[out_idx++] = 0x80 | ((codepoint >> 6) & 0x3F);
+                        out[out_idx++] = 0x80 | (codepoint & 0x3F);
+                    }
+                }
+                else if (c >= 0xA0) {
+                    // Standard ISO-8859-1 mapping to UTF-8
+                    out[out_idx++] = 0xC0 | (c >> 6);
+                    out[out_idx++] = 0x80 | (c & 0x3F);
+                }
+                else {
+                    out[out_idx++] = c;
+                }
             }
             else {
                 out[out_idx++] = c;
@@ -937,6 +951,26 @@ static void decode_dab_string_to_utf8(const uint8_t* in, int in_len, uint8_t cha
         }
     }
     out[out_idx] = '\0';
+}
+
+void si468x_decode_short_label(const uint8_t* raw_label, int raw_len, uint16_t char_mask, uint8_t charset, char* short_label, int max_len)
+{
+    uint8_t temp_raw[16];
+    int dst = 0;
+
+    // Extract the raw, unencoded bytes corresponding to the short label using the mask
+    for (int i = 0; i < raw_len; i++) {
+        // Bit 15 represents the first character (index 0) of the long label
+        if ((char_mask & (0x8000 >> i))) {
+            temp_raw[dst++] = raw_label[i];
+            if (dst >= 8) {
+                break;
+            }
+        }
+    }
+
+    // Dynamically decode the extracted raw bytes into standard UTF-8
+    decode_dab_string_to_utf8(temp_raw, dst, charset, short_label, max_len);
 }
 
 int si468x_get_ensemble_info(char* label, uint16_t* ueid)
@@ -1008,7 +1042,7 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
     }
 
     if (short_label) {
-        si468x_decode_short_label(comp_label, char_mask, short_label);
+        si468x_decode_short_label(&resp[9], 16, char_mask, charset, short_label, 17);
     }
 
     return 0;

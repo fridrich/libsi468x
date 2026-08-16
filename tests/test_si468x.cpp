@@ -22,33 +22,38 @@ static bool test_short_label_decoding()
 {
     std::cout << "Running test: test_short_label_decoding..." << std::endl;
 
-    char short_label[10];
+    char short_label[17];
 
     // Test Case 1: Standard 7-character mask (0xFE00)
     std::memset(short_label, 0, sizeof(short_label));
-    si468x_decode_short_label("Station 1", 0xFE00, short_label);
+    const uint8_t raw1[] = "Station 1";
+    si468x_decode_short_label(raw1, 9, 0xFE00, 0, short_label, sizeof(short_label));
     ASSERT_TRUE(std::strcmp(short_label, "Station") == 0, "0xFE00 on 'Station 1' must yield 'Station'");
 
     // Test Case 2: Discontiguous characters (0xF080 -> index 0,1,2,3 and index 8)
     std::memset(short_label, 0, sizeof(short_label));
-    si468x_decode_short_label("Station 2", 0xF080, short_label);
+    const uint8_t raw2[] = "Station 2";
+    si468x_decode_short_label(raw2, 9, 0xF080, 0, short_label, sizeof(short_label));
     ASSERT_TRUE(std::strcmp(short_label, "Stat2") == 0, "0xF080 on 'Station 2' must yield 'Stat2'");
 
     // Test Case 3: Boundary case - Full mask (0xFFFF). Must truncate to max 8 characters.
     std::memset(short_label, 0, sizeof(short_label));
-    si468x_decode_short_label("1234567890abcdef", 0xFFFF, short_label);
+    const uint8_t raw3[] = "1234567890abcdef";
+    si468x_decode_short_label(raw3, 16, 0xFFFF, 0, short_label, sizeof(short_label));
     ASSERT_TRUE(std::strcmp(short_label, "12345678") == 0, "0xFFFF must truncate long string to 8 chars");
 
     // Test Case 4: Boundary case - Empty mask (0x0000)
     std::memset(short_label, 0, sizeof(short_label));
-    si468x_decode_short_label("Station 4", 0x0000, short_label);
+    const uint8_t raw4[] = "Station 4";
+    si468x_decode_short_label(raw4, 9, 0x0000, 0, short_label, sizeof(short_label));
     ASSERT_TRUE(std::strcmp(short_label, "") == 0, "0x0000 mask must yield empty string");
 
     // Test Case 5: Complex custom mask (0xAAAA -> binary 1010101010101010)
     // Matches indices: 0, 2, 4, 6, 8, 10, 12, 14
     // String: "a b c d e f g h" (spaces are at odd indices)
     std::memset(short_label, 0, sizeof(short_label));
-    si468x_decode_short_label("abcdefghijklmnop", 0xAAAA, short_label);
+    const uint8_t raw5[] = "abcdefghijklmnop";
+    si468x_decode_short_label(raw5, 16, 0xAAAA, 0, short_label, sizeof(short_label));
     ASSERT_TRUE(std::strcmp(short_label, "acegikmo") == 0, "0xAAAA mask must extract alternating characters");
 
     std::cout << "PASS: test_short_label_decoding" << std::endl;
