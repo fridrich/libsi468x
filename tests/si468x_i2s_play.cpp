@@ -52,12 +52,6 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // Configure audio output to I2S digital mode!
-    std::cout << "libsi468x: Configuring audio path to I2S Digital out..." << std::endl;
-    if (si468x_set_audio_output(1) != SI468X_SUCCESS) {
-        std::cerr << "Warning: Failed to set audio path to I2S!" << std::endl;
-    }
-
     std::cout << "libsi468x: Tuning carrier..." << std::endl;
     if (is_dab) {
         if (si468x_set_frequency(frequency_hz) != SI468X_SUCCESS) {
@@ -99,6 +93,12 @@ int main(int argc, char* argv[])
             si468x_shutdown();
             return 1;
         }
+    }
+
+    // Configure audio output to I2S digital mode AFTER tuning/playing!
+    std::cout << "libsi468x: Configuring audio path to I2S Digital out (overriding analog defaults)..." << std::endl;
+    if (si468x_set_audio_output(1) != SI468X_SUCCESS) {
+        std::cerr << "Warning: Failed to set audio path to I2S!" << std::endl;
     }
 
     std::cout << "\n--------------------------------------------------" << std::endl;
