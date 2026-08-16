@@ -894,6 +894,23 @@ void si468x_decode_short_label(const char* long_label, uint16_t char_mask, char*
     short_label[dst] = '\0';
 }
 
+static void decode_ebu_latin_to_utf8(const uint8_t* in, int in_len, uint8_t charset, char* out, int max_out_len)
+{
+    int out_idx = 0;
+    for (int i = 0; i < in_len && out_idx < max_out_len - 2; i++) {
+        uint8_t c = in[i];
+        if (charset == 0 && c >= 0x80) {
+            // Standard EBU Latin-1 mapping to UTF-8
+            out[out_idx++] = 0xC0 | (c >> 6);
+            out[out_idx++] = 0x80 | (c & 0x3F);
+        }
+        else {
+            out[out_idx++] = c;
+        }
+    }
+    out[out_idx] = '\0';
+}
+
 int si468x_get_ensemble_info(char* label, uint16_t* ueid)
 {
     if (!label) {
@@ -913,9 +930,10 @@ int si468x_get_ensemble_info(char* label, uint16_t* ueid)
         *ueid = resp[5] | ((uint16_t)resp[6] << 8);
     }
 
-    // Extract Ensemble Label (16 bytes starting exactly at resp[7] past 16-bit Ensemble ID)
-    std::memcpy(label, &resp[7], 16);
-    label[16] = '\0';
+    // Extract Ensemble Label (16 bytes starting exactly at resp[7])
+    uint8_t charset = (resp[23] >> 4) & 0x0F; // Charset is typically at byte 18 of parameters (resp[23])
+    decode_ebu_latin_to_utf8(&resp[7], 16, charset, label, 32);
+
     return 0;
 }
 
@@ -947,9 +965,10 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
     }
 
     // Component Label starts at resp[9] (16 bytes)
-    char comp_label[17];
-    std::memcpy(comp_label, &resp[9], 16);
-    comp_label[16] = '\0';
+    char comp_label[32];
+    uint8_t charset = (resp[6] >> 4) & 0x0F;
+    decode_ebu_latin_to_utf8(&resp[9], 16, charset, comp_label, sizeof(comp_label));
+
     if (label) {
         std::strcpy(label, comp_label);
     }
@@ -1215,21 +1234,9 @@ int si468x_get_dls_text(char* out_text, int max_len)
     }
 
     uint8_t charset = (resp[25] >> 4) & 0x0F; // Charset is typically the upper 4 bits of the DLS Control Byte
-    int out_idx = 0;
 
     // Dynamic UTF-8 DLS string payload parsing starting exactly at resp[27]
-    for (int i = 0; i < text_len && out_idx < max_len - 2; i++) {
-        uint8_t c = resp[27 + i];
-        if (charset == 0 && c >= 0x80) {
-            // Convert EBU Latin-1 (ISO-8859-1) to UTF-8
-            out_text[out_idx++] = 0xC0 | (c >> 6);
-            out_text[out_idx++] = 0x80 | (c & 0x3F);
-        }
-        else {
-            out_text[out_idx++] = c;
-        }
-    }
-    out_text[out_idx] = '\0';
+    decode_ebu_latin_to_utf8(&resp[27], text_len, charset, out_text, max_len);
 
     static std::string last_dls_text = "";
     std::string current_dls(out_text);
