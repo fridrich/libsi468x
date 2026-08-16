@@ -89,6 +89,11 @@ static bool test_api_signatures_uninitialized()
     int ret_dls = si468x_get_dls_text(dls_text, sizeof(dls_text));
     ASSERT_TRUE(ret_dls == -2, "si468x_get_dls_text must fail safely when uninitialized");
 
+    // 3. Verify si468x_get_time signature and uninitialized failure
+    si468x_time_t dtime;
+    int ret_time = si468x_get_time(&dtime);
+    ASSERT_TRUE(ret_time == -1, "si468x_get_time must fail safely when uninitialized");
+
     std::cout << "PASS: test_api_signatures_uninitialized" << std::endl;
     return true;
 }

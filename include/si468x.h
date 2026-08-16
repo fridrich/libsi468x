@@ -74,14 +74,25 @@ typedef struct {
  * @brief Structure representing analog and HD FM tuner metrics, RDS status, and SNR telemetry.
  */
 typedef struct {
-    uint32_t frequency_hz; /**< Currently tuned carrier frequency in Hz. */
-    uint8_t rssi;          /**< Received Signal Strength Indicator in dBµV. */
-    uint8_t snr;           /**< Signal-to-Noise Ratio in dB. */
-    uint8_t multipath;     /**< Multipath distortion metric (range 0 to 100). */
-    int8_t freq_offset;    /**< Frequency offset from tuned center in kHz. */
-    uint8_t hd_synced;     /**< HD Radio digital carrier synchronization flag (1 if synced, 0 if unlocked). */
-    uint8_t rds_synced;    /**< RDS subcarrier synchronization lock flag (1 if synced, 0 if unlocked). */
+    uint32_t frequency_hz;     /**< Currently tuned carrier frequency in Hz. */
+    uint8_t rssi;              /**< Received Signal Strength Indicator in dBµV. */
+    uint8_t snr;               /**< Signal-to-Noise Ratio in dB. */
+    uint8_t multipath;         /**< Multipath distortion metric (range 0 to 100). */
+    int8_t freq_offset;        /**< Frequency offset from tuned center in kHz. */
+    uint8_t hd_synced;         /**< HD Radio digital carrier synchronization flag (1 if synced, 0 if unlocked). */
+    uint8_t rds_synced;        /**< RDS subcarrier synchronization lock flag (1 if synced, 0 if unlocked). */
 } si468x_fm_status_t;
+
+/**
+ * @brief Structure representing the dynamically retrieved UTC network date-time of a DAB ensemble.
+ */
+typedef struct {
+    uint16_t year;             /**< Year (e.g. 2026). */
+    uint8_t month;             /**< Month (1 to 12). */
+    uint8_t day;               /**< Day of the month (1 to 31). */
+    uint8_t hour;              /**< Hour (0 to 23). */
+    uint8_t minute;            /**< Minute (0 to 59). */
+} si468x_time_t;
 
 /**
  * @brief Initialize the driver library, perform cold reset, and boot the co-processor.
@@ -174,6 +185,13 @@ int si468x_set_audio_output(int enable_i2s);
  * @return SI468X_SUCCESS on success, or a negative error code on failure.
  */
 int si468x_get_ensemble_info(char* label, uint16_t* ueid);
+
+/**
+ * @brief Query the co-processor to retrieve the current dynamically synced UTC ensemble time.
+ * @param time Pointer to target si468x_time_t struct to populate.
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_get_time(si468x_time_t* time);
 
 /**
  * @brief Retrieve detailed component-level specifications dynamically from the on-chip database.

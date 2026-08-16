@@ -1422,3 +1422,28 @@ int si468x_get_rds_text(char* out_text, int max_len)
 
     return 0; // Return 0 if the string is still compiling or has already been reported
 }
+
+int si468x_get_time(si468x_time_t* time)
+{
+    if (!time) {
+        return -1;
+    }
+
+    // Write 2-byte command for DAB_GET_TIME (Opcode 0xBC, Param Byte 0 = 0x01)
+    uint8_t cmd[2] = { 0xBC, 0x01 };
+    uint8_t resp[15];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 2, resp, 15) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    // Parse time fields from standard offsets (Parameter Bytes 9 to 14)
+    time->year = resp[9] | ((uint16_t)resp[10] << 8);
+    time->month = resp[11];
+    time->day = resp[12];
+    time->hour = resp[13];
+    time->minute = resp[14];
+
+    return SI468X_SUCCESS;
+}
