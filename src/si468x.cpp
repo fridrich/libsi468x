@@ -1164,18 +1164,6 @@ int si468x_set_audio_output(int enable_i2s)
         return ret;
     }
 
-    // Set Property 0x0001 (PIN_CONFIG) to 0x0001 (I2S) or 0x0000 (Analog Only) in Little-Endian
-    cmd[0] = SI468X_CMD_SET_PROPERTY;
-    cmd[1] = 0x00;
-    cmd[2] = 0x01; // Low byte of Property ID 0x0001
-    cmd[3] = 0x00; // High byte of Property ID 0x0001
-    cmd[4] = enable_i2s ? 0x01 : 0x00; // Low byte of Value (0x01 or 0x00)
-    cmd[5] = 0x00; // High byte of Value (0x00)
-    ret = send_command(cmd, 6, nullptr, 0);
-    if (ret != SI468X_SUCCESS) {
-        return ret;
-    }
-
     if (enable_i2s) {
         // Set Property 0x0200 (DIGITAL_IO_OUTPUT_FORMAT) to 0x8000 in Little-Endian
         cmd[0] = SI468X_CMD_SET_PROPERTY;
