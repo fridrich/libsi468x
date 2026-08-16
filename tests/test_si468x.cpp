@@ -134,6 +134,10 @@ static bool test_new_fm_rds_api_uninitialized()
     int ret_rds = si468x_get_rds_text(rds_text, sizeof(rds_text));
     ASSERT_TRUE(ret_rds == -1, "si468x_get_rds_text must fail safely when uninitialized");
 
+    // 6. Verify si468x_set_rds_region signature and uninitialized failure
+    int ret_reg = si468x_set_rds_region(SI468X_REGION_EUROPE);
+    ASSERT_TRUE(ret_reg == -1, "si468x_set_rds_region must fail safely when uninitialized");
+
     std::cout << "PASS: test_new_fm_rds_api_uninitialized" << std::endl;
     return true;
 }
