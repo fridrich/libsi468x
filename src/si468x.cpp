@@ -717,32 +717,36 @@ static int si468x_enable_service_data(void)
     cmd[1] = 0x00;
     cmd[2] = 0x00; // Low byte of Property 0xB200
     cmd[3] = 0xB2; // High byte of Property 0xB200
-    cmd[4] = 0x00;
-    cmd[5] = 0x3F;
+    cmd[4] = 0x3F; // Low byte of Value (0x3F)
+    cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
 
     // Set Property 0xB201 to 0x000C (12) (Little-Endian)
     cmd[2] = 0x01; // Low byte of Property 0xB201
     cmd[3] = 0xB2; // High byte of Property 0xB201
-    cmd[4] = 0x00;
-    cmd[5] = 0x0C;
+    cmd[4] = 0x0C; // Low byte of Value (0x0C)
+    cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
 
     // Set Property 0xB202 to 0x07D0 (2000) (Little-Endian)
     cmd[2] = 0x02; // Low byte of Property 0xB202
     cmd[3] = 0xB2; // High byte of Property 0xB202
-    cmd[4] = 0x07;
-    cmd[5] = 0xD0;
+    cmd[4] = 0xD0; // Low byte of Value (0xD0)
+    cmd[5] = 0x07; // High byte of Value (0x07)
     send_command(cmd, 6, nullptr, 0);
 
     // Set Property 0xB203 to 0x07D0 (2000) (Little-Endian)
     cmd[2] = 0x03; // Low byte of Property 0xB203
     cmd[3] = 0xB2; // High byte of Property 0xB203
+    cmd[4] = 0xD0; // Low byte of Value (0xD0)
+    cmd[5] = 0x07; // High byte of Value (0x07)
     send_command(cmd, 6, nullptr, 0);
 
     // Set Property 0xB204 to 0x07D0 (2000) (Little-Endian)
     cmd[2] = 0x04; // Low byte of Property 0xB204
     cmd[3] = 0xB2; // High byte of Property 0xB204
+    cmd[4] = 0xD0; // Low byte of Value (0xD0)
+    cmd[5] = 0x07; // High byte of Value (0x07)
     send_command(cmd, 6, nullptr, 0);
 
     return SI468X_SUCCESS;
@@ -758,22 +762,22 @@ static int si468x_enable_rds(void)
     cmd[1] = 0x00;
     cmd[2] = 0x00; // Low byte of Property 0x1500
     cmd[3] = 0x15; // High byte of Property 0x1500
-    cmd[4] = 0x00;
-    cmd[5] = 0x01;
+    cmd[4] = 0x01; // Low byte of Value (0x01)
+    cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
 
     // Set Property 0x1501 to 0x0001 (FM_RDS_INT_SOURCE: Enable FIFO interrupt) (Little-Endian)
     cmd[2] = 0x01; // Low byte of Property 0x1501
     cmd[3] = 0x15; // High byte of Property 0x1501
-    cmd[4] = 0x00;
-    cmd[5] = 0x01;
+    cmd[4] = 0x01; // Low byte of Value (0x01)
+    cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
 
     // Set Property 0x1502 to 0x0001 (FM_RDS_INT_FIFO_COUNT: Interrupt threshold = 1) (Little-Endian)
     cmd[2] = 0x02; // Low byte of Property 0x1502
     cmd[3] = 0x15; // High byte of Property 0x1502
-    cmd[4] = 0x00;
-    cmd[5] = 0x01;
+    cmd[4] = 0x01; // Low byte of Value (0x01)
+    cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
 
     return SI468X_SUCCESS;
@@ -865,10 +869,10 @@ int si468x_set_volume(uint8_t volume)
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
-    cmd[2] = SI468X_PROP_AUDIO_VOLUME & 0xFF;        // Low byte (0x00)
-    cmd[3] = (SI468X_PROP_AUDIO_VOLUME >> 8) & 0xFF; // High byte (0x03)
-    cmd[4] = 0x00;
-    cmd[5] = volume;
+    cmd[2] = SI468X_PROP_AUDIO_VOLUME & 0xFF;        // Low byte of ID (0x00)
+    cmd[3] = (SI468X_PROP_AUDIO_VOLUME >> 8) & 0xFF; // High byte of ID (0x03)
+    cmd[4] = volume & 0xFF;                          // Low byte of Value
+    cmd[5] = 0x00;                                   // High byte of Value (0x00)
 
     uint8_t resp[7];
     std::memset(resp, 0, sizeof(resp));
@@ -1143,52 +1147,52 @@ int si468x_set_audio_output(int enable_i2s)
         return SI468X_SUCCESS;
     }
 
-    // Set Property 0x0800 to 0x0002 for I2S only, or 0x0001 for Analog Only (matches radio_cli exactly)
+    // Set Property 0x0800 (AUDIO_OUT_SEL) to 0x0002 (I2S only) or 0x0001 (Analog Only) in Little-Endian
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
-    cmd[2] = 0x00; // Low byte of Property 0x0800 (AUDIO_OUT_SEL)
-    cmd[3] = 0x08; // High byte of Property 0x0800 (AUDIO_OUT_SEL)
-    cmd[4] = 0x00;
-    cmd[5] = enable_i2s ? 0x02 : 0x01; // 0x02 = I2S only, 0x01 = Analog Only
+    cmd[2] = 0x00; // Low byte of Property ID 0x0800
+    cmd[3] = 0x08; // High byte of Property ID 0x0800
+    cmd[4] = enable_i2s ? 0x02 : 0x01; // Low byte of Value (0x02 or 0x01)
+    cmd[5] = 0x00; // High byte of Value (0x00)
 
     int ret = send_command(cmd, 6, nullptr, 0);
     if (ret != SI468X_SUCCESS) {
         return ret;
     }
 
-    // Set Property 0x0001 (PIN_CONFIG) to 0x0001 for I2S, or 0x0000 for Analog Only (routes the audio pins internally!)
+    // Set Property 0x0001 (PIN_CONFIG) to 0x0001 (I2S) or 0x0000 (Analog Only) in Little-Endian
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
-    cmd[2] = 0x01; // Low byte of Property 0x0001 (PIN_CONFIG)
-    cmd[3] = 0x00; // High byte of Property 0x0001 (PIN_CONFIG)
-    cmd[4] = 0x00;
-    cmd[5] = enable_i2s ? 0x01 : 0x00; // 0x01 = I2S, 0x00 = Analog
+    cmd[2] = 0x01; // Low byte of Property ID 0x0001
+    cmd[3] = 0x00; // High byte of Property ID 0x0001
+    cmd[4] = enable_i2s ? 0x01 : 0x00; // Low byte of Value (0x01 or 0x00)
+    cmd[5] = 0x00; // High byte of Value (0x00)
     ret = send_command(cmd, 6, nullptr, 0);
     if (ret != SI468X_SUCCESS) {
         return ret;
     }
 
     if (enable_i2s) {
-        // Set Property 0x0200 to 0x8000 (enable digital audio IO block as I2S Slave, matches radio_cli exactly!)
+        // Set Property 0x0200 (DIGITAL_IO_OUTPUT_FORMAT) to 0x8000 in Little-Endian
         cmd[0] = SI468X_CMD_SET_PROPERTY;
         cmd[1] = 0x00;
-        cmd[2] = 0x00; // Low byte of Property 0x0200 (DIGITAL_IO_OUTPUT_FORMAT)
-        cmd[3] = 0x02; // High byte of Property 0x0200 (DIGITAL_IO_OUTPUT_FORMAT)
-        cmd[4] = 0x80; // Bit 15 (I2S Enable) = 1, Bit 14 (I2S Master) = 0
-        cmd[5] = 0x00;
+        cmd[2] = 0x00; // Low byte of Property ID 0x0200
+        cmd[3] = 0x02; // High byte of Property ID 0x0200
+        cmd[4] = 0x00; // Low byte of Value (0x00)
+        cmd[5] = 0x80; // High byte of Value (0x80)
         ret = send_command(cmd, 6, nullptr, 0);
         if (ret != SI468X_SUCCESS) {
             return ret;
         }
 
-        // Set Property 0x0202 to 0x1000 (digital audio format select) unconditionally
+        // Set Property 0x0202 (DIGITAL_IO_OUTPUT_FORMAT_MASK) to 0x1000 in Little-Endian
         cmd[0] = SI468X_CMD_SET_PROPERTY;
         cmd[1] = 0x00;
-        cmd[2] = 0x02; // Low byte of Property 0x0202 (DIGITAL_IO_OUTPUT_FORMAT_MASK)
-        cmd[3] = 0x02; // High byte of Property 0x0202 (DIGITAL_IO_OUTPUT_FORMAT_MASK)
-        cmd[4] = 0x10;
-        cmd[5] = 0x00;
+        cmd[2] = 0x02; // Low byte of Property ID 0x0202
+        cmd[3] = 0x02; // High byte of Property ID 0x0202
+        cmd[4] = 0x00; // Low byte of Value (0x00)
+        cmd[5] = 0x10; // High byte of Value (0x10)
         ret = send_command(cmd, 6, nullptr, 0);
     }
     return ret;
@@ -1510,8 +1514,8 @@ int si468x_set_rds_region(int region)
     cmd[1] = 0x00;
     cmd[2] = 0x00; // Low byte of Property 0x3900 (FMHD_DEEMPHASIS)
     cmd[3] = 0x39; // High byte of Property 0x3900 (FMHD_DEEMPHASIS)
-    cmd[4] = (deemph_val >> 8) & 0xFF;
-    cmd[5] = deemph_val & 0xFF;
+    cmd[4] = deemph_val & 0xFF;         // Low byte of Value
+    cmd[5] = (deemph_val >> 8) & 0xFF;  // High byte of Value
 
     if (send_command(cmd, 6, nullptr, 0) != SI468X_SUCCESS) {
         return -1;
