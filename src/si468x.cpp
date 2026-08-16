@@ -31,6 +31,7 @@ static int sysfs_gpio_pin = -1;
 static int sysfs_ce1_pin = -1;
 static uint32_t active_frequency = 0;
 static int active_audio_mode = 0; // 0 = Analog Only, 1 = I2S Digital
+static int active_volume = 50;    // Standard default volume (0 to 63)
 
 static int si468x_enable_service_data(void);
 static int si468x_enable_rds(void);
@@ -248,19 +249,11 @@ int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_
         return SI468X_ERROR_TIMEOUT;
     }
 
-    // 3. Read the response payload. If none was requested, always read a 7-byte dummy response
-    // to cleanly flush the co-processor's SPI transmit FIFO and prevent bus blockages!
+    // 3. Read the response payload. If none was requested, exit immediately (matches native binary exactly!)
     if (resp && resp_len > 0) {
         std::vector<uint8_t> tx_dummy(resp_len, 0x00);
         std::memset(resp, 0, resp_len);
         if (spi_transfer(tx_dummy.data(), resp, resp_len) < 0) {
-            return SI468X_ERROR_SPI;
-        }
-    }
-    else {
-        uint8_t dummy_resp[7];
-        uint8_t tx_dummy[7] = { 0x00 };
-        if (spi_transfer(tx_dummy, dummy_resp, 7) < 0) {
             return SI468X_ERROR_SPI;
         }
     }
@@ -712,33 +705,41 @@ static int si468x_enable_service_data(void)
     std::clog << "libsi468x: Enabling on-chip PAD/XPAD decoder (Properties 0xB200-0xB204)..." << std::endl;
     uint8_t cmd[6];
 
-    // Set Property 0xB200 to 0x003F (63) to enable PAD/XPAD decoding
+    // Set Property 0xB200 to 0x003F (63) to enable PAD/XPAD decoding (Little-Endian)
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
-    cmd[2] = 0xB2;
-    cmd[3] = 0x00;
-    cmd[4] = 0x00;
-    cmd[5] = 0x3F;
+    cmd[2] = 0x00; // Low byte of Property 0xB200
+    cmd[3] = 0xB2; // High byte of Property 0xB200
+    cmd[4] = 0x3F; // Low byte of Value (0x3F)
+    cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
 
-    // Set Property 0xB201 to 0x000C (12)
-    cmd[3] = 0x01;
-    cmd[4] = 0x00;
-    cmd[5] = 0x0C;
+    // Set Property 0xB201 to 0x000C (12) (Little-Endian)
+    cmd[2] = 0x01; // Low byte of Property 0xB201
+    cmd[3] = 0xB2; // High byte of Property 0xB201
+    cmd[4] = 0x0C; // Low byte of Value (0x0C)
+    cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
 
-    // Set Property 0xB202 to 0x07D0 (2000)
-    cmd[3] = 0x02;
-    cmd[4] = 0x07;
-    cmd[5] = 0xD0;
+    // Set Property 0xB202 to 0x07D0 (2000) (Little-Endian)
+    cmd[2] = 0x02; // Low byte of Property 0xB202
+    cmd[3] = 0xB2; // High byte of Property 0xB202
+    cmd[4] = 0xD0; // Low byte of Value (0xD0)
+    cmd[5] = 0x07; // High byte of Value (0x07)
     send_command(cmd, 6, nullptr, 0);
 
-    // Set Property 0xB203 to 0x07D0 (2000)
-    cmd[3] = 0x03;
+    // Set Property 0xB203 to 0x07D0 (2000) (Little-Endian)
+    cmd[2] = 0x03; // Low byte of Property 0xB203
+    cmd[3] = 0xB2; // High byte of Property 0xB203
+    cmd[4] = 0xD0; // Low byte of Value (0xD0)
+    cmd[5] = 0x07; // High byte of Value (0x07)
     send_command(cmd, 6, nullptr, 0);
 
-    // Set Property 0xB204 to 0x07D0 (2000)
-    cmd[3] = 0x04;
+    // Set Property 0xB204 to 0x07D0 (2000) (Little-Endian)
+    cmd[2] = 0x04; // Low byte of Property 0xB204
+    cmd[3] = 0xB2; // High byte of Property 0xB204
+    cmd[4] = 0xD0; // Low byte of Value (0xD0)
+    cmd[5] = 0x07; // High byte of Value (0x07)
     send_command(cmd, 6, nullptr, 0);
 
     return SI468X_SUCCESS;
@@ -749,23 +750,27 @@ static int si468x_enable_rds(void)
     std::clog << "libsi468x: Enabling on-chip RDS/RBDS decoder (Properties 0x1500-0x1502)..." << std::endl;
     uint8_t cmd[6];
 
-    // Set Property 0x1500 to 0x0001 (FM_RDS_CONFIG: Enable RDS)
+    // Set Property 0x1500 to 0x0001 (FM_RDS_CONFIG: Enable RDS) (Little-Endian)
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
-    cmd[2] = 0x15;
-    cmd[3] = 0x00;
-    cmd[4] = 0x00;
-    cmd[5] = 0x01;
+    cmd[2] = 0x00; // Low byte of Property 0x1500
+    cmd[3] = 0x15; // High byte of Property 0x1500
+    cmd[4] = 0x01; // Low byte of Value (0x01)
+    cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
 
-    // Set Property 0x1501 to 0x0001 (FM_RDS_INT_SOURCE: Enable FIFO interrupt)
-    cmd[3] = 0x01;
-    cmd[5] = 0x01;
+    // Set Property 0x1501 to 0x0001 (FM_RDS_INT_SOURCE: Enable FIFO interrupt) (Little-Endian)
+    cmd[2] = 0x01; // Low byte of Property 0x1501
+    cmd[3] = 0x15; // High byte of Property 0x1501
+    cmd[4] = 0x01; // Low byte of Value (0x01)
+    cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
 
-    // Set Property 0x1502 to 0x0001 (FM_RDS_INT_FIFO_COUNT: Interrupt threshold = 1)
-    cmd[3] = 0x02;
-    cmd[5] = 0x01;
+    // Set Property 0x1502 to 0x0001 (FM_RDS_INT_FIFO_COUNT: Interrupt threshold = 1) (Little-Endian)
+    cmd[2] = 0x02; // Low byte of Property 0x1502
+    cmd[3] = 0x15; // High byte of Property 0x1502
+    cmd[4] = 0x01; // Low byte of Value (0x01)
+    cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
 
     return SI468X_SUCCESS;
@@ -806,9 +811,6 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
     }
 
     if (ret == SI468X_SUCCESS) {
-        // Re-apply the active configured audio output path upon service play
-        si468x_set_audio_output(active_audio_mode);
-
         // Turn on the on-chip PAD/XPAD decoder so that DLS text and MOT slideshow are dynamically decoded
         si468x_enable_service_data();
 
@@ -852,15 +854,16 @@ int si468x_set_volume(uint8_t volume)
     if (volume > 63) {
         volume = 63;
     }
+    active_volume = volume;
     std::clog << "libsi468x: Setting volume property to " << (int)volume << std::endl;
 
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
-    cmd[2] = (SI468X_PROP_AUDIO_VOLUME >> 8) & 0xFF;
-    cmd[3] = SI468X_PROP_AUDIO_VOLUME & 0xFF;
-    cmd[4] = 0x00;
-    cmd[5] = volume;
+    cmd[2] = SI468X_PROP_AUDIO_VOLUME & 0xFF;        // Low byte of ID (0x00)
+    cmd[3] = (SI468X_PROP_AUDIO_VOLUME >> 8) & 0xFF; // High byte of ID (0x03)
+    cmd[4] = volume & 0xFF;                          // Low byte of Value
+    cmd[5] = 0x00;                                   // High byte of Value (0x00)
 
     uint8_t resp[7];
     std::memset(resp, 0, sizeof(resp));
@@ -1130,14 +1133,19 @@ int si468x_set_audio_output(int enable_i2s)
     active_audio_mode = enable_i2s;
     std::clog << "libsi468x: Configuring audio output path (I2S: " << enable_i2s << ")..." << std::endl;
 
-    // Set Property 0x0800 to 0x0002 for I2S only, or 0x0001 for Analog Only (matches radio_cli exactly)
+    if (spi_fd < 0) {
+        // If SPI is not open yet, store the mode statically so si468x_init can apply it dynamically during boot
+        return SI468X_SUCCESS;
+    }
+
+    // Set Property 0x0800 (AUDIO_OUT_SEL) to 0x0002 (I2S only) or 0x0001 (Analog Only) in Little-Endian
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
-    cmd[2] = 0x08;
-    cmd[3] = 0x00;
-    cmd[4] = 0x00;
-    cmd[5] = enable_i2s ? 0x02 : 0x01; // 0x02 = I2S only, 0x01 = Analog Only
+    cmd[2] = 0x00; // Low byte of Property ID 0x0800
+    cmd[3] = 0x08; // High byte of Property ID 0x0800
+    cmd[4] = enable_i2s ? 0x02 : 0x01; // Low byte of Value (0x02 or 0x01)
+    cmd[5] = 0x00; // High byte of Value (0x00)
 
     int ret = send_command(cmd, 6, nullptr, 0);
     if (ret != SI468X_SUCCESS) {
@@ -1145,25 +1153,25 @@ int si468x_set_audio_output(int enable_i2s)
     }
 
     if (enable_i2s) {
-        // Set Property 0x0200 to 0x8000 (enable digital audio IO block as I2S Slave, matches radio_cli exactly!)
+        // Set Property 0x0200 (DIGITAL_IO_OUTPUT_FORMAT) to 0xC000 in Little-Endian (I2S Master)
         cmd[0] = SI468X_CMD_SET_PROPERTY;
         cmd[1] = 0x00;
-        cmd[2] = 0x02;
-        cmd[3] = 0x00;
-        cmd[4] = 0x80; // Bit 15 (I2S Enable) = 1, Bit 14 (I2S Master) = 0
-        cmd[5] = 0x00;
+        cmd[2] = 0x00; // Low byte of Property ID 0x0200
+        cmd[3] = 0x02; // High byte of Property ID 0x0200
+        cmd[4] = 0x00; // Low byte of Value (0x00)
+        cmd[5] = 0xC0; // High byte of Value (0xC0 - Master Mode)
         ret = send_command(cmd, 6, nullptr, 0);
         if (ret != SI468X_SUCCESS) {
             return ret;
         }
 
-        // Set Property 0x0202 to 0x1000 (digital audio format select) unconditionally
+        // Set Property 0x0202 (DIGITAL_IO_OUTPUT_FORMAT_MASK) to 0x1000 in Little-Endian
         cmd[0] = SI468X_CMD_SET_PROPERTY;
         cmd[1] = 0x00;
-        cmd[2] = 0x02;
-        cmd[3] = 0x02;
-        cmd[4] = 0x10;
-        cmd[5] = 0x00;
+        cmd[2] = 0x02; // Low byte of Property ID 0x0202
+        cmd[3] = 0x02; // High byte of Property ID 0x0202
+        cmd[4] = 0x00; // Low byte of Value (0x00)
+        cmd[5] = 0x10; // High byte of Value (0x10)
         ret = send_command(cmd, 6, nullptr, 0);
     }
     return ret;
@@ -1281,6 +1289,7 @@ int si468x_tune_fm(uint32_t frequency_khz)
 
     // Give the RF synthesizer 300ms to lock and stabilize on-chip
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
     return SI468X_SUCCESS;
 }
 
@@ -1479,10 +1488,10 @@ int si468x_set_rds_region(int region)
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
-    cmd[2] = 0x39; // FMHD_DEEMPHASIS high byte
-    cmd[3] = 0x00; // FMHD_DEEMPHASIS low byte
-    cmd[4] = (deemph_val >> 8) & 0xFF;
-    cmd[5] = deemph_val & 0xFF;
+    cmd[2] = 0x00; // Low byte of Property 0x3900 (FMHD_DEEMPHASIS)
+    cmd[3] = 0x39; // High byte of Property 0x3900 (FMHD_DEEMPHASIS)
+    cmd[4] = deemph_val & 0xFF;         // Low byte of Value
+    cmd[5] = (deemph_val >> 8) & 0xFF;  // High byte of Value
 
     if (send_command(cmd, 6, nullptr, 0) != SI468X_SUCCESS) {
         return -1;
