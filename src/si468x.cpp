@@ -894,18 +894,46 @@ void si468x_decode_short_label(const char* long_label, uint16_t char_mask, char*
     short_label[dst] = '\0';
 }
 
-static void decode_ebu_latin_to_utf8(const uint8_t* in, int in_len, uint8_t charset, char* out, int max_out_len)
+static void decode_dab_string_to_utf8(const uint8_t* in, int in_len, uint8_t charset, char* out, int max_out_len)
 {
     int out_idx = 0;
-    for (int i = 0; i < in_len && out_idx < max_out_len - 2; i++) {
-        uint8_t c = in[i];
-        if (charset == 0 && c >= 0x80) {
-            // Standard EBU Latin-1 mapping to UTF-8
-            out[out_idx++] = 0xC0 | (c >> 6);
-            out[out_idx++] = 0x80 | (c & 0x3F);
+
+    if (charset == 6) {
+        // UCS-2 (16-bit Big-Endian) to UTF-8
+        for (int i = 0; i < in_len - 1 && out_idx < max_out_len - 4; i += 2) {
+            uint16_t codepoint = (in[i] << 8) | in[i + 1];
+            if (codepoint == 0x0000) {
+                break; // Stop on explicit UCS-2 null terminator
+            }
+            else if (codepoint < 0x0080) {
+                out[out_idx++] = (char)codepoint;
+            }
+            else if (codepoint < 0x0800) {
+                out[out_idx++] = 0xC0 | (codepoint >> 6);
+                out[out_idx++] = 0x80 | (codepoint & 0x3F);
+            }
+            else {
+                out[out_idx++] = 0xE0 | (codepoint >> 12);
+                out[out_idx++] = 0x80 | ((codepoint >> 6) & 0x3F);
+                out[out_idx++] = 0x80 | (codepoint & 0x3F);
+            }
         }
-        else {
-            out[out_idx++] = c;
+    }
+    else {
+        // Charset 0 (EBU Latin) or Charset 15 (UTF-8 fallback)
+        for (int i = 0; i < in_len && out_idx < max_out_len - 2; i++) {
+            uint8_t c = in[i];
+            if (c == 0x00) {
+                break;
+            }
+            if (charset == 0 && c >= 0x80) {
+                // Standard EBU Latin-1 mapping to UTF-8
+                out[out_idx++] = 0xC0 | (c >> 6);
+                out[out_idx++] = 0x80 | (c & 0x3F);
+            }
+            else {
+                out[out_idx++] = c;
+            }
         }
     }
     out[out_idx] = '\0';
@@ -932,7 +960,7 @@ int si468x_get_ensemble_info(char* label, uint16_t* ueid)
 
     // Extract Ensemble Label (16 bytes starting exactly at resp[7])
     uint8_t charset = (resp[23] >> 4) & 0x0F; // Charset is typically at byte 18 of parameters (resp[23])
-    decode_ebu_latin_to_utf8(&resp[7], 16, charset, label, 32);
+    decode_dab_string_to_utf8(&resp[7], 16, charset, label, 32);
 
     return 0;
 }
@@ -967,7 +995,7 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
     // Component Label starts at resp[9] (16 bytes)
     char comp_label[32];
     uint8_t charset = (resp[6] >> 4) & 0x0F;
-    decode_ebu_latin_to_utf8(&resp[9], 16, charset, comp_label, sizeof(comp_label));
+    decode_dab_string_to_utf8(&resp[9], 16, charset, comp_label, sizeof(comp_label));
 
     if (label) {
         std::strcpy(label, comp_label);
@@ -1236,7 +1264,7 @@ int si468x_get_dls_text(char* out_text, int max_len)
     uint8_t charset = (resp[25] >> 4) & 0x0F; // Charset is typically the upper 4 bits of the DLS Control Byte
 
     // Dynamic UTF-8 DLS string payload parsing starting exactly at resp[27]
-    decode_ebu_latin_to_utf8(&resp[27], text_len, charset, out_text, max_len);
+    decode_dab_string_to_utf8(&resp[27], text_len, charset, out_text, max_len);
 
     static std::string last_dls_text = "";
     std::string current_dls(out_text);
