@@ -96,42 +96,40 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    std::cout << "libsi468x: Waiting for DAB multiplex lock..." << std::endl;
-    std::this_thread::sleep_for(std::chrono::seconds(3));
+    std::cout << "libsi468x: Waiting for DAB multiplex lock and resolving service..." << std::flush;
 
-    si468x_signal_status_t status;
-    if (si468x_get_signal_status(&status) != 0 || status.sync_status == 0) {
-        std::cerr << "No stable DAB sync achieved! RSSI: " << (int)status.rssi << " dBuV" << std::endl;
-        si468x_shutdown();
-        return 1;
-    }
-
-    char ensemble_label[17];
-    uint16_t ueid = 0;
-    if (si468x_get_ensemble_info(ensemble_label, &ueid) == 0) {
-        std::cout << "Locked onto Ensemble: '" << ensemble_label << "' (EId: 0x" << std::hex << ueid << std::dec << ")" << std::endl;
-    }
-
-    std::cout << "Querying on-chip service database..." << std::endl;
     si468x_service_t services[32];
-    std::memset(services, 0, sizeof(services));
-    int num_services = si468x_get_service_list(services, 32);
-
     uint32_t target_comp = 0;
     bool found = false;
     std::string station_name = "";
 
-    for (int i = 0; i < num_services; i++) {
-        if (services[i].service_id == target_sid) {
-            target_comp = services[i].component_id;
-            station_name = services[i].label;
-            found = true;
-            break;
+    for (int i = 0; i < 50; i++) { // Poll every 100ms for up to 5 seconds
+        si468x_signal_status_t status;
+        if (si468x_get_signal_status(&status) == 0 && status.sync_status == 1) {
+
+            std::memset(services, 0, sizeof(services));
+            int num_services = si468x_get_service_list(services, 32);
+
+            for (int s = 0; s < num_services; s++) {
+                if (services[s].service_id == target_sid) {
+                    target_comp = services[s].component_id;
+                    station_name = services[s].label;
+                    found = true;
+                    break;
+                }
+            }
+            if (found) {
+                break;    // Exit polling loop instantly once the target station is populated in the database!
+            }
         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+    std::cout << std::endl;
 
     if (!found) {
-        std::cerr << "Service ID " << target_sid << " was not found in this ensemble!" << std::endl;
+        std::cerr << "Service ID " << target_sid << " was not found in this ensemble within timeout!" << std::endl;
+        std::memset(services, 0, sizeof(services));
+        int num_services = si468x_get_service_list(services, 32);
         std::cerr << "Available services on " << ensemble_str << ":" << std::endl;
         for (int i = 0; i < num_services; i++) {
             if (services[i].service_id < 0x10000 && std::strlen(services[i].label) > 0) {
@@ -140,6 +138,12 @@ int main(int argc, char* argv[])
         }
         si468x_shutdown();
         return 1;
+    }
+
+    char ensemble_label[17];
+    uint16_t ueid = 0;
+    if (si468x_get_ensemble_info(ensemble_label, &ueid) == 0) {
+        std::cout << "Locked onto Ensemble: '" << ensemble_label << "' (EId: 0x" << std::hex << ueid << std::dec << ")" << std::endl;
     }
 
     std::cout << "Found Station: '" << station_name << "' (CompId: " << target_comp << ")" << std::endl;

@@ -326,7 +326,8 @@ public:
 
     bool is_allowed_RT_char(uint8_t c)
     {
-        return (c >= 32 && c <= 126) || c == '\r' || c == '\n';
+        // Accept all standard ASCII (32-126) and extended Latin/EBU characters (128-255), plus CR/LF
+        return (c >= 32 && c <= 126) || (c >= 128) || c == '\r' || c == '\n';
     }
 
     void decode_RT_block(uint8_t segment_address, uint8_t text_A_B_toggle, uint8_t is_block_D, uint16_t block_data)
@@ -671,10 +672,10 @@ int si468x_set_frequency(uint32_t frequency_hz)
         return SI468X_ERROR_SPI;
     }
 
-    // Wait for the RF synthesizers to lock and acquire OFDM sync (up to 1 second)
+    // Wait for the RF synthesizers to lock and acquire OFDM sync (up to 2.5 seconds)
     bool locked = false;
-    for (int i = 0; i < 5; i++) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    for (int i = 0; i < 25; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         // Poll signal status using correct 2-byte command
         si468x_signal_status_t status;
@@ -879,19 +880,112 @@ int si468x_set_volume(uint8_t volume)
     return ret;
 }
 
-void si468x_decode_short_label(const char* long_label, uint16_t char_mask, char* short_label)
+// Strict ETSI TS 101 756 EBU Latin (Charset 0) table for the 0x80 to 0x9F range
+static const uint16_t ebu_latin_80_9F[32] = {
+    0x00E1, 0x00E0, 0x00E9, 0x00E8, 0x00ED, 0x00EC, 0x00F3, 0x00F2, // 80 - 87
+    0x00FA, 0x00F9, 0x00D1, 0x00C7, 0x015E, 0x00DF, 0x00A1, 0x0132, // 88 - 8F
+    0x00E2, 0x00E4, 0x00EA, 0x00EB, 0x00EE, 0x00EF, 0x00F4, 0x00F6, // 90 - 97
+    0x00FB, 0x00FC, 0x00F1, 0x00E7, 0x015F, 0x011F, 0x0131, 0x0133  // 98 - 9F
+};
+
+static void decode_dab_string_to_utf8(const uint8_t* in, int in_len, uint8_t charset, char* out, int max_out_len)
 {
-    int dst = 0;
-    for (int i = 0; i < 16; i++) {
-        // Bit 15 represents the first character (index 0) of the long label
-        if ((char_mask & (0x8000 >> i))) {
-            short_label[dst++] = long_label[i];
-            if (dst >= 8) {
-                break;    // Short label is max 8 characters
+    int out_idx = 0;
+
+    if (charset == 6) {
+        // UCS-2 (16-bit Big-Endian) to UTF-8
+        for (int i = 0; i < in_len - 1 && out_idx < max_out_len - 4; i += 2) {
+            uint16_t codepoint = (in[i] << 8) | in[i + 1];
+            if (codepoint == 0x0000) {
+                break; // Stop on explicit UCS-2 null terminator
+            }
+            else if (codepoint < 0x0080) {
+                if (codepoint < 0x0020) {
+                    if (codepoint == 0x0A || codepoint == 0x0D) {
+                        out[out_idx++] = ' ';
+                    }
+                    // Skip all other non-printable/control characters (like 0x0B, 0x1F)
+                } else {
+                    out[out_idx++] = (char)codepoint;
+                }
+            }
+            else if (codepoint < 0x0800) {
+                out[out_idx++] = 0xC0 | (codepoint >> 6);
+                out[out_idx++] = 0x80 | (codepoint & 0x3F);
+            }
+            else {
+                out[out_idx++] = 0xE0 | (codepoint >> 12);
+                out[out_idx++] = 0x80 | ((codepoint >> 6) & 0x3F);
+                out[out_idx++] = 0x80 | (codepoint & 0x3F);
             }
         }
     }
-    short_label[dst] = '\0';
+    else {
+        // Charset 0 (EBU Latin) or Charset 15 (UTF-8 fallback)
+        for (int i = 0; i < in_len && out_idx < max_out_len - 4; i++) {
+            uint8_t c = in[i];
+            if (c == 0x00) {
+                break;
+            }
+            if (c < 0x20) {
+                if (c == 0x0A || c == 0x0D) {
+                    out[out_idx++] = ' ';
+                }
+                // Skip all other non-printable/control characters (like 0x0B, 0x1F)
+                continue;
+            }
+            if (charset == 0) {
+                if (c >= 0x80 && c <= 0x9F) {
+                    // ETSI Specific EBU Latin range (e.g. 0x82 is 'é')
+                    uint16_t codepoint = ebu_latin_80_9F[c - 0x80];
+                    if (codepoint < 0x0080) {
+                        out[out_idx++] = (char)codepoint;
+                    }
+                    else if (codepoint < 0x0800) {
+                        out[out_idx++] = 0xC0 | (codepoint >> 6);
+                        out[out_idx++] = 0x80 | (codepoint & 0x3F);
+                    }
+                    else {
+                        out[out_idx++] = 0xE0 | (codepoint >> 12);
+                        out[out_idx++] = 0x80 | ((codepoint >> 6) & 0x3F);
+                        out[out_idx++] = 0x80 | (codepoint & 0x3F);
+                    }
+                }
+                else if (c >= 0xA0) {
+                    // Standard ISO-8859-1 mapping to UTF-8
+                    out[out_idx++] = 0xC0 | (c >> 6);
+                    out[out_idx++] = 0x80 | (c & 0x3F);
+                }
+                else {
+                    out[out_idx++] = c;
+                }
+            }
+            else {
+                out[out_idx++] = c;
+            }
+        }
+    }
+    out[out_idx] = '\0';
+}
+
+void si468x_decode_short_label(const uint8_t* raw_label, int raw_len, uint16_t char_mask, uint8_t charset, char* short_label, int max_len)
+{
+    uint8_t temp_raw[16];
+    int dst = 0;
+
+    // Extract the raw, unencoded bytes corresponding to the short label using the mask
+    for (int i = 0; i < raw_len; i++) {
+        // Bit 15 represents the first character (index 0) of the long label
+        if ((char_mask & (0x8000 >> i))) {
+            temp_raw[dst++] = raw_label[i];
+            if (dst >= 8) {
+                break;
+            }
+        }
+    }
+
+    // Dynamically decode the extracted raw bytes into standard UTF-8
+    decode_dab_string_to_utf8(temp_raw, dst, charset, short_label, max_len);
 }
 
 int si468x_get_ensemble_info(char* label, uint16_t* ueid)
@@ -913,9 +1007,10 @@ int si468x_get_ensemble_info(char* label, uint16_t* ueid)
         *ueid = resp[5] | ((uint16_t)resp[6] << 8);
     }
 
-    // Extract Ensemble Label (16 bytes starting exactly at resp[7] past 16-bit Ensemble ID)
-    std::memcpy(label, &resp[7], 16);
-    label[16] = '\0';
+    // Extract Ensemble Label (16 bytes starting exactly at resp[7])
+    uint8_t charset = (resp[23] >> 4) & 0x0F; // Charset is typically at byte 18 of parameters (resp[23])
+    decode_dab_string_to_utf8(&resp[7], 16, charset, label, 32);
+
     return 0;
 }
 
@@ -947,9 +1042,10 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
     }
 
     // Component Label starts at resp[9] (16 bytes)
-    char comp_label[17];
-    std::memcpy(comp_label, &resp[9], 16);
-    comp_label[16] = '\0';
+    char comp_label[32];
+    uint8_t charset = (resp[6] >> 4) & 0x0F;
+    decode_dab_string_to_utf8(&resp[9], 16, charset, comp_label, sizeof(comp_label));
+
     if (label) {
         std::strcpy(label, comp_label);
     }
@@ -961,7 +1057,7 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
     }
 
     if (short_label) {
-        si468x_decode_short_label(comp_label, char_mask, short_label);
+        si468x_decode_short_label(&resp[9], 16, char_mask, charset, short_label, 17);
     }
 
     return 0;
@@ -1029,9 +1125,9 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         uint8_t num_components = resp[offset + 5] & 0x0F;
 
         // 3. Label: 16-character array (offset 8-23)
-        char service_label[17];
-        std::memcpy(service_label, &resp[offset + 8], 16);
-        service_label[16] = '\0';
+        char service_label[32];
+        uint8_t charset = (resp[offset + 7] >> 4) & 0x0F;
+        decode_dab_string_to_utf8(&resp[offset + 8], 16, charset, service_label, sizeof(service_label));
 
         // 4. Subchannel ID (SubChId) is stored at offset 24
         uint8_t subchannel_id = resp[offset + 24];
@@ -1179,6 +1275,8 @@ int si468x_set_audio_output(int enable_i2s)
 
 int si468x_get_dls_text(char* out_text, int max_len)
 {
+    static std::string last_dls_text = "";
+
     if (!out_text || max_len <= 0) {
         return -1;
     }
@@ -1208,17 +1306,31 @@ int si468x_get_dls_text(char* out_text, int max_len)
         return 0; // No active DLS text in the queue
     }
 
+    // Check if it is a DLS command (Bit 4 of resp[25] is set)
+    bool is_command = resp[25] & 0x10;
+    if (is_command) {
+        uint8_t cmd_type = resp[25] & 0x0F;
+        if (cmd_type == 0x01) { // DLS Clear command
+            out_text[0] = '\0';
+            if (last_dls_text != "") {
+                last_dls_text = "";
+                return 1; // Updated to empty display
+            }
+        }
+        return 0; // Skip other binary commands (like DL+ tags)
+    }
+
     uint16_t text_len = dls_len - 2;
 
     if (text_len >= max_len) {
         text_len = max_len - 1;
     }
 
-    // Dynamic UTF-8 DLS string payload starts exactly at resp[27] (bypassing control header)
-    std::memcpy(out_text, &resp[27], text_len);
-    out_text[text_len] = '\0';
+    uint8_t charset = (resp[26] >> 4) & 0x0F; // Charset is in the upper 4 bits of the second DLS Control Byte (resp[26])
 
-    static std::string last_dls_text = "";
+    // Dynamic UTF-8 DLS string payload parsing starting exactly at resp[27]
+    decode_dab_string_to_utf8(&resp[27], text_len, charset, out_text, max_len);
+
     std::string current_dls(out_text);
 
     if (current_dls != last_dls_text) {
@@ -1424,8 +1536,8 @@ int si468x_get_rds_text(char* out_text, int max_len)
     }
 
     if (is_complete && !rds_decoder.complete_reported) {
-        std::strncpy(out_text, rds_decoder.radio_text, max_len - 1);
-        out_text[max_len - 1] = '\0';
+        // Expand the raw RDS string (using standard ETSI EBU Latin 0 charset) into UTF-8
+        decode_dab_string_to_utf8((const uint8_t*)rds_decoder.radio_text, check_len, 0, out_text, max_len);
         rds_decoder.complete_reported = true;
         return 1; // Return 1 to indicate a newly completed string has been assembled!
     }
