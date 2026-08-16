@@ -519,6 +519,7 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     }
     else if (boot_mode == SI468X_BOOT_FMHD) {
         si468x_enable_rds();
+        si468x_set_rds_region(SI468X_REGION_EUROPE); // Set standard European de-emphasis (50 us) by default on boot
     }
 
     // Diagnostic query: Print raw chip revision info over SPI
