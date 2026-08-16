@@ -60,6 +60,7 @@ static const DABChannel DAB_BAND_III[] = {
 
 int main(int argc, char** argv)
 {
+    si468x_enable_debug(1); // Enable diagnostic logging in tests
     std::cout << "==================================================" << std::endl;
     std::cout << "  libsi468x DAB Band III Diagnostic Frequency Scan" << std::endl;
     std::cout << "  (Active 10-Second Headphone Audio Playback Test) " << std::endl;
