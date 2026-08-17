@@ -64,7 +64,9 @@ static int get_sysfs_gpio_base(void)
             if (label_file) {
                 std::string label;
                 std::getline(label_file, label);
-                if (label.find("pinctrl-") != std::string::npos) {
+                if (label.find("pinctrl-") != std::string::npos ||
+                        label.find("rp1-gpio") != std::string::npos ||
+                        label.find("13040000.pinctrl") != std::string::npos) {
                     std::string base_path = "/sys/class/gpio/" + name + "/base";
                     std::ifstream base_file(base_path);
                     if (base_file) {
@@ -90,9 +92,16 @@ static bool gpio_init(int pin)
 
     int base = get_sysfs_gpio_base();
     sysfs_gpio_pin = base + pin;
-    sysfs_ce1_pin = base + 7; // BCM GPIO 7 is CE1
 
-    SI468X_LOG << "libsi468x: Mapping BCM GPIO " << pin << " to sysfs GPIO " << sysfs_gpio_pin << std::endl;
+    // Only resolve CE1 SPI contention on Raspberry Pi boards (base offset 0)
+    if (base == 0) {
+        sysfs_ce1_pin = base + 7; // BCM GPIO 7 is CE1
+    }
+    else {
+        sysfs_ce1_pin = -1;
+    }
+
+    SI468X_LOG << "libsi468x: Mapping logic GPIO " << pin << " to sysfs GPIO " << sysfs_gpio_pin << std::endl;
 
     // Export primary reset pin if not already exported
     std::string rst_path = "/sys/class/gpio/gpio" + std::to_string(sysfs_gpio_pin);
@@ -104,13 +113,15 @@ static bool gpio_init(int pin)
         }
     }
 
-    // Export CE1 pin if not already exported (to hold secondary CS high)
-    std::string ce1_path = "/sys/class/gpio/gpio" + std::to_string(sysfs_ce1_pin);
-    if (access(ce1_path.c_str(), F_OK) < 0) {
-        std::ofstream export_file("/sys/class/gpio/export");
-        if (export_file) {
-            export_file << sysfs_ce1_pin;
-            export_file.flush();
+    // Export CE1 pin if enabled
+    if (sysfs_ce1_pin >= 0) {
+        std::string ce1_path = "/sys/class/gpio/gpio" + std::to_string(sysfs_ce1_pin);
+        if (access(ce1_path.c_str(), F_OK) < 0) {
+            std::ofstream export_file("/sys/class/gpio/export");
+            if (export_file) {
+                export_file << sysfs_ce1_pin;
+                export_file.flush();
+            }
         }
     }
 
@@ -127,19 +138,22 @@ static bool gpio_init(int pin)
     rst_dir_file << "out";
     rst_dir_file.flush();
 
-    // Set direction of CE1 pin to "out" and drive high
-    std::string ce1_dir_path = ce1_path + "/direction";
-    std::ofstream ce1_dir_file(ce1_dir_path);
-    if (ce1_dir_file) {
-        ce1_dir_file << "out";
-        ce1_dir_file.flush();
-    }
+    // Set direction of CE1 pin to "out" and drive high (if enabled)
+    if (sysfs_ce1_pin >= 0) {
+        std::string ce1_path = "/sys/class/gpio/gpio" + std::to_string(sysfs_ce1_pin);
+        std::string ce1_dir_path = ce1_path + "/direction";
+        std::ofstream ce1_dir_file(ce1_dir_path);
+        if (ce1_dir_file) {
+            ce1_dir_file << "out";
+            ce1_dir_file.flush();
+        }
 
-    std::string ce1_val_path = ce1_path + "/value";
-    std::ofstream ce1_val_file(ce1_val_path);
-    if (ce1_val_file) {
-        ce1_val_file << "1"; // Drive CE1 high to resolve bus contention
-        ce1_val_file.flush();
+        std::string ce1_val_path = ce1_path + "/value";
+        std::ofstream ce1_val_file(ce1_val_path);
+        if (ce1_val_file) {
+            ce1_val_file << "1"; // Drive CE1 high to resolve bus contention
+            ce1_val_file.flush();
+        }
     }
 
     return true;
