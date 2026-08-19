@@ -505,6 +505,14 @@ int si468x_dab_get_freq_info(si468x_freq_element_t* elements, int max_elements);
 int si468x_dab_get_event_status(si468x_dab_event_status_t* status);
 
 /**
+ * @brief Perform an antenna capacitance calibration sweep for a specific DAB frequency to locate peak signal envelope.
+ * @param frequency_hz Target DAB carrier frequency in Hz.
+ * @param peak_antcap Pointer to target variable to populate with the optimal antenna capacitance step index (1 to 128).
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_dab_calibrate_antenna(uint32_t frequency_hz, uint16_t* peak_antcap);
+
+/**
  * @brief Retrieve real-time Program Service Data (PSD) track metadata (Title, Artist, Album, Genre) for FMHD.
  * @param program Program selection: 0 for MPS (Main Program Service), 1-7 for SPS (Supplemental Program Services), 0xFF for current.
  * @param field Field selection: 0 = Title, 1 = Artist, 2 = Album, 3 = Genre.
