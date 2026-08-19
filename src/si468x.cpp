@@ -2074,3 +2074,42 @@ int si468x_fmhd_get_alert_message(char* alert_text, int max_len)
 
     return 1;
 }
+
+int si468x_dab_get_freq_info(si468x_freq_element_t* elements, int max_elements)
+{
+    if (!elements || max_elements <= 0) {
+        return -1;
+    }
+
+    // Write 2-byte command for DAB_GET_FREQ_INFO (Opcode 0xBF)
+    uint8_t cmd[2] = { SI468X_CMD_DAB_GET_FREQ_INFO, 0x00 };
+    uint8_t resp[256];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 2, resp, 256) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    // Extract Number of Elements from resp[4..7] (32-bit Little-Endian)
+    uint32_t num_elements = resp[4] | ((uint32_t)resp[5] << 8) | ((uint32_t)resp[6] << 16) | ((uint32_t)resp[7] << 24);
+    if (num_elements == 0) {
+        return 0;
+    }
+
+    int copy_count = (num_elements < (uint32_t)max_elements) ? num_elements : max_elements;
+
+    for (int i = 0; i < copy_count; i++) {
+        int offset = 8 + (i * 12);
+        if (offset + 12 <= 256) {
+            elements[i].id = resp[offset] | ((uint32_t)resp[offset + 1] << 8) | ((uint32_t)resp[offset + 2] << 16) | ((uint32_t)resp[offset + 3] << 24);
+            uint32_t freq_khz = resp[offset + 4] | ((uint32_t)resp[offset + 5] << 8) | ((uint32_t)resp[offset + 6] << 16) | ((uint32_t)resp[offset + 7] << 24);
+            elements[i].frequency_hz = freq_khz * 1000;
+            elements[i].freq_index = resp[offset + 8];
+            elements[i].rnm = resp[offset + 9];
+            elements[i].continuity = resp[offset + 10];
+            elements[i].control = resp[offset + 11];
+        }
+    }
+
+    return copy_count;
+}
