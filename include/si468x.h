@@ -513,6 +513,15 @@ int si468x_dab_get_event_status(si468x_dab_event_status_t* status);
 int si468x_dab_calibrate_antenna(uint32_t frequency_hz, uint16_t* peak_antcap);
 
 /**
+ * @brief Retrieve alternate DAB Ensemble IDs (EIDs) carrying the specified service ID (Other Ensembles).
+ * @param service_id Globally unique 32-bit Service ID.
+ * @param eids Pre-allocated array of 16-bit EIDs to populate.
+ * @param max_eids Size of the pre-allocated EID array.
+ * @return Number of Ensemble IDs successfully copied, or a negative error code on failure.
+ */
+int si468x_dab_get_other_ensemble_info(uint32_t service_id, uint16_t* eids, int max_eids);
+
+/**
  * @brief Retrieve real-time Program Service Data (PSD) track metadata (Title, Artist, Album, Genre) for FMHD.
  * @param program Program selection: 0 for MPS (Main Program Service), 1-7 for SPS (Supplemental Program Services), 0xFF for current.
  * @param field Field selection: 0 = Title, 1 = Artist, 2 = Album, 3 = Genre.

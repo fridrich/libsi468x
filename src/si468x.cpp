@@ -2199,3 +2199,43 @@ int si468x_dab_calibrate_antenna(uint32_t frequency_hz, uint16_t* peak_antcap)
     *peak_antcap = optimal_antcap;
     return SI468X_SUCCESS;
 }
+
+int si468x_dab_get_other_ensemble_info(uint32_t service_id, uint16_t* eids, int max_eids)
+{
+    if (!eids || max_eids <= 0) {
+        return -1;
+    }
+
+    // Write 8-byte command for DAB_GET_OE_SERVICES_INFO (Opcode 0xC1)
+    uint8_t cmd[8] = {
+        SI468X_CMD_DAB_GET_OE_SERVICES_INFO, 0x00, 0x00, 0x00,
+        (uint8_t)(service_id & 0xFF),
+        (uint8_t)((service_id >> 8) & 0xFF),
+        (uint8_t)((service_id >> 16) & 0xFF),
+        (uint8_t)((service_id >> 24) & 0xFF)
+    };
+
+    uint8_t resp[256];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 8, resp, 256) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    // Extract number of EIDs at resp[6]
+    uint8_t num_eids = resp[6];
+    if (num_eids == 0) {
+        return 0;
+    }
+
+    int copy_count = (num_eids < max_eids) ? num_eids : max_eids;
+
+    for (int i = 0; i < copy_count; i++) {
+        int offset = 8 + (i * 2);
+        if (offset + 2 <= 256) {
+            eids[i] = resp[offset] | ((uint16_t)resp[offset + 1] << 8);
+        }
+    }
+
+    return copy_count;
+}
