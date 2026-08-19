@@ -531,6 +531,14 @@ int si468x_dab_get_other_ensemble_info(uint32_t service_id, uint16_t* eids, int 
 int si468x_dab_get_ber_info(int clear, uint32_t* ber_count, uint32_t* fib_error_count);
 
 /**
+ * @brief Retrieve current HD Radio (FMHD) Bit Error Rate (BER) count.
+ * @param clear Clear current count values: 1 = clear on read, 0 = read only.
+ * @param ber_count Pointer to populate with the total bit error count.
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_fmhd_get_ber_info(int clear, uint32_t* ber_count);
+
+/**
  * @brief Retrieve real-time Program Service Data (PSD) track metadata (Title, Artist, Album, Genre) for FMHD.
  * @param program Program selection: 0 for MPS (Main Program Service), 1-7 for SPS (Supplemental Program Services), 0xFF for current.
  * @param field Field selection: 0 = Title, 1 = Artist, 2 = Album, 3 = Genre.
