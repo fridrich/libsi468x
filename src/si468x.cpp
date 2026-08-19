@@ -1691,13 +1691,43 @@ int si468x_get_time(si468x_time_t* time)
     time->year = resp[9] | ((uint16_t)resp[10] << 8);
     time->month = resp[11];
     time->day = resp[12];
-    time->hour = resp[13];
-    time->minute = resp[14];
+    time->hours = resp[13];
+    time->minutes = resp[14];
 
     return SI468X_SUCCESS;
-}
+    }
 
-int si468x_get_event_status(si468x_event_status_t* status)
+    int si468x_get_audio_info(si468x_audio_info_t* info)
+    {
+    if (!info) {
+        return -1;
+    }
+
+    // Write 2-byte command for DAB_GET_AUDIO_INFO (Opcode 0xBD, INTACK = 0x00)
+    uint8_t cmd[2] = { 0xBD, 0x00 };
+    uint8_t resp[16];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 2, resp, 16) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    // Check Bit 7 of Parameter Byte 1 (resp[5] in full-duplex) to see if audio info is valid
+    if (resp[1] == 0x80) { // The SI4684 codebase expects SPIbuffer[1] == 0x80 for valid audio
+        info->bitrate = resp[5] | ((uint16_t)resp[6] << 8);
+        info->sample_rate = resp[7] | ((uint16_t)resp[8] << 8);
+        info->audio_mode = resp[9] & 0x03;
+        return SI468X_SUCCESS;
+    }
+
+    // Info not valid or stream not locked
+    info->bitrate = 0;
+    info->sample_rate = 0;
+    info->audio_mode = 0;
+    return SI468X_SUCCESS; // Not an SPI error, just not playing
+    }
+
+    int si468x_get_event_status(si468x_event_status_t* status)
 {
     if (!status) {
         return -1;
