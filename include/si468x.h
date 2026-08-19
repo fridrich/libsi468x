@@ -425,6 +425,19 @@ int si468x_get_fm_status(si468x_fm_status_t* status);
 int si468x_get_rds_text(char* out_text, int max_len);
 
 /**
+ * @brief Read and assemble the 8-character FM RDS Program Service (PS) station name.
+ *
+ * This function extracts Group Type 0 (0A/0B) packets from the RDS FIFO queue and
+ * compiles them into an 8-character station name (PS). It returns 1 when a new
+ * station name has been successfully received and changed.
+ *
+ * @param out_name Pre-allocated destination buffer (at least 9 bytes recommended).
+ * @param max_len Size of the destination buffer.
+ * @return 1 if a new station name is received, 0 if unchanged, or negative error.
+ */
+int si468x_get_rds_station_name(char* out_name, int max_len);
+
+/**
  * @brief Map DAB protection level index to standard string label.
  * @param level Protection level index.
  * @return String label (e.g. "EEP-A1"), or empty string if unknown.

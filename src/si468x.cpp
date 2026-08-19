@@ -326,6 +326,7 @@ class RDS_decode
 {
 public:
     char radio_text[65];
+    char program_service[9];
     int8_t last_segment;
     uint8_t last_toggle;
     uint8_t group_type;
@@ -338,6 +339,23 @@ public:
     RDS_decode()
     {
         std::memset(radio_text, 0, sizeof(radio_text));
+        std::memset(program_service, ' ', 8);
+        program_service[8] = '\0';
+        last_segment = -1;
+        last_toggle = 0;
+        group_type = 0;
+        group_type_B = 0;
+        traffic_program = 0;
+        program_type = 0;
+        block_B_low_5 = 0;
+        complete_reported = false;
+    }
+
+    void reset()
+    {
+        std::memset(radio_text, 0, sizeof(radio_text));
+        std::memset(program_service, ' ', 8);
+        program_service[8] = '\0';
         last_segment = -1;
         last_toggle = 0;
         group_type = 0;
@@ -384,6 +402,22 @@ public:
         }
     }
 
+    void decode_PS_block(uint8_t segment_address, uint16_t block_D)
+    {
+        uint8_t char1 = block_D >> 8;
+        uint8_t char2 = block_D & 0xFF;
+
+        if (segment_address < 4) {
+            int pos = segment_address * 2;
+            if (is_allowed_RT_char(char1)) {
+                program_service[pos] = char1;
+            }
+            if (is_allowed_RT_char(char2)) {
+                program_service[pos + 1] = char2;
+            }
+        }
+    }
+
     void decode_block_A(uint16_t block_A) {}
 
     void decode_block_B(uint16_t block_B)
@@ -410,6 +444,10 @@ public:
             uint8_t segment_address = block_B_low_5 & 0x0F;
             uint8_t text_A_B_toggle = (block_B_low_5 >> 4) & 0x01;
             decode_RT_block(segment_address, text_A_B_toggle, 1, block_D);
+        }
+        else if (group_type == 0) {
+            uint8_t segment_address = block_B_low_5 & 0x03;
+            decode_PS_block(segment_address, block_D);
         }
     }
 
@@ -1570,6 +1608,9 @@ int si468x_set_frequency_table(const uint32_t* freqs, int count)
 
 int si468x_tune_fm(uint32_t frequency_khz)
 {
+    // Clean and reset the RDS decoder state to isolate different frequencies
+    rds_decoder.reset();
+
     // Command size = 7 bytes. Set Byte 1 to 0x00 (Analog Only) and ANTCAP (Byte 4-5) to 0x0000 (Auto)
     uint8_t cmd[7] = { SI468X_CMD_FM_TUNE_FREQ, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
     uint32_t freq_10khz = frequency_khz / 10;
@@ -1616,16 +1657,12 @@ int si468x_get_fm_status(si468x_fm_status_t* status)
     return SI468X_SUCCESS;
 }
 
-int si468x_get_rds_text(char* out_text, int max_len)
+static void si468x_update_rds_decoder(void)
 {
-    if (!out_text || max_len <= 0) {
-        return -1;
-    }
     if (spi_fd < 0) {
-        return -1;
+        return;
     }
 
-    bool updated = false;
     uint8_t cmd[2] = { 0x34, 0x00 }; // Opcode 0x34 (FM_RDS_STATUS) with INTACK = 0
     uint8_t resp[21];
 
@@ -1660,9 +1697,6 @@ int si468x_get_rds_text(char* out_text, int max_len)
 
         // Decode only if header blocks have no uncorrectable errors
         if (err_A < 3 && err_B < 3) {
-            uint8_t old_toggle = rds_decoder.last_toggle;
-            std::string old_text = rds_decoder.radio_text;
-
             rds_decoder.decode_block_A(block_A);
             rds_decoder.decode_block_B(block_B);
 
@@ -1672,16 +1706,27 @@ int si468x_get_rds_text(char* out_text, int max_len)
             if (err_D < 3) {
                 rds_decoder.decode_block_D(block_D);
             }
-
-            if (rds_decoder.last_toggle != old_toggle || old_text != rds_decoder.radio_text) {
-                updated = true;
-            }
         }
 
         if (fifo_used == 0) {
             break;
         }
     }
+}
+
+int si468x_get_rds_text(char* out_text, int max_len)
+{
+    if (!out_text || max_len <= 0) {
+        return -1;
+    }
+    if (spi_fd < 0) {
+        return -1;
+    }
+
+    std::string old_text = rds_decoder.radio_text;
+
+    // Pull and parse all latest RDS groups from the hardware FIFO
+    si468x_update_rds_decoder();
 
     // Check if the current RadioText string is complete (no un-compiled 'holes' i.e. '\0' bytes before the end of the string)
     // Find the end marker (either '\r' or max 64)
@@ -1716,6 +1761,11 @@ int si468x_get_rds_text(char* out_text, int max_len)
         }
     }
 
+    // If the RadioText changed, reset the complete_reported state
+    if (rds_decoder.radio_text != old_text) {
+        rds_decoder.complete_reported = false;
+    }
+
     if (is_complete && !rds_decoder.complete_reported) {
         // Expand the raw RDS string (using standard ETSI EBU Latin 0 charset) into UTF-8
         decode_dab_string_to_utf8((const uint8_t*)rds_decoder.radio_text, check_len, 0, out_text, max_len);
@@ -1724,6 +1774,53 @@ int si468x_get_rds_text(char* out_text, int max_len)
     }
 
     return 0; // Return 0 if the string is still compiling or has already been reported
+}
+
+int si468x_get_rds_station_name(char* out_name, int max_len)
+{
+    if (!out_name || max_len <= 0) {
+        return -1;
+    }
+    if (spi_fd < 0) {
+        return -1;
+    }
+
+    static std::string last_station_name = "";
+
+    // Pull and parse all latest RDS groups from the hardware FIFO
+    si468x_update_rds_decoder();
+
+    // Check if we have any non-empty PS name characters
+    bool has_content = false;
+    for (int i = 0; i < 8; i++) {
+        if (rds_decoder.program_service[i] != '\0' && rds_decoder.program_service[i] != ' ') {
+            has_content = true;
+            break;
+        }
+    }
+
+    if (!has_content) {
+        out_name[0] = '\0';
+        return 0;
+    }
+
+    // Clean up trailing spaces of the 8-character station name
+    int end_pos = 8;
+    while (end_pos > 0 && (rds_decoder.program_service[end_pos - 1] == ' ' || rds_decoder.program_service[end_pos - 1] == '\0')) {
+        end_pos--;
+    }
+
+    std::string current_name(rds_decoder.program_service, end_pos);
+
+    if (current_name != last_station_name) {
+        last_station_name = current_name;
+        decode_dab_string_to_utf8((const uint8_t*)rds_decoder.program_service, end_pos, 0, out_name, max_len);
+        return 1; // New station name received
+    }
+
+    // Still return the station name even if not updated, but return 0 to indicate no change
+    decode_dab_string_to_utf8((const uint8_t*)rds_decoder.program_service, end_pos, 0, out_name, max_len);
+    return 0;
 }
 
 int si468x_get_time(si468x_time_t* time)

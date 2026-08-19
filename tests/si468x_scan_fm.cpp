@@ -123,30 +123,41 @@ int main(int argc, char* argv[])
         std::cout << "  Offset:    " << (int)status.freq_offset << " kHz" << std::endl;
         std::cout << "  HD Sync:   " << (status.hd_synced ? "YES" : "NO") << std::endl;
         std::cout << "  RDS Sync:  " << (status.rds_synced ? "YES" : "NO") << std::endl;
-        std::cout << "  DWELL: Waiting up to 12s to acquire RDS Station Text..." << std::endl;
+        std::cout << "  DWELL: Waiting up to 12s to acquire RDS Station Text/Name..." << std::endl;
 
-        // Stop and dwell on this station for up to 12 seconds to acquire RDS text
+        // Stop and dwell on this station for up to 12 seconds to acquire RDS text and name
         auto dwell_start = std::chrono::steady_clock::now();
         bool rds_text_acquired = false;
+        bool rds_name_acquired = false;
         char rds_text[65];
+        char rds_name[9];
         std::memset(rds_text, 0, sizeof(rds_text));
+        std::memset(rds_name, 0, sizeof(rds_name));
 
         while (std::chrono::steady_clock::now() - dwell_start < std::chrono::seconds(12)) {
             // Update sync metrics
             if (si468x_get_fm_status(&status) == SI468X_SUCCESS && status.rds_synced) {
+                // Poll for station name (PS)
+                si468x_get_rds_station_name(rds_name, sizeof(rds_name));
+                if (std::strlen(rds_name) > 0 && !rds_name_acquired) {
+                    std::cout << "  -> Station Name: \"" << rds_name << "\"" << std::endl;
+                    rds_name_acquired = true;
+                }
+
+                // Poll for RadioText (RT)
                 int updated = si468x_get_rds_text(rds_text, sizeof(rds_text));
                 if (updated > 0 && std::strlen(rds_text) > 0) {
-                    std::cout << "  -> RDS Text: \"" << rds_text << "\"" << std::endl;
+                    std::cout << "  -> RDS Text:     \"" << rds_text << "\"" << std::endl;
                     rds_text_acquired = true;
                     total_rds_decoded++;
-                    break; // Stop dwelling immediately once RDS is decoded successfully
+                    break; // Stop dwelling immediately once RDS Text is decoded successfully
                 }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(400));
         }
 
         if (!rds_text_acquired) {
-            std::cout << "  -> RDS Text: (No RDS metadata decoded within dwell time)" << std::endl;
+            std::cout << "  -> RDS Text:     (No RDS metadata decoded within dwell time)" << std::endl;
         }
         std::cout << "--------------------------------------------------" << std::endl;
     }
