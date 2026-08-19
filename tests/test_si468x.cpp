@@ -167,6 +167,30 @@ static bool test_audio_output_modes()
     return true;
 }
 
+static bool test_telemetry_mappings()
+{
+    std::cout << "Running test: test_telemetry_mappings..." << std::endl;
+
+    // Test Case 1: Protection levels
+    ASSERT_TRUE(std::strcmp(si468x_get_protection_text(1), "UEP-1") == 0, "Index 1 must map to 'UEP-1'");
+    ASSERT_TRUE(std::strcmp(si468x_get_protection_text(6), "EEP-A1") == 0, "Index 6 must map to 'EEP-A1'");
+    ASSERT_TRUE(std::strcmp(si468x_get_protection_text(13), "EEP-B4") == 0, "Index 13 must map to 'EEP-B4'");
+    ASSERT_TRUE(std::strcmp(si468x_get_protection_text(50), "") == 0, "Out of bounds protection level index must map to empty string");
+
+    // Test Case 2: Audio Modes
+    ASSERT_TRUE(std::strcmp(si468x_get_audio_mode_text(1), "Mono") == 0, "Index 1 must map to 'Mono'");
+    ASSERT_TRUE(std::strcmp(si468x_get_audio_mode_text(2), "Stereo") == 0, "Index 2 must map to 'Stereo'");
+    ASSERT_TRUE(std::strcmp(si468x_get_audio_mode_text(50), "") == 0, "Out of bounds audio mode index must map to empty string");
+
+    // Test Case 3: Service Types
+    ASSERT_TRUE(std::strcmp(si468x_get_service_type_text(4), "DAB+") == 0, "Index 4 must map to 'DAB+'");
+    ASSERT_TRUE(std::strcmp(si468x_get_service_type_text(5), "DAB") == 0, "Index 5 must map to 'DAB'");
+    ASSERT_TRUE(std::strcmp(si468x_get_service_type_text(50), "") == 0, "Out of bounds service type index must map to empty string");
+
+    std::cout << "PASS: test_telemetry_mappings" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -180,6 +204,7 @@ int main()
     success &= test_api_signatures_uninitialized();
     success &= test_new_fm_rds_api_uninitialized();
     success &= test_audio_output_modes();
+    success &= test_telemetry_mappings();
 
     std::cout << "========================================" << std::endl;
     if (success) {
