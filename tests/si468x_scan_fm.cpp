@@ -49,6 +49,21 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // Configure European 100 kHz frequency grid (spacing = 10 * 10 kHz)
+    std::cout << "Configuring European FM 100 kHz seek grid..." << std::endl;
+    if (si468x_set_property(SI468X_PROP_FM_SEEK_FREQUENCY_SPACING, 10) != SI468X_SUCCESS) {
+        std::cerr << "Warning: Failed to set seek grid spacing property!" << std::endl;
+    }
+
+    // Configure hardware seek RSSI and SNR validation thresholds dynamically using the test thresholds
+    std::cout << "Configuring hardware seek thresholds: RSSI >= " << rssi_threshold << " dBuV, SNR >= " << snr_threshold << " dB..." << std::endl;
+    if (si468x_set_property(SI468X_PROP_FM_VALID_RSSI_THRESHOLD, rssi_threshold) != SI468X_SUCCESS) {
+        std::cerr << "Warning: Failed to set on-chip RSSI threshold property!" << std::endl;
+    }
+    if (si468x_set_property(SI468X_PROP_FM_VALID_SNR_THRESHOLD, snr_threshold) != SI468X_SUCCESS) {
+        std::cerr << "Warning: Failed to set on-chip SNR threshold property!" << std::endl;
+    }
+
     // Read chip info
     si468x_chip_info_t info;
     if (si468x_get_chip_info(&info) == SI468X_SUCCESS) {

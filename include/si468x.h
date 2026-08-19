@@ -73,6 +73,15 @@ extern "C" {
 /** @} */
 
 /**
+ * @name FM Configuration Properties
+ * @{
+ */
+#define SI468X_PROP_FM_SEEK_FREQUENCY_SPACING 0x3102 /**< Set frequency spacing in multiples of 10 kHz. */
+#define SI468X_PROP_FM_VALID_RSSI_THRESHOLD   0x3202 /**< Set validation RSSI threshold. */
+#define SI468X_PROP_FM_VALID_SNR_THRESHOLD    0x3204 /**< Set validation SNR threshold. */
+/** @} */
+
+/**
  * @brief Structure containing raw chip part revision and firmware specifications.
  */
 typedef struct {
@@ -349,6 +358,14 @@ int si468x_get_event_status(si468x_event_status_t* status);
  * @return SI468X_SUCCESS on success, or a negative error code on failure.
  */
 int si468x_set_rds_region(int region);
+
+/**
+ * @brief Write a raw 16-bit property value to a specific on-chip register.
+ * @param property_id The 16-bit Property ID register.
+ * @param value The 16-bit property value.
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_set_property(uint16_t property_id, uint16_t value);
 
 /**
  * @brief Retrieve detailed component-level specifications dynamically from the on-chip database.

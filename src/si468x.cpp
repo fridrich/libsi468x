@@ -1909,10 +1909,27 @@ int si468x_set_rds_region(int region)
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
-    cmd[2] = 0x00; // Low byte of Property 0x3900 (FMHD_DEEMPHASIS)
-    cmd[3] = 0x39; // High byte of Property 0x3900 (FMHD_DEEMPHASIS)
+    cmd[2] = SI468X_PROP_FM_AUDIO_DE_EMPHASIS & 0xFF; // Low byte of Property 0x3900 (FMHD_DEEMPHASIS)
+    cmd[3] = (SI468X_PROP_FM_AUDIO_DE_EMPHASIS >> 8) & 0xFF; // High byte of Property 0x3900 (FMHD_DEEMPHASIS)
     cmd[4] = deemph_val & 0xFF;         // Low byte of Value
     cmd[5] = (deemph_val >> 8) & 0xFF;  // High byte of Value
+
+    if (send_command(cmd, 6, nullptr, 0) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    return SI468X_SUCCESS;
+}
+
+int si468x_set_property(uint16_t property_id, uint16_t value)
+{
+    uint8_t cmd[6];
+    cmd[0] = SI468X_CMD_SET_PROPERTY;
+    cmd[1] = 0x00;
+    cmd[2] = property_id & 0xFF;         // Low byte of Property ID
+    cmd[3] = (property_id >> 8) & 0xFF;  // High byte of Property ID
+    cmd[4] = value & 0xFF;               // Low byte of Value
+    cmd[5] = (value >> 8) & 0xFF;        // High byte of Value
 
     if (send_command(cmd, 6, nullptr, 0) != SI468X_SUCCESS) {
         return -1;
