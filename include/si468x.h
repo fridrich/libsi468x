@@ -28,6 +28,7 @@ extern "C" {
 #define SI468X_ERROR_FIRMWARE  -3   /**< Firmware image file read or memory allocation error. */
 #define SI468X_ERROR_BOOT      -4   /**< Co-processor failed to boot or load successfully. */
 #define SI468X_ERROR_TIMEOUT   -5   /**< Timeout waiting for CTS, STC, or hardware state change. */
+#define SI468X_ERROR_COMMAND   -6   /**< Co-processor reported a command execution failure. */
 /** @} */
 
 /**
