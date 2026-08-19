@@ -80,7 +80,7 @@ int main(int argc, char* argv[])
     std::cout << "Audio Output:     " << (enable_i2s ? "I2S Digital (hw:2,0)" : "Analog Jack (Internal)") << std::endl;
     std::cout << "==================================================" << std::endl;
 
-    if (si468x_set_audio_output(enable_i2s ? 1 : 0) != SI468X_SUCCESS) {
+    if (si468x_set_audio_output(enable_i2s ? SI468X_AUDIO_I2S : SI468X_AUDIO_ANALOG) != SI468X_SUCCESS) {
         std::cerr << "Warning: Failed to pre-set audio path." << std::endl;
     }
 
