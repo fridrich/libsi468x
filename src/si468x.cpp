@@ -1948,3 +1948,66 @@ int si468x_dab_get_service_linking(uint32_t service_id, uint8_t* link_info, int 
 
     return copy_len;
 }
+
+int si468x_fmhd_get_psd_text(int program, int field, char* out_text, int max_len)
+{
+    if (!out_text || max_len <= 0) {
+        return -1;
+    }
+
+    // Write 3-byte command for HD_GET_PSD_DECODE (Opcode 0x95)
+    uint8_t cmd[3];
+    cmd[0] = SI468X_CMD_HD_GET_PSD_DECODE;
+    cmd[1] = program & 0xFF;
+    cmd[2] = field & 0xFF;
+
+    uint8_t resp[256];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 3, resp, 256) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    uint8_t length = resp[7];
+    uint8_t charset = resp[6];
+
+    if (length == 0) {
+        out_text[0] = '\0';
+        return 0;
+    }
+
+    // Decode utilizing our universal decoder engine
+    decode_dab_string_to_utf8(&resp[8], length, charset, out_text, max_len);
+    return 1;
+}
+
+int si468x_fmhd_get_station_info(int info_select, char* out_text, int max_len)
+{
+    if (!out_text || max_len <= 0) {
+        return -1;
+    }
+
+    // Write 2-byte command for HD_GET_STATION_INFO (Opcode 0x94)
+    uint8_t cmd[2];
+    cmd[0] = SI468X_CMD_HD_GET_STATION_INFO;
+    cmd[1] = info_select & 0xFF;
+
+    uint8_t resp[256];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 2, resp, 256) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    uint16_t length = resp[4] | ((uint16_t)resp[5] << 8);
+    if (length == 0) {
+        out_text[0] = '\0';
+        return 0;
+    }
+
+    int copy_len = (length < max_len - 1) ? length : max_len - 1;
+    std::memcpy(out_text, &resp[6], copy_len);
+    out_text[copy_len] = '\0';
+
+    return 1;
+}
