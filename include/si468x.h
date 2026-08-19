@@ -291,6 +291,27 @@ int si468x_get_fm_status(si468x_fm_status_t* status);
  */
 int si468x_get_rds_text(char* out_text, int max_len);
 
+/**
+ * @brief Map DAB protection level index to standard string label.
+ * @param level Protection level index.
+ * @return String label (e.g. "EEP-A1"), or empty string if unknown.
+ */
+const char* si468x_get_protection_text(uint8_t level);
+
+/**
+ * @brief Map DAB audio mode index to standard string label.
+ * @param mode Audio mode index.
+ * @return String label (e.g. "Stereo"), or empty string if unknown.
+ */
+const char* si468x_get_audio_mode_text(uint8_t mode);
+
+/**
+ * @brief Map DAB service type index to standard string label.
+ * @param type Service type index.
+ * @return String label (e.g. "DAB+"), or empty string if unknown.
+ */
+const char* si468x_get_service_type_text(uint8_t type);
+
 #ifdef __cplusplus
 }
 #endif

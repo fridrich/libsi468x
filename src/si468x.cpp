@@ -1583,3 +1583,37 @@ int si468x_set_rds_region(int region)
 
     return SI468X_SUCCESS;
 }
+
+const char* si468x_get_protection_text(uint8_t level)
+{
+    static const char* const protection_text[] = {
+        "", "UEP-1", "UEP-2", "UEP-3", "UEP-4", "UEP-5",
+        "EEP-A1", "EEP-A2", "EEP-A3", "EEP-A4", "EEP-B1", "EEP-B2", "EEP-B3", "EEP-B4"
+    };
+    if (level < sizeof(protection_text) / sizeof(protection_text[0])) {
+        return protection_text[level];
+    }
+    return "";
+}
+
+const char* si468x_get_audio_mode_text(uint8_t mode)
+{
+    static const char* const audio_mode_text[] = {
+        "Dual", "Mono", "Stereo", "Joint stereo"
+    };
+    if (mode < sizeof(audio_mode_text) / sizeof(audio_mode_text[0])) {
+        return audio_mode_text[mode];
+    }
+    return "";
+}
+
+const char* si468x_get_service_type_text(uint8_t type)
+{
+    static const char* const service_type_text[] = {
+        "TPEG", "Data", "FIDC", "MSC", "DAB+", "DAB", "FIC", "XPAD", "-"
+    };
+    if (type < sizeof(service_type_text) / sizeof(service_type_text[0])) {
+        return service_type_text[type];
+    }
+    return "";
+}
