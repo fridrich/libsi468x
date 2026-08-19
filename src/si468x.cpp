@@ -2261,3 +2261,21 @@ int si468x_dab_get_ber_info(int clear, uint32_t* ber_count, uint32_t* fib_error_
 
     return SI468X_SUCCESS;
 }
+
+int si468x_fmhd_get_ber_info(int clear, uint32_t* ber_count)
+{
+    // Write 2-byte command for HD_TEST_GET_BER_INFO (Opcode 0x98)
+    uint8_t cmd[2] = { SI468X_CMD_HD_TEST_GET_BER_INFO, (uint8_t)(clear & 0x01) };
+    uint8_t resp[8];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 2, resp, 8) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    if (ber_count) {
+        *ber_count = resp[4] | ((uint32_t)resp[5] << 8) | ((uint32_t)resp[6] << 16) | ((uint32_t)resp[7] << 24);
+    }
+
+    return SI468X_SUCCESS;
+}

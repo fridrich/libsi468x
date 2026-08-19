@@ -289,6 +289,11 @@ static bool test_new_seek_and_telemetry_uninitialized()
     int ret_ber = si468x_dab_get_ber_info(0, &b_cnt, &f_cnt);
     ASSERT_TRUE(ret_ber == -1, "si468x_dab_get_ber_info must fail safely when uninitialized");
 
+    // Verify FMHD BER diagnostics fails safely
+    uint32_t fmhd_b_cnt = 0;
+    int ret_fmhd_ber = si468x_fmhd_get_ber_info(0, &fmhd_b_cnt);
+    ASSERT_TRUE(ret_fmhd_ber == -1, "si468x_fmhd_get_ber_info must fail safely when uninitialized");
+
     std::cout << "PASS: test_new_seek_and_telemetry_uninitialized" << std::endl;
     return true;
 }
