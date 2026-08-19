@@ -2239,3 +2239,25 @@ int si468x_dab_get_other_ensemble_info(uint32_t service_id, uint16_t* eids, int 
 
     return copy_count;
 }
+
+int si468x_dab_get_ber_info(int clear, uint32_t* ber_count, uint32_t* fib_error_count)
+{
+    // Write 2-byte command for DAB_TEST_GET_BER_INFO (Opcode 0xE8)
+    uint8_t cmd[2] = { SI468X_CMD_DAB_TEST_GET_BER_INFO, (uint8_t)(clear & 0x01) };
+    uint8_t resp[12];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 2, resp, 12) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    if (ber_count) {
+        *ber_count = resp[4] | ((uint32_t)resp[5] << 8) | ((uint32_t)resp[6] << 16) | ((uint32_t)resp[7] << 24);
+    }
+
+    if (fib_error_count) {
+        *fib_error_count = resp[8] | ((uint32_t)resp[9] << 8) | ((uint32_t)resp[10] << 16) | ((uint32_t)resp[11] << 24);
+    }
+
+    return SI468X_SUCCESS;
+}

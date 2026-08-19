@@ -284,6 +284,11 @@ static bool test_new_seek_and_telemetry_uninitialized()
     int ret_oe = si468x_dab_get_other_ensemble_info(0x12345678, oe_eids, 8);
     ASSERT_TRUE(ret_oe == -1, "si468x_dab_get_other_ensemble_info must fail safely when uninitialized");
 
+    // Verify DAB BER diagnostics fails safely
+    uint32_t b_cnt = 0, f_cnt = 0;
+    int ret_ber = si468x_dab_get_ber_info(0, &b_cnt, &f_cnt);
+    ASSERT_TRUE(ret_ber == -1, "si468x_dab_get_ber_info must fail safely when uninitialized");
+
     std::cout << "PASS: test_new_seek_and_telemetry_uninitialized" << std::endl;
     return true;
 }
