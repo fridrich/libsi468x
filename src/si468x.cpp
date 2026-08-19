@@ -327,6 +327,7 @@ class RDS_decode
 public:
     char radio_text[65];
     char program_service[9];
+    uint8_t ps_segments_received;
     int8_t last_segment;
     uint8_t last_toggle;
     uint8_t group_type;
@@ -341,6 +342,7 @@ public:
         std::memset(radio_text, 0, sizeof(radio_text));
         std::memset(program_service, ' ', 8);
         program_service[8] = '\0';
+        ps_segments_received = 0;
         last_segment = -1;
         last_toggle = 0;
         group_type = 0;
@@ -356,6 +358,7 @@ public:
         std::memset(radio_text, 0, sizeof(radio_text));
         std::memset(program_service, ' ', 8);
         program_service[8] = '\0';
+        ps_segments_received = 0;
         last_segment = -1;
         last_toggle = 0;
         group_type = 0;
@@ -415,6 +418,7 @@ public:
             if (is_allowed_RT_char(char2)) {
                 program_service[pos + 1] = char2;
             }
+            ps_segments_received |= (1 << segment_address); // Mark segment as received
         }
     }
 
@@ -1790,18 +1794,10 @@ int si468x_get_rds_station_name(char* out_name, int max_len)
     // Pull and parse all latest RDS groups from the hardware FIFO
     si468x_update_rds_decoder();
 
-    // Check if we have any non-empty PS name characters
-    bool has_content = false;
-    for (int i = 0; i < 8; i++) {
-        if (rds_decoder.program_service[i] != '\0' && rds_decoder.program_service[i] != ' ') {
-            has_content = true;
-            break;
-        }
-    }
-
-    if (!has_content) {
+    // Only report once all 4 segments (8 characters) of the station name have been received
+    if (rds_decoder.ps_segments_received != 0x0F) {
         out_name[0] = '\0';
-        return 0;
+        return 0; // Segment collection incomplete
     }
 
     // Clean up trailing spaces of the 8-character station name
@@ -1815,7 +1811,7 @@ int si468x_get_rds_station_name(char* out_name, int max_len)
     if (current_name != last_station_name) {
         last_station_name = current_name;
         decode_dab_string_to_utf8((const uint8_t*)rds_decoder.program_service, end_pos, 0, out_name, max_len);
-        return 1; // New station name received
+        return 1; // New completed station name received
     }
 
     // Still return the station name even if not updated, but return 0 to indicate no change
@@ -1956,6 +1952,9 @@ const char* si468x_get_service_type_text(uint8_t type)
 
 int si468x_fm_seek_start(int seek_up, int wrap)
 {
+    // Clean and reset the RDS decoder state to isolate different frequencies
+    rds_decoder.reset();
+
     // Build 6-byte packet for FM_SEEK_START (Opcode 0x31)
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_FM_SEEK_START;

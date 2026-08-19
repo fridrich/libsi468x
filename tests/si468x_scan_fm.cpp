@@ -138,8 +138,8 @@ int main(int argc, char* argv[])
             // Update sync metrics
             if (si468x_get_fm_status(&status) == SI468X_SUCCESS && status.rds_synced) {
                 // Poll for station name (PS)
-                si468x_get_rds_station_name(rds_name, sizeof(rds_name));
-                if (std::strlen(rds_name) > 0 && !rds_name_acquired) {
+                int name_updated = si468x_get_rds_station_name(rds_name, sizeof(rds_name));
+                if (name_updated > 0 && std::strlen(rds_name) > 0) {
                     std::cout << "  -> Station Name: \"" << rds_name << "\"" << std::endl;
                     rds_name_acquired = true;
                 }
