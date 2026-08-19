@@ -24,6 +24,7 @@ extern "C" {
 #define SI468X_CMD_GET_EVENT_STATUS          0x12
 #define SI468X_CMD_SET_PROPERTY              0x13
 #define SI468X_CMD_GET_PROPERTY              0x14
+#define SI468X_CMD_GET_AGC_STATUS            0x17
 
 /* FM/FMHD Commands */
 #define SI468X_CMD_FM_TUNE_FREQ              0x30
