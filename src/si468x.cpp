@@ -732,25 +732,25 @@ static int si468x_enable_rds(void)
 {
     uint8_t cmd[6];
 
-    // Set Property 0x1500 to 0x0001 (FM_RDS_CONFIG: Enable RDS) (Little-Endian)
+    // Set Property 0x3C02 to 0x0041 (FM_RDS_CONFIG: Enable RDS block decoding with 1-2 correctable errors) (Little-Endian)
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
-    cmd[2] = 0x00; // Low byte of Property 0x1500
-    cmd[3] = 0x15; // High byte of Property 0x1500
+    cmd[2] = 0x02; // Low byte of Property 0x3C02
+    cmd[3] = 0x3C; // High byte of Property 0x3C02
+    cmd[4] = 0x41; // Low byte of Value (0x41)
+    cmd[5] = 0x00; // High byte of Value (0x00)
+    send_command(cmd, 6, nullptr, 0);
+
+    // Set Property 0x3C00 to 0x0001 (FM_RDS_INTERRUPT_SOURCE: Enable RDS received FIFO data polling) (Little-Endian)
+    cmd[2] = 0x00; // Low byte of Property 0x3C00
+    cmd[3] = 0x3C; // High byte of Property 0x3C00
     cmd[4] = 0x01; // Low byte of Value (0x01)
     cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
 
-    // Set Property 0x1501 to 0x0001 (FM_RDS_INT_SOURCE: Enable FIFO interrupt) (Little-Endian)
-    cmd[2] = 0x01; // Low byte of Property 0x1501
-    cmd[3] = 0x15; // High byte of Property 0x1501
-    cmd[4] = 0x01; // Low byte of Value (0x01)
-    cmd[5] = 0x00; // High byte of Value (0x00)
-    send_command(cmd, 6, nullptr, 0);
-
-    // Set Property 0x1502 to 0x0001 (FM_RDS_INT_FIFO_COUNT: Interrupt threshold = 1) (Little-Endian)
-    cmd[2] = 0x02; // Low byte of Property 0x1502
-    cmd[3] = 0x15; // High byte of Property 0x1502
+    // Set Property 0x3C01 to 0x0001 (FM_RDS_INT_FIFO_COUNT: Set interrupt/poll threshold = 1 group) (Little-Endian)
+    cmd[2] = 0x01; // Low byte of Property 0x3C01
+    cmd[3] = 0x3C; // High byte of Property 0x3C01
     cmd[4] = 0x01; // Low byte of Value (0x01)
     cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
