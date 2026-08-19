@@ -1570,8 +1570,8 @@ int si468x_set_frequency_table(const uint32_t* freqs, int count)
 
 int si468x_tune_fm(uint32_t frequency_khz)
 {
-    // Command size = 7 bytes. Set Byte 1 to 0x08 (Hybrid Tune Mode) and ANTCAP (Byte 4) to 0x01 for peak RF performance
-    uint8_t cmd[7] = { SI468X_CMD_FM_TUNE_FREQ, 0x08, 0x00, 0x00, 0x01, 0x00, 0x00 };
+    // Command size = 7 bytes. Set Byte 1 to 0x00 (Analog Only) and ANTCAP (Byte 4-5) to 0x0000 (Auto)
+    uint8_t cmd[7] = { SI468X_CMD_FM_TUNE_FREQ, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
     uint32_t freq_10khz = frequency_khz / 10;
     cmd[2] = freq_10khz & 0xFF;
     cmd[3] = (freq_10khz >> 8) & 0xFF;
@@ -1859,12 +1859,16 @@ const char* si468x_get_service_type_text(uint8_t type)
 
 int si468x_fm_seek_start(int seek_up, int wrap)
 {
-    // Write 2-byte command for FM_SEEK_START (Opcode 0x31)
-    uint8_t cmd[2];
+    // Build 6-byte packet for FM_SEEK_START (Opcode 0x31)
+    uint8_t cmd[6];
     cmd[0] = SI468X_CMD_FM_SEEK_START;
-    cmd[1] = ((seek_up & 0x01) << 1) | (wrap & 0x01);
+    cmd[1] = 0x00; // Tune Mode: Analog Only (Seek is only supported on analog carriers in hardware)
+    cmd[2] = ((seek_up & 0x01) << 1) | (wrap & 0x01);
+    cmd[3] = 0x00;
+    cmd[4] = 0x01; // ANTCAP Low byte (Set to 0x0001 for peak RF performance)
+    cmd[5] = 0x00; // ANTCAP High byte
 
-    if (send_command(cmd, 2, nullptr, 0, 5000) != SI468X_SUCCESS) {
+    if (send_command(cmd, 6, nullptr, 0, 5000) != SI468X_SUCCESS) {
         return -1;
     }
 
