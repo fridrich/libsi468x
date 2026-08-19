@@ -99,7 +99,12 @@ static bool test_api_signatures_uninitialized()
     int ret_time = si468x_get_time(&dtime);
     ASSERT_TRUE(ret_time == -1, "si468x_get_time must fail safely when uninitialized");
 
-    // 4. Verify si468x_get_event_status signature and uninitialized failure
+    // 4. Verify si468x_get_audio_info signature and uninitialized failure
+    si468x_audio_info_t ainfo;
+    int ret_ainfo = si468x_get_audio_info(&ainfo);
+    ASSERT_TRUE(ret_ainfo == -1, "si468x_get_audio_info must fail safely when uninitialized");
+
+    // 5. Verify si468x_get_event_status signature and uninitialized failure
     si468x_event_status_t estatus;
     int ret_ev = si468x_get_event_status(&estatus);
     ASSERT_TRUE(ret_ev == -1, "si468x_get_event_status must fail safely when uninitialized");

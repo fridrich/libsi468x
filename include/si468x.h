@@ -123,12 +123,21 @@ typedef struct {
     uint16_t year;             /**< Year (e.g. 2026). */
     uint8_t month;             /**< Month (1 to 12). */
     uint8_t day;               /**< Day of the month (1 to 31). */
-    uint8_t hour;              /**< Hour (0 to 23). */
-    uint8_t minute;            /**< Minute (0 to 59). */
+    uint8_t hours;             /**< Hours (0 to 23). */
+    uint8_t minutes;           /**< Minutes (0 to 59). */
 } si468x_time_t;
 
 /**
- * @brief Structure representing the live asynchronous co-processor event status flags.
+ * @brief Structure representing real-time digital audio decoder metrics.
+ */
+typedef struct {
+    uint16_t bitrate;      /**< Current audio stream bitrate in kbps. */
+    uint16_t sample_rate;  /**< Current audio stream sample rate in Hz (e.g. 48000). */
+    uint8_t audio_mode;    /**< Audio mode (e.g. 0=Dual, 1=Mono, 2=Stereo, 3=Joint Stereo). */
+} si468x_audio_info_t;
+
+/**
+ * @brief Structure representing active asynchronous event flags.
  */
 typedef struct {
     uint8_t reconf;            /**< 1 if multiplex reconfiguration event occurred, 0 otherwise. */
@@ -249,6 +258,13 @@ typedef struct {
  * @return SI468X_SUCCESS on success, or a negative error code on failure.
  */
 int si468x_get_time(si468x_time_t* time);
+
+/**
+ * @brief Query the co-processor to retrieve real-time digital audio stream metrics.
+ * @param info Pointer to target si468x_audio_info_t struct to populate.
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_get_audio_info(si468x_audio_info_t* info);
 
 /**
  * @brief Query the co-processor to retrieve the current active asynchronous event status flags.
