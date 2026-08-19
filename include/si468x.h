@@ -155,6 +155,17 @@ typedef struct {
 } si468x_event_status_t;
 
 /**
+ * @brief Structure representing DAB subchannel layout and capacity allocation details.
+ */
+typedef struct {
+    uint8_t service_mode;    /**< Audio stream service mode type. */
+    uint8_t protection_info; /**< Protection index (UEP/EEP level). */
+    uint16_t bitrate;        /**< Stream bitrate in kbps. */
+    uint16_t num_cu;         /**< Number of Capacity Units (CUs) allocated. */
+    uint16_t cu_address;     /**< Multiplex CU start address. */
+} si468x_subchan_info_t;
+
+/**
  * @brief Initialize the driver library, perform cold reset, and boot the co-processor.
  *
  * This function exports and configures the reset GPIO, opens the SPI bus, performs a
@@ -428,6 +439,15 @@ int si468x_dab_get_announcement_info(int buf_empty, uint32_t* service_id, uint32
  * @return Number of linking bytes successfully copied, or a negative error code on failure.
  */
 int si468x_dab_get_service_linking(uint32_t service_id, uint8_t* link_info, int max_len);
+
+/**
+ * @brief Retrieve detailed layout and capacity allocation details (bitrate, CUs, address) for a DAB subchannel.
+ * @param service_id Globally unique 32-bit Service ID.
+ * @param component_id Globally unique 32-bit Component ID.
+ * @param info Pointer to target si468x_subchan_info_t struct to populate.
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_dab_get_subchan_info(uint32_t service_id, uint32_t component_id, si468x_subchan_info_t* info);
 
 /**
  * @brief Retrieve real-time Program Service Data (PSD) track metadata (Title, Artist, Album, Genre) for FMHD.

@@ -46,6 +46,7 @@ extern "C" {
 #define SI468X_CMD_DAB_GET_COMPONENT_INFO    0xBB
 #define SI468X_CMD_DAB_GET_TIME              0xBC
 #define SI468X_CMD_DAB_GET_AUDIO_INFO        0xBD
+#define SI468X_CMD_DAB_GET_SUBCHAN_INFO      0xBE
 #define SI468X_CMD_DAB_GET_SERVICE_INFO      0xC0
 
 /* Property IDs */

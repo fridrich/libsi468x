@@ -249,6 +249,11 @@ static bool test_new_seek_and_telemetry_uninitialized()
     int ret_sis = si468x_fmhd_get_station_info(1, sis_buf, sizeof(sis_buf));
     ASSERT_TRUE(ret_sis == -1, "si468x_fmhd_get_station_info must fail safely when uninitialized");
 
+    // Verify DAB subchannel info retrieval fails safely
+    si468x_subchan_info_t sub_info;
+    int ret_sub = si468x_dab_get_subchan_info(0x12345678, 0x11223344, &sub_info);
+    ASSERT_TRUE(ret_sub == -1, "si468x_dab_get_subchan_info must fail safely when uninitialized");
+
     std::cout << "PASS: test_new_seek_and_telemetry_uninitialized" << std::endl;
     return true;
 }

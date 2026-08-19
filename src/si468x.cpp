@@ -2011,3 +2011,38 @@ int si468x_fmhd_get_station_info(int info_select, char* out_text, int max_len)
 
     return 1;
 }
+
+int si468x_dab_get_subchan_info(uint32_t service_id, uint32_t component_id, si468x_subchan_info_t* info)
+{
+    if (!info) {
+        return -1;
+    }
+
+    // Write 12-byte command for DAB_GET_SUBCHAN_INFO (Opcode 0xBE)
+    uint8_t cmd[12] = {
+        SI468X_CMD_DAB_GET_SUBCHAN_INFO, 0x00, 0x00, 0x00,
+        (uint8_t)(service_id & 0xFF),
+        (uint8_t)((service_id >> 8) & 0xFF),
+        (uint8_t)((service_id >> 16) & 0xFF),
+        (uint8_t)((service_id >> 24) & 0xFF),
+        (uint8_t)(component_id & 0xFF),
+        (uint8_t)((component_id >> 8) & 0xFF),
+        (uint8_t)((component_id >> 16) & 0xFF),
+        (uint8_t)((component_id >> 24) & 0xFF)
+    };
+
+    uint8_t resp[12];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 12, resp, 12) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    info->service_mode = resp[4];
+    info->protection_info = resp[5];
+    info->bitrate = resp[6] | ((uint16_t)resp[7] << 8);
+    info->num_cu = resp[8] | ((uint16_t)resp[9] << 8);
+    info->cu_address = resp[10] | ((uint16_t)resp[11] << 8);
+
+    return SI468X_SUCCESS;
+}
