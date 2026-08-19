@@ -216,6 +216,33 @@ static bool test_mot_slideshow_uninitialized()
     return true;
 }
 
+static bool test_new_seek_and_telemetry_uninitialized()
+{
+    std::cout << "Running test: test_new_seek_and_telemetry_uninitialized..." << std::endl;
+
+    // Verify FM seek fails safely
+    int ret_seek = si468x_fm_seek_start(1, 1);
+    ASSERT_TRUE(ret_seek == -1, "si468x_fm_seek_start must fail safely when uninitialized");
+
+    // Verify DAB announcement support fails safely
+    uint16_t asw = 0;
+    int ret_ann_sup = si468x_dab_get_announcement_support(0x12345678, 0x11223344, &asw);
+    ASSERT_TRUE(ret_ann_sup == -1, "si468x_dab_get_announcement_support must fail safely when uninitialized");
+
+    // Verify DAB announcement info fails safely
+    uint32_t sid, cid;
+    int ret_ann_info = si468x_dab_get_announcement_info(0, &sid, &cid, &asw);
+    ASSERT_TRUE(ret_ann_info == -1, "si468x_dab_get_announcement_info must fail safely when uninitialized");
+
+    // Verify DAB service linking fails safely
+    uint8_t link_buf[32];
+    int ret_link = si468x_dab_get_service_linking(0x12345678, link_buf, sizeof(link_buf));
+    ASSERT_TRUE(ret_link == -1, "si468x_dab_get_service_linking must fail safely when uninitialized");
+
+    std::cout << "PASS: test_new_seek_and_telemetry_uninitialized" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -231,6 +258,7 @@ int main()
     success &= test_audio_output_modes();
     success &= test_telemetry_mappings();
     success &= test_mot_slideshow_uninitialized();
+    success &= test_new_seek_and_telemetry_uninitialized();
 
     std::cout << "========================================" << std::endl;
     if (success) {

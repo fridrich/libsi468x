@@ -393,6 +393,42 @@ const char* si468x_get_audio_mode_text(uint8_t mode);
  */
 const char* si468x_get_service_type_text(uint8_t type);
 
+/**
+ * @brief Trigger an autonomous FM seek operation.
+ * @param seek_up Seek direction: 1 = seek up, 0 = seek down.
+ * @param wrap Wrap around band boundaries: 1 = wrap around, 0 = stop at band edge.
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_fm_seek_start(int seek_up, int wrap);
+
+/**
+ * @brief Query DAB announcement support flags for a specific service component.
+ * @param service_id Globally unique 32-bit Service ID.
+ * @param component_id Globally unique 32-bit Component ID.
+ * @param asw_flags Pointer to target 16-bit variable to populate with support flags (ASW flags).
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_dab_get_announcement_support(uint32_t service_id, uint32_t component_id, uint16_t* asw_flags);
+
+/**
+ * @brief Retrieve current active announcement alert details.
+ * @param buf_empty Clear/empty active queue buffer flag: 1 = empty, 0 = read only.
+ * @param service_id Pointer to populate with the interrupting Service ID.
+ * @param component_id Pointer to populate with the interrupting Component ID.
+ * @param asw_flags Pointer to populate with the active alert flags.
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_dab_get_announcement_info(int buf_empty, uint32_t* service_id, uint32_t* component_id, uint16_t* asw_flags);
+
+/**
+ * @brief Query DAB Service Linking and alternate handover frequencies.
+ * @param service_id Globally unique 32-bit Service ID.
+ * @param link_info Pre-allocated buffer to store raw linking information payload.
+ * @param max_len Size of the destination buffer.
+ * @return Number of linking bytes successfully copied, or a negative error code on failure.
+ */
+int si468x_dab_get_service_linking(uint32_t service_id, uint8_t* link_info, int max_len);
+
 #ifdef __cplusplus
 }
 #endif
