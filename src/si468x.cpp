@@ -655,10 +655,10 @@ int si468x_set_frequency(uint32_t frequency_hz)
         return SI468X_ERROR_SPI;
     }
 
-    // Wait for the RF synthesizers to lock and acquire OFDM sync (up to 1 second)
+    // Wait for the RF synthesizers to lock and acquire OFDM sync (up to 2.5 seconds)
     bool locked = false;
-    for (int i = 0; i < 5; i++) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    for (int i = 0; i < 25; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         // Poll signal status using correct 2-byte command
         si468x_signal_status_t status;
@@ -883,7 +883,14 @@ static void decode_dab_string_to_utf8(const uint8_t* in, int in_len, uint8_t cha
                 break; // Stop on explicit UCS-2 null terminator
             }
             else if (codepoint < 0x0080) {
-                out[out_idx++] = (char)codepoint;
+                if (codepoint < 0x0020) {
+                    if (codepoint == 0x0A || codepoint == 0x0D) {
+                        out[out_idx++] = ' ';
+                    }
+                    // Skip all other non-printable/control characters (like 0x0B, 0x1F)
+                } else {
+                    out[out_idx++] = (char)codepoint;
+                }
             }
             else if (codepoint < 0x0800) {
                 out[out_idx++] = 0xC0 | (codepoint >> 6);
@@ -902,6 +909,13 @@ static void decode_dab_string_to_utf8(const uint8_t* in, int in_len, uint8_t cha
             uint8_t c = in[i];
             if (c == 0x00) {
                 break;
+            }
+            if (c < 0x20) {
+                if (c == 0x0A || c == 0x0D) {
+                    out[out_idx++] = ' ';
+                }
+                // Skip all other non-printable/control characters (like 0x0B, 0x1F)
+                continue;
             }
             if (charset == 0) {
                 if (c >= 0x80 && c <= 0x9F) {
@@ -1287,6 +1301,8 @@ int si468x_set_audio_output(int enable_i2s)
 
 int si468x_get_dls_text(char* out_text, int max_len)
 {
+    static std::string last_dls_text = "";
+
     if (!out_text || max_len <= 0) {
         return -1;
     }
@@ -1316,18 +1332,31 @@ int si468x_get_dls_text(char* out_text, int max_len)
         return 0; // No active DLS text in the queue
     }
 
+    // Check if it is a DLS command (Bit 4 of resp[25] is set)
+    bool is_command = resp[25] & 0x10;
+    if (is_command) {
+        uint8_t cmd_type = resp[25] & 0x0F;
+        if (cmd_type == 0x01) { // DLS Clear command
+            out_text[0] = '\0';
+            if (last_dls_text != "") {
+                last_dls_text = "";
+                return 1; // Updated to empty display
+            }
+        }
+        return 0; // Skip other binary commands (like DL+ tags)
+    }
+
     uint16_t text_len = dls_len - 2;
 
     if (text_len >= max_len) {
         text_len = max_len - 1;
     }
 
-    uint8_t charset = (resp[25] >> 4) & 0x0F; // Charset is typically the upper 4 bits of the DLS Control Byte
+    uint8_t charset = (resp[26] >> 4) & 0x0F; // Charset is in the upper 4 bits of the second DLS Control Byte (resp[26])
 
     // Dynamic UTF-8 DLS string payload parsing starting exactly at resp[27]
     decode_dab_string_to_utf8(&resp[27], text_len, charset, out_text, max_len);
 
-    static std::string last_dls_text = "";
     std::string current_dls(out_text);
 
     if (current_dls != last_dls_text) {
