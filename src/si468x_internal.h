@@ -7,43 +7,74 @@
 #define __SI468X_INTERNAL_H__
 
 #include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Bootloader Opcodes */
-#define SI468X_CMD_POWER_UP          0x01
-#define SI468X_CMD_LOAD_INIT         0x06
-#define SI468X_CMD_BOOT              0x07
-#define SI468X_CMD_WRITE_FUT         0x04
+/* Common Commands (All Modes) */
+#define SI468X_CMD_RD_REPLY                  0x00
+#define SI468X_CMD_POWER_UP                  0x01
+#define SI468X_CMD_HOST_LOAD                 0x04
+#define SI468X_CMD_LOAD_INIT                 0x06
+#define SI468X_CMD_BOOT                      0x07
+#define SI468X_CMD_GET_SYS_STATE             0x09
+#define SI468X_CMD_GET_SYS_REVISIONS         0x10
+#define SI468X_CMD_GET_EVENT_STATUS          0x12
+#define SI468X_CMD_SET_PROPERTY              0x13
+#define SI468X_CMD_GET_PROPERTY              0x14
 
-/* Application Opcodes */
-#define SI468X_CMD_GET_SYS_STATE     0x10
-#define SI468X_CMD_SET_PROPERTY      0x13
-#define SI468X_CMD_GET_PROPERTY      0x12
-#define SI468X_CMD_GET_STATUS        0x14
-#define SI468X_CMD_DAB_TUNE_FREQ     0xB0
-#define SI468X_CMD_DAB_DIGRAD_STATUS 0xB2
-#define SI468X_CMD_START_DIGITAL     0x81
-#define SI468X_CMD_STOP_DIGITAL      0x82
-#define SI468X_CMD_GET_DIGITAL_LIST  0xB5
+/* FM/FMHD Commands */
+#define SI468X_CMD_FM_TUNE_FREQ              0x30
+#define SI468X_CMD_FM_RSQ_STATUS             0x32
+#define SI468X_CMD_FM_RDS_STATUS             0x34
 
-/* Properties */
-#define SI468X_PROP_AUDIO_VOLUME     0x0300
-#define SI468X_PROP_PIN_CONFIG       0x0001
+/* Digital Service Commands */
+#define SI468X_CMD_GET_DIGITAL_SERVICE_LIST  0x80
+#define SI468X_CMD_START_DIGITAL_SERVICE     0x81
+#define SI468X_CMD_STOP_DIGITAL_SERVICE      0x82
+#define SI468X_CMD_GET_DIGITAL_SERVICE_DATA  0x84
 
-/* Pin config properties values */
-#define SI468X_AUDIO_ROUTING_ANALOG  0
-#define SI468X_AUDIO_ROUTING_I2S     1
+/* DAB Commands */
+#define SI468X_CMD_DAB_TUNE_FREQ             0xB0
+#define SI468X_CMD_DAB_DIGRAD_STATUS         0xB2
+#define SI468X_CMD_DAB_SET_FREQ_LIST         0xB8
+#define SI468X_CMD_DAB_GET_COMPONENT_INFO    0xBB
+#define SI468X_CMD_DAB_GET_TIME              0xBC
+#define SI468X_CMD_DAB_GET_AUDIO_INFO        0xBD
+#define SI468X_CMD_DAB_GET_SERVICE_INFO      0xC0
+
+/* Property IDs */
+#define SI468X_PROP_DIGITAL_IO_OUTPUT_SELECT 0x0200
+#define SI468X_PROP_DIGITAL_IO_OUTPUT_FORMAT 0x0202
+#define SI468X_PROP_AUDIO_ANALOG_VOLUME      0x0300
+#define SI468X_PROP_PIN_CONFIG_ENABLE        0x0800
+#define SI468X_PROP_FM_AUDIO_DE_EMPHASIS     0x3900
+#define SI468X_PROP_FM_RDS_CONFIG            0x3C02
+#define SI468X_PROP_DAB_XPAD_ENABLE          0xB400
+
+/* On-Chip PAD/XPAD Decoder properties */
+#define SI468X_PROP_DAB_VALID_RSSI_TIME      0xB200
+#define SI468X_PROP_DAB_VALID_RSSI_THRESHOLD 0xB201
+#define SI468X_PROP_DAB_VALID_ACQ_TIME       0xB202
+#define SI468X_PROP_DAB_VALID_SYNC_TIME      0xB203
+#define SI468X_PROP_DAB_VALID_DETECT_TIME    0xB204
+
+/* Legacy Aliases for backward compatibility in internal code */
+#define SI468X_CMD_WRITE_FUT                 SI468X_CMD_HOST_LOAD
+#define SI468X_CMD_START_DIGITAL             SI468X_CMD_START_DIGITAL_SERVICE
+#define SI468X_CMD_STOP_DIGITAL              SI468X_CMD_STOP_DIGITAL_SERVICE
+#define SI468X_PROP_AUDIO_VOLUME             SI468X_PROP_AUDIO_ANALOG_VOLUME
+#define SI468X_PROP_PIN_CONFIG               SI468X_PROP_PIN_CONFIG_ENABLE
 
 /* SPI transfer specs */
-#define SI468X_SPI_SPEED_HZ          10000000  /* 10 MHz limit */
-#define SI468X_SPI_BITS_PER_WORD     8
-#define SI468X_SPI_MODE              0         /* Mode 0 */
+#define SI468X_SPI_SPEED_HZ                  10000000  /* 10 MHz limit */
+#define SI468X_SPI_BITS_PER_WORD             8
+#define SI468X_SPI_MODE                      0         /* Mode 0 */
 
 /* Helper macros */
-#define SI468X_CTS_MASK              0x80
+#define SI468X_CTS_MASK                      0x80
 
 // Dynamic diagnostic logging routing overrides
 #ifdef __cplusplus
@@ -58,7 +89,7 @@ extern "C" {
 #define SI468X_ERR if (0)
 #endif
 
-/* Private Internal Helper Functions (tested via unit tests) */
+/* Private Internal Helper Functions */
 void si468x_decode_short_label(const uint8_t* raw_label, int raw_len, uint16_t char_mask, uint8_t charset, char* short_label, int max_len);
 int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_len, int timeout_ms = 1000);
 
