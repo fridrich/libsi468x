@@ -239,6 +239,16 @@ static bool test_new_seek_and_telemetry_uninitialized()
     int ret_link = si468x_dab_get_service_linking(0x12345678, link_buf, sizeof(link_buf));
     ASSERT_TRUE(ret_link == -1, "si468x_dab_get_service_linking must fail safely when uninitialized");
 
+    // Verify FMHD PSD text retrieval fails safely
+    char psd_buf[128];
+    int ret_psd = si468x_fmhd_get_psd_text(0, 0, psd_buf, sizeof(psd_buf));
+    ASSERT_TRUE(ret_psd == -1, "si468x_fmhd_get_psd_text must fail safely when uninitialized");
+
+    // Verify FMHD station info fails safely
+    char sis_buf[128];
+    int ret_sis = si468x_fmhd_get_station_info(1, sis_buf, sizeof(sis_buf));
+    ASSERT_TRUE(ret_sis == -1, "si468x_fmhd_get_station_info must fail safely when uninitialized");
+
     std::cout << "PASS: test_new_seek_and_telemetry_uninitialized" << std::endl;
     return true;
 }

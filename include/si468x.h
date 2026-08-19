@@ -429,6 +429,25 @@ int si468x_dab_get_announcement_info(int buf_empty, uint32_t* service_id, uint32
  */
 int si468x_dab_get_service_linking(uint32_t service_id, uint8_t* link_info, int max_len);
 
+/**
+ * @brief Retrieve real-time Program Service Data (PSD) track metadata (Title, Artist, Album, Genre) for FMHD.
+ * @param program Program selection: 0 for MPS (Main Program Service), 1-7 for SPS (Supplemental Program Services), 0xFF for current.
+ * @param field Field selection: 0 = Title, 1 = Artist, 2 = Album, 3 = Genre.
+ * @param out_text Destination string buffer to populate.
+ * @param max_len Size of the destination buffer.
+ * @return 1 if newly updated metadata is copied, 0 if unchanged/not ready, or a negative error code on failure.
+ */
+int si468x_fmhd_get_psd_text(int program, int field, char* out_text, int max_len);
+
+/**
+ * @brief Retrieve Station Information Service (SIS) details for the currently tuned FMHD digital station.
+ * @param info_select Selector index: 1 = Station Message, 4 = Universal Short Name, 5 = Basic SIS, 6 = Slogan.
+ * @param out_text Destination string buffer to populate.
+ * @param max_len Size of the destination buffer.
+ * @return 1 if newly updated station metadata is copied, 0 if unchanged/not ready, or a negative error code on failure.
+ */
+int si468x_fmhd_get_station_info(int info_select, char* out_text, int max_len);
+
 #ifdef __cplusplus
 }
 #endif
