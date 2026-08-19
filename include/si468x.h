@@ -178,6 +178,15 @@ typedef struct {
 } si468x_freq_element_t;
 
 /**
+ * @brief Structure representing RF Automatic Gain Control (AGC) diagnostic status.
+ */
+typedef struct {
+    uint8_t rfagc_dis;       /**< RF AGC loop disabled flag (1 if disabled, 0 if enabled). */
+    uint8_t ifagc_dis;       /**< IF AGC loop disabled flag (1 if disabled, 0 if enabled). */
+    uint8_t lna_gain_index;  /**< LNA Gain attenuation step index (0 to 15, higher means more attenuation). */
+} si468x_agc_status_t;
+
+/**
  * @brief Initialize the driver library, perform cold reset, and boot the co-processor.
  *
  * This function exports and configures the reset GPIO, opens the SPI bus, performs a
@@ -495,6 +504,13 @@ int si468x_fmhd_get_station_info(int info_select, char* out_text, int max_len);
  * @return 1 if newly updated alert text is copied, 0 if no active alerts, or a negative error code on failure.
  */
 int si468x_fmhd_get_alert_message(char* alert_text, int max_len);
+
+/**
+ * @brief Query current RF Automatic Gain Control (AGC) diagnostics and LNA gain state.
+ * @param status Pointer to target si468x_agc_status_t struct to populate.
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_get_agc_status(si468x_agc_status_t* status);
 
 #ifdef __cplusplus
 }

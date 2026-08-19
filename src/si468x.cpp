@@ -2113,3 +2113,25 @@ int si468x_dab_get_freq_info(si468x_freq_element_t* elements, int max_elements)
 
     return copy_count;
 }
+
+int si468x_get_agc_status(si468x_agc_status_t* status)
+{
+    if (!status) {
+        return -1;
+    }
+
+    // Write 2-byte command for GET_AGC_STATUS (Opcode 0x17)
+    uint8_t cmd[2] = { SI468X_CMD_GET_AGC_STATUS, 0x00 };
+    uint8_t resp[7];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 2, resp, 7) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    status->rfagc_dis = (resp[4] >> 2) & 0x01;
+    status->ifagc_dis = (resp[4] >> 1) & 0x01;
+    status->lna_gain_index = resp[5];
+
+    return SI468X_SUCCESS;
+}

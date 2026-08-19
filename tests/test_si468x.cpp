@@ -264,6 +264,11 @@ static bool test_new_seek_and_telemetry_uninitialized()
     int ret_freq = si468x_dab_get_freq_info(&freq_el, 1);
     ASSERT_TRUE(ret_freq == -1, "si468x_dab_get_freq_info must fail safely when uninitialized");
 
+    // Verify RF AGC status fails safely
+    si468x_agc_status_t agc_status;
+    int ret_agc = si468x_get_agc_status(&agc_status);
+    ASSERT_TRUE(ret_agc == -1, "si468x_get_agc_status must fail safely when uninitialized");
+
     std::cout << "PASS: test_new_seek_and_telemetry_uninitialized" << std::endl;
     return true;
 }
