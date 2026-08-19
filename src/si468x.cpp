@@ -857,8 +857,8 @@ int si468x_stop_service(void)
 
 int si468x_set_volume(uint8_t volume)
 {
-    if (volume > 63) {
-        volume = 63;
+    if (volume > SI468X_VOLUME_MAX) {
+        volume = SI468X_VOLUME_MAX;
     }
     active_volume = volume;
 
@@ -1222,9 +1222,9 @@ int si468x_set_audio_output(int enable_i2s)
     cmd[3] = 0x08; // High byte of Property ID 0x0800
     
     uint16_t out_sel = 0x0001;
-    if (enable_i2s == 1) {
+    if (enable_i2s == SI468X_AUDIO_I2S) {
         out_sel = 0x0002;
-    } else if (enable_i2s == 2) {
+    } else if (enable_i2s == SI468X_AUDIO_SIMUL) {
         out_sel = 0x0003;
     }
     cmd[4] = out_sel & 0xFF;
@@ -1235,7 +1235,7 @@ int si468x_set_audio_output(int enable_i2s)
         return ret;
     }
 
-    if (enable_i2s == 1 || enable_i2s == 2) {
+    if (enable_i2s == SI468X_AUDIO_I2S || enable_i2s == SI468X_AUDIO_SIMUL) {
         // Set Property 0x0200 (DIGITAL_IO_OUTPUT_FORMAT) to 0xC000 in Little-Endian (I2S Master)
         cmd[0] = SI468X_CMD_SET_PROPERTY;
         cmd[1] = 0x00;

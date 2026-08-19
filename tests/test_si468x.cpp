@@ -151,16 +151,16 @@ static bool test_audio_output_modes()
 {
     std::cout << "Running test: test_audio_output_modes..." << std::endl;
 
-    // Call si468x_set_audio_output with 0 (Analog), 1 (I2S), and 2 (Simultaneous).
+    // Call si468x_set_audio_output with SI468X_AUDIO_ANALOG, SI468X_AUDIO_I2S, and SI468X_AUDIO_SIMUL.
     // All of these should return SI468X_SUCCESS since spi_fd is < 0 (uninitialized)
     // and the value is statically stored in active_audio_mode.
-    int ret_analog = si468x_set_audio_output(0);
+    int ret_analog = si468x_set_audio_output(SI468X_AUDIO_ANALOG);
     ASSERT_TRUE(ret_analog == SI468X_SUCCESS, "Setting Analog output mode must return SI468X_SUCCESS when uninitialized");
 
-    int ret_i2s = si468x_set_audio_output(1);
+    int ret_i2s = si468x_set_audio_output(SI468X_AUDIO_I2S);
     ASSERT_TRUE(ret_i2s == SI468X_SUCCESS, "Setting I2S output mode must return SI468X_SUCCESS when uninitialized");
 
-    int ret_simul = si468x_set_audio_output(2);
+    int ret_simul = si468x_set_audio_output(SI468X_AUDIO_SIMUL);
     ASSERT_TRUE(ret_simul == SI468X_SUCCESS, "Setting Simultaneous output mode must return SI468X_SUCCESS when uninitialized");
 
     std::cout << "PASS: test_audio_output_modes" << std::endl;
