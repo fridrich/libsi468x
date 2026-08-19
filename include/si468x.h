@@ -47,6 +47,31 @@ extern "C" {
 /** @} */
 
 /**
+ * @name Audio Output Routing Paths
+ * @{
+ */
+#define SI468X_AUDIO_ANALOG     0   /**< Route audio to the analog headphone jack only. */
+#define SI468X_AUDIO_I2S        1   /**< Route audio to the I2S digital interface only. */
+#define SI468X_AUDIO_SIMUL      2   /**< Route audio to both Analog and I2S outputs simultaneously. */
+/** @} */
+
+/**
+ * @name DAB Service Audio Component Types
+ * @{
+ */
+#define SI468X_AUDIO_TYPE_DAB      0    /**< Legacy MPEG Layer II (MP2) audio component standard. */
+#define SI468X_AUDIO_TYPE_DAB_PLUS 15   /**< Modern HE-AAC v2 (DAB+ AAC) audio component standard. */
+/** @} */
+
+/**
+ * @name Volume Boundaries
+ * @{
+ */
+#define SI468X_VOLUME_MIN       0    /**< Minimum volume level (muted). */
+#define SI468X_VOLUME_MAX       63   /**< Maximum hardware output volume level. */
+/** @} */
+
+/**
  * @brief Structure containing raw chip part revision and firmware specifications.
  */
 typedef struct {
