@@ -61,13 +61,6 @@ extern "C" {
 #define SI468X_PROP_DAB_VALID_SYNC_TIME      0xB203
 #define SI468X_PROP_DAB_VALID_DETECT_TIME    0xB204
 
-/* Legacy Aliases for backward compatibility in internal code */
-#define SI468X_CMD_WRITE_FUT                 SI468X_CMD_HOST_LOAD
-#define SI468X_CMD_START_DIGITAL             SI468X_CMD_START_DIGITAL_SERVICE
-#define SI468X_CMD_STOP_DIGITAL              SI468X_CMD_STOP_DIGITAL_SERVICE
-#define SI468X_PROP_AUDIO_VOLUME             SI468X_PROP_AUDIO_ANALOG_VOLUME
-#define SI468X_PROP_PIN_CONFIG               SI468X_PROP_PIN_CONFIG_ENABLE
-
 /* SPI transfer specs */
 #define SI468X_SPI_SPEED_HZ                  10000000  /* 10 MHz limit */
 #define SI468X_SPI_BITS_PER_WORD             8

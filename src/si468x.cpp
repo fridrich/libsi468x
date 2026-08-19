@@ -304,7 +304,7 @@ static int upload_firmware_memory(const unsigned char* data, size_t length)
         size_t bytes_to_write = (remaining < chunk_size) ? remaining : chunk_size;
 
         // Build WRITE_FUT command packet (header must be 0x04, 0x00, 0x00, 0x00)
-        packet[0] = SI468X_CMD_WRITE_FUT;
+        packet[0] = SI468X_CMD_HOST_LOAD;
         packet[1] = 0x00;
         packet[2] = 0x00;
         packet[3] = 0x00;
@@ -798,7 +798,7 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
     // - Byte 4..7: Service ID (32-bit Little-Endian)
     // - Byte 8..11: Global Component ID (32-bit Little-Endian)
     uint8_t cmd[12] = {
-        SI468X_CMD_START_DIGITAL, 0x00, 0x00, 0x00,
+        SI468X_CMD_START_DIGITAL_SERVICE, 0x00, 0x00, 0x00,
         (uint8_t)(service_id & 0xFF),
         (uint8_t)((service_id >> 8) & 0xFF),
         (uint8_t)((service_id >> 16) & 0xFF),
@@ -834,7 +834,7 @@ int si468x_stop_service(void)
 
     // Build 12-byte STOP_DIGITAL command matching native binary exactly (using opcode 0x82)
     uint8_t cmd[12] = {
-        SI468X_CMD_STOP_DIGITAL, 0x00, 0x00, 0x00,
+        SI468X_CMD_STOP_DIGITAL_SERVICE, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00
     };
@@ -865,8 +865,8 @@ int si468x_set_volume(uint8_t volume)
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
-    cmd[2] = SI468X_PROP_AUDIO_VOLUME & 0xFF;        // Low byte of ID (0x00)
-    cmd[3] = (SI468X_PROP_AUDIO_VOLUME >> 8) & 0xFF; // High byte of ID (0x03)
+    cmd[2] = SI468X_PROP_AUDIO_ANALOG_VOLUME & 0xFF;        // Low byte of ID (0x00)
+    cmd[3] = (SI468X_PROP_AUDIO_ANALOG_VOLUME >> 8) & 0xFF; // High byte of ID (0x03)
     cmd[4] = volume & 0xFF;                          // Low byte of Value
     cmd[5] = 0x00;                                   // High byte of Value (0x00)
 
