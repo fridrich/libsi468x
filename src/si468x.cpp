@@ -1848,3 +1848,103 @@ const char* si468x_get_service_type_text(uint8_t type)
     }
     return "";
 }
+
+int si468x_fm_seek_start(int seek_up, int wrap)
+{
+    // Write 2-byte command for FM_SEEK_START (Opcode 0x31)
+    uint8_t cmd[2];
+    cmd[0] = SI468X_CMD_FM_SEEK_START;
+    cmd[1] = ((seek_up & 0x01) << 1) | (wrap & 0x01);
+
+    if (send_command(cmd, 2, nullptr, 0, 5000) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    return SI468X_SUCCESS;
+}
+
+int si468x_dab_get_announcement_support(uint32_t service_id, uint32_t component_id, uint16_t* asw_flags)
+{
+    if (!asw_flags) {
+        return -1;
+    }
+
+    // Write 12-byte command for DAB_GET_ANNOUNCEMENT_SUPPORT_INFO (Opcode 0xB5)
+    uint8_t cmd[12] = {
+        0xB5, 0x00, 0x00, 0x00,
+        (uint8_t)(service_id & 0xFF),
+        (uint8_t)((service_id >> 8) & 0xFF),
+        (uint8_t)((service_id >> 16) & 0xFF),
+        (uint8_t)((service_id >> 24) & 0xFF),
+        (uint8_t)(component_id & 0xFF),
+        (uint8_t)((component_id >> 8) & 0xFF),
+        (uint8_t)((component_id >> 16) & 0xFF),
+        (uint8_t)((component_id >> 24) & 0xFF)
+    };
+
+    uint8_t resp[6];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 12, resp, 6) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    *asw_flags = resp[4] | ((uint16_t)resp[5] << 8);
+    return SI468X_SUCCESS;
+}
+
+int si468x_dab_get_announcement_info(int buf_empty, uint32_t* service_id, uint32_t* component_id, uint16_t* asw_flags)
+{
+    // Write 2-byte command for DAB_GET_ANNOUNCEMENT_INFO (Opcode 0xB6)
+    uint8_t cmd[2];
+    cmd[0] = 0xB6;
+    cmd[1] = buf_empty & 0x01;
+
+    uint8_t resp[14];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 2, resp, 14) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    if (service_id) {
+        *service_id = resp[4] | ((uint32_t)resp[5] << 8) | ((uint32_t)resp[6] << 16) | ((uint32_t)resp[7] << 24);
+    }
+    if (component_id) {
+        *component_id = resp[8] | ((uint32_t)resp[9] << 8) | ((uint32_t)resp[10] << 16) | ((uint32_t)resp[11] << 24);
+    }
+    if (asw_flags) {
+        *asw_flags = resp[12] | ((uint16_t)resp[13] << 8);
+    }
+
+    return SI468X_SUCCESS;
+}
+
+int si468x_dab_get_service_linking(uint32_t service_id, uint8_t* link_info, int max_len)
+{
+    if (!link_info || max_len <= 0) {
+        return -1;
+    }
+
+    // Write 6-byte command for DAB_GET_SERVICE_LINKING_INFO (Opcode 0xB7)
+    uint8_t cmd[6];
+    cmd[0] = 0xB7;
+    cmd[1] = 0x00;
+    cmd[2] = service_id & 0xFF;
+    cmd[3] = (service_id >> 8) & 0xFF;
+    cmd[4] = (service_id >> 16) & 0xFF;
+    cmd[5] = (service_id >> 24) & 0xFF;
+
+    uint8_t resp[256];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 6, resp, 256) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    uint16_t data_size = resp[4] | ((uint16_t)resp[5] << 8);
+    int copy_len = (data_size < max_len) ? data_size : max_len;
+    std::memcpy(link_info, &resp[6], copy_len);
+
+    return copy_len;
+}
