@@ -577,86 +577,58 @@ static uint8_t si468x_get_freq_index(uint32_t frequency_hz)
         return 0;
     }
 
-    switch (frequency_hz) {
-    case 174928000:
-        return 0;   // 5A
-    case 176640000:
-        return 1;   // 5B
-    case 178352000:
-        return 2;   // 5C
-    case 180064000:
-        return 3;   // 5D
-    case 181936000:
-        return 4;   // 6A
-    case 183648000:
-        return 5;   // 6B
-    case 185360000:
-        return 6;   // 6C
-    case 187072000:
-        return 7;   // 6D
-    case 188928000:
-        return 8;   // 7A
-    case 190640000:
-        return 9;   // 7B
-    case 192352000:
-        return 10;  // 7C
-    case 194064000:
-        return 11;  // 7D
-    case 195936000:
-        return 12;  // 8A
-    case 197648000:
-        return 13;  // 8B
-    case 199360000:
-        return 14;  // 8C
-    case 201072000:
-        return 15;  // 8D
-    case 202928000:
-        return 16;  // 9A
-    case 204640000:
-        return 17;  // 9B
-    case 206352000:
-        return 18;  // 9C
-    case 208064000:
-        return 19;  // 9D
-    case 209936000:
-        return 20;  // 10A
-    case 211648000:
-        return 21;  // 10B
-    case 213360000:
-        return 22;  // 10C
-    case 215072000:
-        return 24;  // 10D (Shifted because index 23 is interstitial!)
-    case 216928000:
-        return 25;  // 11A
-    case 218640000:
-        return 27;  // 11B (Shifted because index 26 is interstitial!)
-    case 220352000:
-        return 28;  // 11C
-    case 222064000:
-        return 29;  // 11D
-    case 223936000:
-        return 30;  // 12A (Shifted because index 31 is interstitial!)
-    case 225648000:
-        return 32;  // 12B
-    case 227360000:
-        return 33;  // 12C
-    case 229072000:
-        return 34;  // 12D
-    case 230784000:
-        return 35;  // 13A
-    case 232496000:
-        return 36;  // 13B
-    case 234208000:
-        return 37;  // 13C
-    case 235776000:
-        return 38;  // 13D
-    case 237488000:
-        return 39;  // 13E
-    case 239200000:
-        return 40;  // 13F
-    default:
-        return 0;
+    // Official Silicon Labs DAB Ensemble Frequencies (Index 0 to 40)
+    static const uint32_t standard_freqs[] = {
+        174928000, // 0: 5A
+        176640000, // 1: 5B
+        178352000, // 2: 5C
+        180064000, // 3: 5D
+        181936000, // 4: 6A
+        183648000, // 5: 6B
+        185360000, // 6: 6C
+        187072000, // 7: 6D
+        188928000, // 8: 7A
+        190640000, // 9: 7B
+        192352000, // 10: 7C
+        194064000, // 11: 7D
+        195936000, // 12: 8A
+        197648000, // 13: 8B
+        199360000, // 14: 8C
+        201072000, // 15: 8D
+        202928000, // 16: 9A
+        204640000, // 17: 9B
+        206352000, // 18: 9C
+        208064000, // 19: 9D
+        209936000, // 20: 10A
+        210096000, // 21: 10N
+        211648000, // 22: 10B
+        213360000, // 23: 10C
+        215072000, // 24: 10D
+        216928000, // 25: 11A
+        217088000, // 26: 11N
+        218640000, // 27: 11B
+        220352000, // 28: 11C
+        222064000, // 29: 11D
+        223936000, // 30: 12A
+        224096000, // 31: 12N
+        225648000, // 32: 12B
+        227360000, // 33: 12C
+        229072000, // 34: 12D
+        230784000, // 35: 13A
+        232496000, // 36: 13B
+        234208000, // 37: 13C
+        235776000, // 38: 13D
+        237488000, // 39: 13E
+        239200000  // 40: 13F
+    };
+
+    for (uint8_t i = 0; i < 41; i++) {
+        if (standard_freqs[i] == frequency_hz) {
+            return i;
+        }
     }
+
+    return 0; // Fallback
 }
 
 int si468x_set_frequency(uint32_t frequency_hz)
