@@ -298,6 +298,22 @@ static bool test_new_seek_and_telemetry_uninitialized()
     return true;
 }
 
+static bool test_error_definitions()
+{
+    std::cout << "Running test: test_error_definitions..." << std::endl;
+
+    ASSERT_TRUE(SI468X_SUCCESS == 0, "SI468X_SUCCESS must be 0");
+    ASSERT_TRUE(SI468X_ERROR_SPI == -1, "SI468X_ERROR_SPI must be -1");
+    ASSERT_TRUE(SI468X_ERROR_GPIO == -2, "SI468X_ERROR_GPIO must be -2");
+    ASSERT_TRUE(SI468X_ERROR_FIRMWARE == -3, "SI468X_ERROR_FIRMWARE must be -3");
+    ASSERT_TRUE(SI468X_ERROR_BOOT == -4, "SI468X_ERROR_BOOT must be -4");
+    ASSERT_TRUE(SI468X_ERROR_TIMEOUT == -5, "SI468X_ERROR_TIMEOUT must be -5");
+    ASSERT_TRUE(SI468X_ERROR_COMMAND == -6, "SI468X_ERROR_COMMAND must be -6");
+
+    std::cout << "PASS: test_error_definitions" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -314,6 +330,7 @@ int main()
     success &= test_telemetry_mappings();
     success &= test_mot_slideshow_uninitialized();
     success &= test_new_seek_and_telemetry_uninitialized();
+    success &= test_error_definitions();
 
     std::cout << "========================================" << std::endl;
     if (success) {
