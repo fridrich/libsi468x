@@ -30,7 +30,7 @@ static int spi_fd = -1;
 static int sysfs_gpio_pin = -1;
 static int sysfs_ce1_pin = -1;
 static uint32_t active_frequency = 0;
-static int active_audio_mode = 0; // 0 = Analog Only, 1 = I2S Digital
+static int active_audio_mode = 0; // 0 = Analog Only, 1 = I2S Digital, 2 = Simultaneous Analog + I2S
 static int active_volume = 50;    // Standard default volume (0 to 63)
 
 // Global debug logging status flag
@@ -1214,21 +1214,28 @@ int si468x_set_audio_output(int enable_i2s)
         return SI468X_SUCCESS;
     }
 
-    // Set Property 0x0800 (AUDIO_OUT_SEL) to 0x0002 (I2S only) or 0x0001 (Analog Only) in Little-Endian
+    // Set Property 0x0800 (AUDIO_OUT_SEL): 0x0001 (Analog), 0x0002 (I2S), 0x0003 (Simultaneous Analog + I2S)
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
     cmd[2] = 0x00; // Low byte of Property ID 0x0800
     cmd[3] = 0x08; // High byte of Property ID 0x0800
-    cmd[4] = enable_i2s ? 0x02 : 0x01; // Low byte of Value (0x02 or 0x01)
-    cmd[5] = 0x00; // High byte of Value (0x00)
+    
+    uint16_t out_sel = 0x0001;
+    if (enable_i2s == 1) {
+        out_sel = 0x0002;
+    } else if (enable_i2s == 2) {
+        out_sel = 0x0003;
+    }
+    cmd[4] = out_sel & 0xFF;
+    cmd[5] = (out_sel >> 8) & 0xFF;
 
     int ret = send_command(cmd, 6, nullptr, 0);
     if (ret != SI468X_SUCCESS) {
         return ret;
     }
 
-    if (enable_i2s) {
+    if (enable_i2s == 1 || enable_i2s == 2) {
         // Set Property 0x0200 (DIGITAL_IO_OUTPUT_FORMAT) to 0xC000 in Little-Endian (I2S Master)
         cmd[0] = SI468X_CMD_SET_PROPERTY;
         cmd[1] = 0x00;
