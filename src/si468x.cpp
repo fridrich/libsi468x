@@ -1164,6 +1164,52 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
     return services_count;
 }
 
+int si468x_get_service_info(uint32_t service_id, si468x_service_info_t* info)
+{
+    if (!info) {
+        return -1;
+    }
+
+    // Command 0xC0 (DAB_GET_SERVICE_INFO)
+    uint8_t cmd[8];
+    cmd[0] = 0xC0; // Opcode
+    cmd[1] = 0x00; // INTACK
+    cmd[2] = 0x00; // Reserved
+    cmd[3] = 0x00; // Reserved
+    cmd[4] = service_id & 0xFF;         // Service ID (Little-Endian)
+    cmd[5] = (service_id >> 8) & 0xFF;  // Service ID
+    cmd[6] = (service_id >> 16) & 0xFF; // Service ID
+    cmd[7] = (service_id >> 24) & 0xFF; // Service ID
+
+    uint8_t resp[26];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 8, resp, 26) != SI468X_SUCCESS) {
+        return SI468X_ERROR_SPI;
+    }
+
+    // Check validity flag (Bit 7 of resp[1])
+    if ((resp[1] & 0x80) != 0) {
+        // Extract Label (16 bytes at resp[9..24])
+        char raw_label[17];
+        std::memset(raw_label, 0, sizeof(raw_label));
+        std::memcpy(raw_label, &resp[9], 16);
+
+        // Extract PTY (bits 1-5 of resp[5])
+        info->pty = (resp[5] >> 1) & 0x1F;
+        info->charset = resp[7];
+        info->ecc = resp[8];
+
+        decode_dab_string_to_utf8((uint8_t*)raw_label, 16, info->charset, info->label, sizeof(info->label));
+
+        return SI468X_SUCCESS;
+    }
+
+    // Invalid response or service not found
+    std::memset(info, 0, sizeof(si468x_service_info_t));
+    return -2;
+}
+
 int si468x_get_signal_status(si468x_signal_status_t* status)
 {
     if (!status) {
