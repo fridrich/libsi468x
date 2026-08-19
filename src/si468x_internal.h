@@ -44,6 +44,7 @@ extern "C" {
 /* DAB Commands */
 #define SI468X_CMD_DAB_TUNE_FREQ             0xB0
 #define SI468X_CMD_DAB_DIGRAD_STATUS         0xB2
+#define SI468X_CMD_DAB_GET_EVENT_STATUS      0xB3
 #define SI468X_CMD_DAB_SET_FREQ_LIST         0xB8
 #define SI468X_CMD_DAB_GET_COMPONENT_INFO    0xBB
 #define SI468X_CMD_DAB_GET_TIME              0xBC
