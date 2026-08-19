@@ -32,6 +32,7 @@ extern "C" {
 #define SI468X_CMD_FM_RDS_STATUS             0x34
 #define SI468X_CMD_HD_GET_STATION_INFO       0x94
 #define SI468X_CMD_HD_GET_PSD_DECODE         0x95
+#define SI468X_CMD_HD_GET_ALERT_MSG          0x96
 
 /* Digital Service Commands */
 #define SI468X_CMD_GET_DIGITAL_SERVICE_LIST  0x80

@@ -2046,3 +2046,31 @@ int si468x_dab_get_subchan_info(uint32_t service_id, uint32_t component_id, si46
 
     return SI468X_SUCCESS;
 }
+
+int si468x_fmhd_get_alert_message(char* alert_text, int max_len)
+{
+    if (!alert_text || max_len <= 0) {
+        return -1;
+    }
+
+    // Write 2-byte command for HD_GET_ALERT_MSG (Opcode 0x96)
+    uint8_t cmd[2] = { SI468X_CMD_HD_GET_ALERT_MSG, 0x00 };
+    uint8_t resp[256];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 2, resp, 256) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    uint16_t length = resp[4] | ((uint16_t)resp[5] << 8);
+    if (length == 0) {
+        alert_text[0] = '\0';
+        return 0;
+    }
+
+    int copy_len = (length < max_len - 1) ? length : max_len - 1;
+    std::memcpy(alert_text, &resp[6], copy_len);
+    alert_text[copy_len] = '\0';
+
+    return 1;
+}

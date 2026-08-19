@@ -468,6 +468,14 @@ int si468x_fmhd_get_psd_text(int program, int field, char* out_text, int max_len
  */
 int si468x_fmhd_get_station_info(int info_select, char* out_text, int max_len);
 
+/**
+ * @brief Retrieve current active HD Radio (FMHD) emergency alert message text.
+ * @param alert_text Destination string buffer to populate.
+ * @param max_len Size of the destination buffer.
+ * @return 1 if newly updated alert text is copied, 0 if no active alerts, or a negative error code on failure.
+ */
+int si468x_fmhd_get_alert_message(char* alert_text, int max_len);
+
 #ifdef __cplusplus
 }
 #endif
