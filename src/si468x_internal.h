@@ -27,6 +27,7 @@ extern "C" {
 
 /* FM/FMHD Commands */
 #define SI468X_CMD_FM_TUNE_FREQ              0x30
+#define SI468X_CMD_FM_SEEK_START             0x31
 #define SI468X_CMD_FM_RSQ_STATUS             0x32
 #define SI468X_CMD_FM_RDS_STATUS             0x34
 

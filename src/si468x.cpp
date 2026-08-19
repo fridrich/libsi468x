@@ -1591,8 +1591,8 @@ int si468x_set_frequency_table(const uint32_t* freqs, int count)
 
 int si468x_tune_fm(uint32_t frequency_khz)
 {
-    // Command size = 7 bytes
-    uint8_t cmd[7] = { 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+    // Command size = 7 bytes. Set Byte 1 to 0x00 (Analog Only) and ANTCAP (Byte 4-5) to 0x0000 (Auto)
+    uint8_t cmd[7] = { SI468X_CMD_FM_TUNE_FREQ, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
     uint32_t freq_10khz = frequency_khz / 10;
     cmd[2] = freq_10khz & 0xFF;
     cmd[3] = (freq_10khz >> 8) & 0xFF;
@@ -1772,26 +1772,31 @@ int si468x_get_time(si468x_time_t* time)
     return SI468X_SUCCESS;
     }
 
-    int si468x_get_audio_info(si468x_audio_info_t* info)
-    {
+int si468x_get_audio_info(si468x_audio_info_t* info)
+{
     if (!info) {
         return -1;
     }
 
     // Write 2-byte command for DAB_GET_AUDIO_INFO (Opcode 0xBD, INTACK = 0x00)
     uint8_t cmd[2] = { 0xBD, 0x00 };
-    uint8_t resp[16];
+    uint8_t resp[10];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 2, resp, 16) != SI468X_SUCCESS) {
+    if (send_command(cmd, 2, resp, 10) != SI468X_SUCCESS) {
         return -1;
     }
 
-    // Check Bit 7 of Parameter Byte 1 (resp[5] in full-duplex) to see if audio info is valid
-    if (resp[1] == 0x80) { // The SI4684 codebase expects SPIbuffer[1] == 0x80 for valid audio
-        info->bitrate = resp[5] | ((uint16_t)resp[6] << 8);
-        info->sample_rate = resp[7] | ((uint16_t)resp[8] << 8);
-        info->audio_mode = resp[9] & 0x03;
+    // Extract values matching reference offsets (Parameter Byte 0 starts at resp[4])
+    uint16_t bitrate = resp[4] | ((uint16_t)resp[5] << 8);
+    uint16_t sample_rate = resp[6] | ((uint16_t)resp[7] << 8);
+    uint8_t audio_mode = resp[8] & 0x03;
+
+    // A non-zero bitrate indicates the audio stream info is valid and actively locked
+    if (bitrate > 0) {
+        info->bitrate = bitrate;
+        info->sample_rate = sample_rate;
+        info->audio_mode = audio_mode;
         return SI468X_SUCCESS;
     }
 
@@ -1800,7 +1805,7 @@ int si468x_get_time(si468x_time_t* time)
     info->sample_rate = 0;
     info->audio_mode = 0;
     return SI468X_SUCCESS; // Not an SPI error, just not playing
-    }
+}
 
     int si468x_get_event_status(si468x_event_status_t* status)
 {
@@ -1876,4 +1881,105 @@ const char* si468x_get_service_type_text(uint8_t type)
         return service_type_text[type];
     }
     return "";
+}
+
+int si468x_fm_seek_start(int seek_up, int wrap)
+{
+    // Build 6-byte packet for FM_SEEK_START (Opcode 0x31)
+    uint8_t cmd[6];
+    cmd[0] = SI468X_CMD_FM_SEEK_START;
+    cmd[1] = 0x00; // Tune Mode: Analog Only (Seek is only supported on analog carriers in hardware)
+    cmd[2] = ((seek_up & 0x01) << 1) | (wrap & 0x01);
+    cmd[3] = 0x00;
+    cmd[4] = 0x01; // ANTCAP Low byte (Set to 0x0001 for peak RF performance)
+    cmd[5] = 0x00; // ANTCAP High byte
+
+    if (send_command(cmd, 6, nullptr, 0, 5000) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    return SI468X_SUCCESS;
+}
+
+int si468x_dab_get_announcement_support(uint32_t service_id, uint32_t component_id, uint16_t* asw_flags)
+{
+    if (!asw_flags) {
+        return -1;
+    }
+
+    // Write 8-byte command for DAB_GET_ANNOUNCEMENT_SUPPORT_INFO (Opcode 0xB5)
+    uint8_t cmd[8] = {
+        0xB5, 0x00, 0x00, 0x00,
+        (uint8_t)(service_id & 0xFF),
+        (uint8_t)((service_id >> 8) & 0xFF),
+        (uint8_t)((service_id >> 16) & 0xFF),
+        (uint8_t)((service_id >> 24) & 0xFF)
+    };
+
+    uint8_t resp[12];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 8, resp, 12) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    // ASU is located at Parameter Byte 2 and 3 (resp[6..7])
+    *asw_flags = resp[6] | ((uint16_t)resp[7] << 8);
+    return SI468X_SUCCESS;
+}
+
+int si468x_dab_get_announcement_info(int buf_empty, uint32_t* service_id, uint32_t* component_id, uint16_t* asw_flags)
+{
+    // Write 1-byte command for DAB_GET_ANNOUNCEMENT_INFO (Opcode 0xB6) - no arguments
+    uint8_t cmd[1] = { 0xB6 };
+    uint8_t resp[16];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 1, resp, 16) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    // Extract fields matching standard offsets (ASW at resp[8..9], ID1/SId at resp[10..11], ID2/CompId at resp[12..13])
+    if (service_id) {
+        *service_id = resp[10] | ((uint32_t)resp[11] << 8);
+    }
+    if (component_id) {
+        *component_id = resp[12] | ((uint32_t)resp[13] << 8);
+    }
+    if (asw_flags) {
+        *asw_flags = resp[8] | ((uint16_t)resp[9] << 8);
+    }
+
+    return SI468X_SUCCESS;
+}
+
+int si468x_dab_get_service_linking(uint32_t service_id, uint8_t* link_info, int max_len)
+{
+    if (!link_info || max_len <= 0) {
+        return -1;
+    }
+
+    // Write 8-byte command for DAB_GET_SERVICE_LINKING_INFO (Opcode 0xB7)
+    uint8_t cmd[8];
+    cmd[0] = 0xB7;
+    cmd[1] = 0x00; // Filter flags
+    cmd[2] = 0x00; // Enable flags
+    cmd[3] = 0x00; // Reserved
+    cmd[4] = service_id & 0xFF;
+    cmd[5] = (service_id >> 8) & 0xFF;
+    cmd[6] = (service_id >> 16) & 0xFF;
+    cmd[7] = (service_id >> 24) & 0xFF;
+
+    uint8_t resp[256];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 8, resp, 256) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    uint16_t data_size = resp[4] | ((uint16_t)resp[5] << 8);
+    int copy_len = (data_size < max_len) ? data_size : max_len;
+    std::memcpy(link_info, &resp[6], copy_len);
+
+    return copy_len;
 }
