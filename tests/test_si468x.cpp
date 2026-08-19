@@ -259,6 +259,11 @@ static bool test_new_seek_and_telemetry_uninitialized()
     int ret_alert = si468x_fmhd_get_alert_message(alert_buf, sizeof(alert_buf));
     ASSERT_TRUE(ret_alert == -1, "si468x_fmhd_get_alert_message must fail safely when uninitialized");
 
+    // Verify DAB frequency info retrieval fails safely
+    si468x_freq_element_t freq_el;
+    int ret_freq = si468x_dab_get_freq_info(&freq_el, 1);
+    ASSERT_TRUE(ret_freq == -1, "si468x_dab_get_freq_info must fail safely when uninitialized");
+
     std::cout << "PASS: test_new_seek_and_telemetry_uninitialized" << std::endl;
     return true;
 }

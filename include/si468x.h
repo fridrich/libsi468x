@@ -166,6 +166,18 @@ typedef struct {
 } si468x_subchan_info_t;
 
 /**
+ * @brief Structure representing detailed DAB multiplex frequency allocation elements.
+ */
+typedef struct {
+    uint32_t id;             /**< Frequency ensemble ID. */
+    uint32_t frequency_hz;   /**< Alternate ensemble frequency in Hz. */
+    uint8_t freq_index;      /**< Alternate frequency index. */
+    uint8_t rnm;             /**< Reconfiguration Network Marker. */
+    uint8_t continuity;      /**< Signal transmission continuity. */
+    uint8_t control;         /**< Signal control flag. */
+} si468x_freq_element_t;
+
+/**
  * @brief Initialize the driver library, perform cold reset, and boot the co-processor.
  *
  * This function exports and configures the reset GPIO, opens the SPI bus, performs a
@@ -448,6 +460,14 @@ int si468x_dab_get_service_linking(uint32_t service_id, uint8_t* link_info, int 
  * @return SI468X_SUCCESS on success, or a negative error code on failure.
  */
 int si468x_dab_get_subchan_info(uint32_t service_id, uint32_t component_id, si468x_subchan_info_t* info);
+
+/**
+ * @brief Retrieve detailed DAB multiplex frequency allocation elements (alternate/handover frequencies).
+ * @param elements Pre-allocated array of si468x_freq_element_t structs to populate.
+ * @param max_elements Size of the pre-allocated array.
+ * @return Number of frequency elements successfully copied, or a negative error code on failure.
+ */
+int si468x_dab_get_freq_info(si468x_freq_element_t* elements, int max_elements);
 
 /**
  * @brief Retrieve real-time Program Service Data (PSD) track metadata (Title, Artist, Album, Genre) for FMHD.
