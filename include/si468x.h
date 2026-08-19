@@ -234,6 +234,16 @@ int si468x_set_audio_output(int enable_i2s);
 int si468x_get_ensemble_info(char* label, uint16_t* ueid);
 
 /**
+ * @brief Structure representing an assembled MOT Slideshow image (JPEG/PNG).
+ */
+typedef struct {
+    const uint8_t* image_data; /**< Pointer to the assembled image byte buffer. */
+    uint32_t image_size;       /**< Total size of the assembled image in bytes. */
+    uint16_t transport_id;     /**< Transport ID (TID) of the current slideshow object. */
+    int is_new;                /**< 1 if this is a newly completed frame, 0 otherwise. */
+} si468x_mot_slideshow_t;
+
+/**
  * @brief Query the co-processor to retrieve the current dynamically synced UTC ensemble time.
  * @param time Pointer to target si468x_time_t struct to populate.
  * @return SI468X_SUCCESS on success, or a negative error code on failure.
@@ -273,6 +283,18 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
  * @return 1 if a newly completed DLS text frame is assembled, 0 if unchanged, or negative error.
  */
 int si468x_get_dls_text(char* out_text, int max_len);
+
+/**
+ * @brief Poll and assemble MOT Slideshow image segments from the active data channel.
+ *
+ * This function incrementally collects segment frames broadcasted over the air. It must be
+ * polled continuously. It returns 1 strictly once a complete, hole-free JPEG or PNG image
+ * is fully assembled in its internal buffer.
+ *
+ * @param slideshow Pointer to the target si468x_mot_slideshow_t struct to populate.
+ * @return 1 if a complete new image is assembled, 0 if compiling/unchanged, or negative error.
+ */
+int si468x_get_mot_slideshow(si468x_mot_slideshow_t* slideshow);
 
 /**
  * @brief Query the secure boot ROM for part number, chip ID, and hardware revision info.
