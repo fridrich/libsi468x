@@ -1307,13 +1307,168 @@ int si468x_get_dls_text(char* out_text, int max_len)
 
     if (current_dls != last_dls_text) {
         last_dls_text = current_dls;
-        return 1; // New/updated DLS text available!
+        return 1; // New text frame assembled!
     }
 
-    return 0; // DLS has not changed
-}
+    return 0; // No change
+    }
 
-int si468x_get_chip_info(si468x_chip_info_t* info)
+    // MOT Slideshow static state
+    #define SLS_MAX_SEGMENTS  80
+    #define SLS_MAX_SEG_SIZE  512
+    static uint8_t mot_segment_buf[SLS_MAX_SEGMENTS * SLS_MAX_SEG_SIZE];
+    static uint16_t mot_segment_len[SLS_MAX_SEGMENTS];
+    static uint8_t mot_segment_bitmap[32]; // 256 bits max
+    static uint16_t mot_transport_id = 0;
+    static uint32_t mot_byte_counter = 0;
+    static uint32_t mot_expected_length = 0;
+    static uint8_t mot_highest_segment = 0;
+    static uint8_t mot_total_segments = 0;
+    static uint32_t mot_last_activity = 0;
+
+    static void clear_mot_buffer() {
+    std::memset(mot_segment_len, 0, sizeof(mot_segment_len));
+    std::memset(mot_segment_bitmap, 0, sizeof(mot_segment_bitmap));
+    mot_transport_id = 0;
+    mot_byte_counter = 0;
+    mot_highest_segment = 0;
+    mot_total_segments = 0;
+    mot_expected_length = 0;
+    }
+
+    static bool all_mot_segments_received() {
+    uint8_t segments_to_check = mot_total_segments;
+    if (segments_to_check == 0) {
+        segments_to_check = mot_highest_segment + 1;
+    }
+    if (segments_to_check == 0) return false;
+
+    for (uint8_t i = 0; i < segments_to_check; i++) {
+        uint8_t byte_idx = i / 8;
+        uint8_t bit_idx = i % 8;
+        if (!(mot_segment_bitmap[byte_idx] & (1 << bit_idx))) {
+            return false;
+        }
+    }
+    return true;
+    }
+
+    int si468x_get_mot_slideshow(si468x_mot_slideshow_t* slideshow)
+    {
+    if (!slideshow) {
+        return -1;
+    }
+
+    slideshow->is_new = 0;
+
+    // Timeout cleanup
+    uint32_t now = (uint32_t)time(NULL);
+    if (mot_transport_id != 0 && mot_last_activity > 0 && (now - mot_last_activity) > 30) {
+        clear_mot_buffer();
+    }
+
+    // Polling opcode 0x84, param 0x01
+    uint8_t cmd[2] = { 0x84, 0x01 };
+    std::vector<uint8_t> resp(2073, 0x00);
+
+    if (send_command(cmd, 2, resp.data(), 2073) != SI468X_SUCCESS) {
+        return -2;
+    }
+
+    uint16_t byte_count = resp[19] | ((uint16_t)resp[20] << 8);
+    if (byte_count == 0) {
+        return 0;
+    }
+
+    uint8_t group_type = (resp[8] >> 6) & 0x03;
+
+    // Is it MOT Header?
+    if (group_type == 0x01 && resp[27] == 0x80 && resp[28] == 0x00 && resp[29] == 0x12 && byte_count < 200) {
+        uint16_t tid = (resp[30] << 8) | resp[31];
+        uint32_t new_len = (((uint32_t)resp[35] << 12) | ((uint32_t)resp[36] << 4) | ((uint32_t)resp[37] >> 4)) & 0x00FFFF;
+
+        if (new_len > 0) {
+            if (mot_expected_length == 0 || (mot_transport_id != 0 && tid != mot_transport_id)) {
+                clear_mot_buffer();
+                mot_expected_length = new_len;
+                mot_transport_id = tid;
+            }
+            if (mot_byte_counter >= mot_expected_length && all_mot_segments_received()) {
+                mot_total_segments = mot_highest_segment + 1;
+                slideshow->image_data = mot_segment_buf;
+                slideshow->image_size = mot_expected_length;
+                slideshow->transport_id = mot_transport_id;
+                slideshow->is_new = 1;
+                return 1;
+            }
+        }
+    }
+    // Is it MOT Body Segment?
+    else if (group_type == 0x01 && (resp[27] == 0x00 || resp[27] == 0x80) && resp[29] == 0x12) {
+        uint16_t tid = (resp[30] << 8) | resp[31];
+        uint8_t seg_num = resp[28];
+
+        if (mot_transport_id == 0) {
+            mot_transport_id = tid;
+        }
+
+        if (tid == mot_transport_id) {
+            uint8_t byte_idx = seg_num / 8;
+            uint8_t bit_idx = seg_num % 8;
+
+            if (!(mot_segment_bitmap[byte_idx] & (1 << bit_idx))) {
+                uint16_t data_len = byte_count - 11;
+                if (seg_num < SLS_MAX_SEGMENTS && data_len <= SLS_MAX_SEG_SIZE) {
+                    std::memcpy(&mot_segment_buf[seg_num * SLS_MAX_SEG_SIZE], &resp[34], data_len);
+                    mot_segment_len[seg_num] = data_len;
+                    mot_segment_bitmap[byte_idx] |= (1 << bit_idx);
+                    mot_byte_counter += data_len;
+                    if (seg_num > mot_highest_segment) {
+                        mot_highest_segment = seg_num;
+                    }
+                    mot_last_activity = now;
+
+                    if (mot_expected_length > 0 && mot_byte_counter >= mot_expected_length && all_mot_segments_received()) {
+                        mot_total_segments = mot_highest_segment + 1;
+                        slideshow->image_data = mot_segment_buf;
+                        slideshow->image_size = mot_expected_length;
+                        slideshow->transport_id = mot_transport_id;
+                        slideshow->is_new = 1;
+                        return 1;
+                    }
+                }
+            } else if (seg_num == 0 && mot_expected_length == 0 && mot_highest_segment > 0) {
+                if (all_mot_segments_received()) {
+                    mot_total_segments = mot_highest_segment + 1;
+
+                    // We don't have the exact header length, but we have all segments. Sum lengths.
+                    uint32_t calc_len = 0;
+                    for (int i=0; i<mot_total_segments; i++) calc_len += mot_segment_len[i];
+
+                    // To keep it clean and sequential like SI4684-DAB-Receiver, we compact the buffer
+                    // so there are no 512-byte padding gaps between variable length segments!
+                    uint32_t cursor = 0;
+                    for (int i = 0; i < mot_total_segments; i++) {
+                        if (cursor != i * SLS_MAX_SEG_SIZE) {
+                            std::memmove(&mot_segment_buf[cursor], &mot_segment_buf[i * SLS_MAX_SEG_SIZE], mot_segment_len[i]);
+                        }
+                        cursor += mot_segment_len[i];
+                    }
+
+                    slideshow->image_data = mot_segment_buf;
+                    slideshow->image_size = calc_len;
+                    slideshow->transport_id = mot_transport_id;
+                    slideshow->is_new = 1;
+                    return 1;
+                }
+            }
+        }
+    }
+
+    return 0;
+    }
+
+    int si468x_get_chip_info(si468x_chip_info_t* info)
 {
     if (!info) {
         return -1;

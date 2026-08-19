@@ -191,6 +191,21 @@ static bool test_telemetry_mappings()
     return true;
 }
 
+static bool test_mot_slideshow_uninitialized()
+{
+    std::cout << "Running test: test_mot_slideshow_uninitialized..." << std::endl;
+
+    si468x_mot_slideshow_t slide;
+    int ret = si468x_get_mot_slideshow(&slide);
+    ASSERT_TRUE(ret == -2, "si468x_get_mot_slideshow must fail safely when uninitialized");
+
+    int ret_null = si468x_get_mot_slideshow(nullptr);
+    ASSERT_TRUE(ret_null == -1, "si468x_get_mot_slideshow must fail gracefully with null pointer");
+
+    std::cout << "PASS: test_mot_slideshow_uninitialized" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -205,6 +220,7 @@ int main()
     success &= test_new_fm_rds_api_uninitialized();
     success &= test_audio_output_modes();
     success &= test_telemetry_mappings();
+    success &= test_mot_slideshow_uninitialized();
 
     std::cout << "========================================" << std::endl;
     if (success) {
