@@ -274,6 +274,11 @@ static bool test_new_seek_and_telemetry_uninitialized()
     int ret_dab_ev = si468x_dab_get_event_status(&dab_ev_status);
     ASSERT_TRUE(ret_dab_ev == -1, "si468x_dab_get_event_status must fail safely when uninitialized");
 
+    // Verify DAB antenna calibration fails safely
+    uint16_t peak_antcap = 0;
+    int ret_calib = si468x_dab_calibrate_antenna(223936000, &peak_antcap);
+    ASSERT_TRUE(ret_calib == -1, "si468x_dab_calibrate_antenna must fail safely when uninitialized");
+
     std::cout << "PASS: test_new_seek_and_telemetry_uninitialized" << std::endl;
     return true;
 }

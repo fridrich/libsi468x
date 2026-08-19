@@ -2141,3 +2141,61 @@ int si468x_dab_get_event_status(si468x_dab_event_status_t* status)
 
     return SI468X_SUCCESS;
 }
+
+int si468x_dab_calibrate_antenna(uint32_t frequency_hz, uint16_t* peak_antcap)
+{
+    if (!peak_antcap) {
+        return -1;
+    }
+
+    if (spi_fd < 0) {
+        return -1;
+    }
+
+    uint8_t freq_index = si468x_get_freq_index(frequency_hz);
+    uint16_t optimal_antcap = 0;
+    int32_t peak_rssi = -1000;
+
+    // Sweep ANTCAP from 1 to 128 (max capacitor index)
+    for (uint16_t antcap = 1; antcap <= 128; antcap++) {
+        // Build DAB_TUNE_FREQ command with custom antcap
+        uint8_t cmd[6];
+        cmd[0] = SI468X_CMD_DAB_TUNE_FREQ;
+        cmd[1] = 0x00; // Injection Auto
+        cmd[2] = freq_index;
+        cmd[3] = 0x00;
+        cmd[4] = antcap & 0xFF;
+        cmd[5] = (antcap >> 8) & 0xFF;
+
+        if (send_command(cmd, 6, nullptr, 0, 1000) != SI468X_SUCCESS) {
+            continue;
+        }
+
+        // Wait 50ms for lock
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        // Read RSSI 5 times and average
+        int32_t rssi_sum = 0;
+        int success_reads = 0;
+        
+        for (int loop = 0; loop < 5; loop++) {
+            si468x_signal_status_t status;
+            if (si468x_get_signal_status(&status) == SI468X_SUCCESS) {
+                rssi_sum += status.rssi;
+                success_reads++;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        if (success_reads > 0) {
+            int32_t avg_rssi = rssi_sum / success_reads;
+            if (avg_rssi > peak_rssi) {
+                peak_rssi = avg_rssi;
+                optimal_antcap = antcap;
+            }
+        }
+    }
+
+    *peak_antcap = optimal_antcap;
+    return SI468X_SUCCESS;
+}
