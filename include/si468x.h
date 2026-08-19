@@ -94,6 +94,16 @@ typedef struct {
 } si468x_service_t;
 
 /**
+ * @brief Structure representing detailed metadata for a specific DAB service (Opcode 0xC0).
+ */
+typedef struct {
+    uint8_t pty;                /**< Program Type (e.g., News, Pop Music). Range 0-31. */
+    uint8_t ecc;                /**< Extended Country Code. */
+    char label[17];             /**< 16-character full service name (null-terminated). */
+    uint8_t charset;            /**< Character Set Identifier (e.g., 0 for EBU Latin, 15 for UTF-8). */
+} si468x_service_info_t;
+
+/**
  * @brief Structure representing digital radio signal strength and quality metrics.
  */
 typedef struct {
@@ -219,6 +229,14 @@ int si468x_set_volume(uint8_t volume);
  * @return Number of service records successfully copied, or negative error code on failure.
  */
 int si468x_get_service_list(si468x_service_t* list, int max_services);
+
+/**
+ * @brief Retrieve detailed metadata (PTY, ECC, Label) for a specific digital service.
+ * @param service_id Globally unique 32-bit Service ID.
+ * @param info Pointer to target si468x_service_info_t struct to populate.
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_get_service_info(uint32_t service_id, si468x_service_info_t* info);
 
 /**
  * @brief Query the on-chip DSP for digital radio signal metrics.
