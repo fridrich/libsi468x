@@ -269,6 +269,11 @@ static bool test_new_seek_and_telemetry_uninitialized()
     int ret_agc = si468x_get_agc_status(&agc_status);
     ASSERT_TRUE(ret_agc == -1, "si468x_get_agc_status must fail safely when uninitialized");
 
+    // Verify DAB-specific event status fails safely
+    si468x_dab_event_status_t dab_ev_status;
+    int ret_dab_ev = si468x_dab_get_event_status(&dab_ev_status);
+    ASSERT_TRUE(ret_dab_ev == -1, "si468x_dab_get_event_status must fail safely when uninitialized");
+
     std::cout << "PASS: test_new_seek_and_telemetry_uninitialized" << std::endl;
     return true;
 }

@@ -2107,3 +2107,37 @@ int si468x_get_agc_status(si468x_agc_status_t* status)
 
     return SI468X_SUCCESS;
 }
+
+int si468x_dab_get_event_status(si468x_dab_event_status_t* status)
+{
+    if (!status) {
+        return -1;
+    }
+
+    // Write 2-byte command for DAB_GET_EVENT_STATUS (Opcode 0xB3, ACK = 1)
+    uint8_t cmd[2] = { SI468X_CMD_DAB_GET_EVENT_STATUS, 0x01 };
+    uint8_t resp[8];
+    std::memset(resp, 0, sizeof(resp));
+
+    if (send_command(cmd, 2, resp, 8) != SI468X_SUCCESS) {
+        return -1;
+    }
+
+    status->recfg_int = (resp[4] >> 7) & 0x01;
+    status->recfg_warn_int = (resp[4] >> 6) & 0x01;
+    status->anno_int = (resp[4] >> 4) & 0x01;
+    status->oeserv_int = (resp[4] >> 3) & 0x01;
+    status->servlink_int = (resp[4] >> 2) & 0x01;
+    status->freqinfo_int = (resp[4] >> 1) & 0x01;
+    status->svrlist_int = resp[4] & 0x01;
+
+    status->anno_active = (resp[5] >> 4) & 0x01;
+    status->oeserv_active = (resp[5] >> 3) & 0x01;
+    status->servlink_active = (resp[5] >> 2) & 0x01;
+    status->freqinfo_active = (resp[5] >> 1) & 0x01;
+    status->svrlist_active = resp[5] & 0x01;
+
+    status->svrlist_ver = resp[6] | ((uint16_t)resp[7] << 8);
+
+    return SI468X_SUCCESS;
+}

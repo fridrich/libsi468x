@@ -155,6 +155,25 @@ typedef struct {
 } si468x_event_status_t;
 
 /**
+ * @brief Structure representing DAB-specific async event status (Opcode 0xB3).
+ */
+typedef struct {
+    uint8_t recfg_int;       /**< Reconfiguration interrupt flag. */
+    uint8_t recfg_warn_int;  /**< Reconfiguration warning interrupt flag. */
+    uint8_t anno_int;        /**< Announcement interrupt flag. */
+    uint8_t anno_active;     /**< Active announcement status. */
+    uint8_t oeserv_int;      /**< Other Ensemble service list changed interrupt. */
+    uint8_t oeserv_active;   /**< Sibling/Other Ensemble available status. */
+    uint8_t servlink_int;    /**< Service Linking interrupt flag. */
+    uint8_t servlink_active; /**< Alternate Service handover linking active. */
+    uint8_t freqinfo_int;    /**< Frequency info updated interrupt flag. */
+    uint8_t freqinfo_active; /**< Handover/alternative frequencies available. */
+    uint8_t svrlist_int;     /**< Service list database updated interrupt flag. */
+    uint8_t svrlist_active;  /**< Active database service list parsing status. */
+    uint16_t svrlist_ver;    /**< 16-bit Service list database version on-chip. */
+} si468x_dab_event_status_t;
+
+/**
  * @brief Structure representing DAB subchannel layout and capacity allocation details.
  */
 typedef struct {
@@ -477,6 +496,13 @@ int si468x_dab_get_subchan_info(uint32_t service_id, uint32_t component_id, si46
  * @return Number of frequency elements successfully copied, or a negative error code on failure.
  */
 int si468x_dab_get_freq_info(si468x_freq_element_t* elements, int max_elements);
+
+/**
+ * @brief Retrieve detailed, DAB-specific active asynchronous event status flags (reconfigurations, versioning, list updates).
+ * @param status Pointer to target si468x_dab_event_status_t struct to populate.
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_dab_get_event_status(si468x_dab_event_status_t* status);
 
 /**
  * @brief Retrieve real-time Program Service Data (PSD) track metadata (Title, Artist, Album, Genre) for FMHD.
