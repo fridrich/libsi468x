@@ -254,6 +254,11 @@ static bool test_new_seek_and_telemetry_uninitialized()
     int ret_sub = si468x_dab_get_subchan_info(0x12345678, 0x11223344, &sub_info);
     ASSERT_TRUE(ret_sub == -1, "si468x_dab_get_subchan_info must fail safely when uninitialized");
 
+    // Verify FMHD alert message fails safely
+    char alert_buf[128];
+    int ret_alert = si468x_fmhd_get_alert_message(alert_buf, sizeof(alert_buf));
+    ASSERT_TRUE(ret_alert == -1, "si468x_fmhd_get_alert_message must fail safely when uninitialized");
+
     std::cout << "PASS: test_new_seek_and_telemetry_uninitialized" << std::endl;
     return true;
 }
