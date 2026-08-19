@@ -688,7 +688,7 @@ static int si468x_enable_service_data(void)
 {
     uint8_t cmd[6];
 
-    // Set Property 0xB200 to 0x003F (63) to enable PAD/XPAD decoding (Little-Endian)
+    // Set Property 0xB200 to 0x003F (63) (DAB_VALID_RSSI_TIME) (Little-Endian)
     cmd[0] = SI468X_CMD_SET_PROPERTY;
     cmd[1] = 0x00;
     cmd[2] = 0x00; // Low byte of Property 0xB200
@@ -697,32 +697,39 @@ static int si468x_enable_service_data(void)
     cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
 
-    // Set Property 0xB201 to 0x000C (12) (Little-Endian)
+    // Set Property 0xB201 to 0x000C (12) (DAB_VALID_RSSI_THRESHOLD) (Little-Endian)
     cmd[2] = 0x01; // Low byte of Property 0xB201
     cmd[3] = 0xB2; // High byte of Property 0xB201
     cmd[4] = 0x0C; // Low byte of Value (0x0C)
     cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
 
-    // Set Property 0xB202 to 0x07D0 (2000) (Little-Endian)
+    // Set Property 0xB202 to 0x07D0 (2000) (DAB_VALID_ACQ_TIME) (Little-Endian)
     cmd[2] = 0x02; // Low byte of Property 0xB202
     cmd[3] = 0xB2; // High byte of Property 0xB202
     cmd[4] = 0xD0; // Low byte of Value (0xD0)
     cmd[5] = 0x07; // High byte of Value (0x07)
     send_command(cmd, 6, nullptr, 0);
 
-    // Set Property 0xB203 to 0x07D0 (2000) (Little-Endian)
+    // Set Property 0xB203 to 0x07D0 (2000) (DAB_VALID_SYNC_TIME) (Little-Endian)
     cmd[2] = 0x03; // Low byte of Property 0xB203
     cmd[3] = 0xB2; // High byte of Property 0xB203
     cmd[4] = 0xD0; // Low byte of Value (0xD0)
     cmd[5] = 0x07; // High byte of Value (0x07)
     send_command(cmd, 6, nullptr, 0);
 
-    // Set Property 0xB204 to 0x07D0 (2000) (Little-Endian)
+    // Set Property 0xB204 to 0x07D0 (2000) (DAB_VALID_DETECT_TIME) (Little-Endian)
     cmd[2] = 0x04; // Low byte of Property 0xB204
     cmd[3] = 0xB2; // High byte of Property 0xB204
     cmd[4] = 0xD0; // Low byte of Value (0xD0)
     cmd[5] = 0x07; // High byte of Value (0x07)
+    send_command(cmd, 6, nullptr, 0);
+
+    // Set Property 0xB400 to 0x003F (63) (DAB_XPAD_ENABLE: Enable full background PAD/XPAD decoding including DLS and Slideshow) (Little-Endian)
+    cmd[2] = 0x00; // Low byte of Property 0xB400
+    cmd[3] = 0xB4; // High byte of Property 0xB400
+    cmd[4] = 0x3F; // Low byte of Value (0x3F)
+    cmd[5] = 0x00; // High byte of Value (0x00)
     send_command(cmd, 6, nullptr, 0);
 
     return SI468X_SUCCESS;
