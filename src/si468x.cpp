@@ -1534,8 +1534,8 @@ int si468x_set_frequency_table(const uint32_t* freqs, int count)
 
 int si468x_tune_fm(uint32_t frequency_khz)
 {
-    // Command size = 7 bytes
-    uint8_t cmd[7] = { 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+    // Command size = 7 bytes. Set Byte 1 to 0x08 (Hybrid Tune Mode) and ANTCAP (Byte 4) to 0x01 for peak RF performance
+    uint8_t cmd[7] = { SI468X_CMD_FM_TUNE_FREQ, 0x08, 0x00, 0x00, 0x01, 0x00, 0x00 };
     uint32_t freq_10khz = frequency_khz / 10;
     cmd[2] = freq_10khz & 0xFF;
     cmd[3] = (freq_10khz >> 8) & 0xFF;
