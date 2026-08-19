@@ -279,6 +279,11 @@ static bool test_new_seek_and_telemetry_uninitialized()
     int ret_calib = si468x_dab_calibrate_antenna(223936000, &peak_antcap);
     ASSERT_TRUE(ret_calib == -1, "si468x_dab_calibrate_antenna must fail safely when uninitialized");
 
+    // Verify DAB other ensemble info retrieval fails safely
+    uint16_t oe_eids[8];
+    int ret_oe = si468x_dab_get_other_ensemble_info(0x12345678, oe_eids, 8);
+    ASSERT_TRUE(ret_oe == -1, "si468x_dab_get_other_ensemble_info must fail safely when uninitialized");
+
     std::cout << "PASS: test_new_seek_and_telemetry_uninitialized" << std::endl;
     return true;
 }
