@@ -73,6 +73,15 @@ extern "C" {
 /** @} */
 
 /**
+ * @name FM Configuration Properties
+ * @{
+ */
+#define SI468X_PROP_FM_SEEK_FREQUENCY_SPACING 0x3102 /**< Set frequency spacing in multiples of 10 kHz. */
+#define SI468X_PROP_FM_VALID_RSSI_THRESHOLD   0x3202 /**< Set validation RSSI threshold. */
+#define SI468X_PROP_FM_VALID_SNR_THRESHOLD    0x3204 /**< Set validation SNR threshold. */
+/** @} */
+
+/**
  * @brief Structure containing raw chip part revision and firmware specifications.
  */
 typedef struct {
@@ -351,6 +360,14 @@ int si468x_get_event_status(si468x_event_status_t* status);
 int si468x_set_rds_region(int region);
 
 /**
+ * @brief Write a raw 16-bit property value to a specific on-chip register.
+ * @param property_id The 16-bit Property ID register.
+ * @param value The 16-bit property value.
+ * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ */
+int si468x_set_property(uint16_t property_id, uint16_t value);
+
+/**
  * @brief Retrieve detailed component-level specifications dynamically from the on-chip database.
  * @param service_id Globally unique 32-bit Service ID.
  * @param component_id Globally unique 32-bit Component ID.
@@ -423,6 +440,19 @@ int si468x_get_fm_status(si468x_fm_status_t* status);
  * @return 1 if a complete new RadioText string is assembled, 0 if compiling/unchanged, or negative error.
  */
 int si468x_get_rds_text(char* out_text, int max_len);
+
+/**
+ * @brief Read and assemble the 8-character FM RDS Program Service (PS) station name.
+ *
+ * This function extracts Group Type 0 (0A/0B) packets from the RDS FIFO queue and
+ * compiles them into an 8-character station name (PS). It returns 1 when a new
+ * station name has been successfully received and changed.
+ *
+ * @param out_name Pre-allocated destination buffer (at least 9 bytes recommended).
+ * @param max_len Size of the destination buffer.
+ * @return 1 if a new station name is received, 0 if unchanged, or negative error.
+ */
+int si468x_get_rds_station_name(char* out_name, int max_len);
 
 /**
  * @brief Map DAB protection level index to standard string label.
