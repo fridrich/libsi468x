@@ -58,66 +58,97 @@ int main(int argc, char* argv[])
                   << " | Patch: " << (info.patch_version >> 8) << "." << (info.patch_version & 0xFF) << std::endl;
     }
     std::cout << "--------------------------------------------------" << std::endl;
-    std::cout << "Starting full FM band sweep..." << std::endl;
+    std::cout << "Starting autonomous FM seek-driven sweep..." << std::endl;
     std::cout << "--------------------------------------------------" << std::endl;
 
     int total_stations_found = 0;
     int total_rds_decoded = 0;
 
-    // Sweep from 87.5 MHz (87500 kHz) to 108.0 MHz (108000 kHz) in 100 kHz steps
-    for (uint32_t freq_khz = 87500; freq_khz <= 108000; freq_khz += 100) {
-        double mhz = freq_khz / 1000.0;
+    // Start by tuning once to 87.5 MHz (the bottom of the FM band)
+    uint32_t current_freq_khz = 87500;
+    if (si468x_tune_fm(current_freq_khz) != SI468X_SUCCESS) {
+        std::cerr << "Initial tuning failed!" << std::endl;
+        return 1;
+    }
 
-        // Print progress
-        std::cout << "\rScanning: " << std::fixed << std::setprecision(1) << mhz << " MHz... " << std::flush;
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-        if (si468x_tune_fm(freq_khz) != SI468X_SUCCESS) {
-            continue;
+    while (current_freq_khz < 108000) {
+        std::cout << "Seeking for the next active carrier..." << std::flush;
+        
+        // Trigger seek up, wrap around disabled (0)
+        if (si468x_fm_seek_start(1, 0) != SI468X_SUCCESS) {
+            std::cerr << "Seek start failed!" << std::endl;
+            break;
         }
 
-        // Read signal metrics
+        // Wait up to 5 seconds for the seek to complete and frequency to lock
+        auto seek_start_time = std::chrono::steady_clock::now();
+        bool seek_success = false;
         si468x_fm_status_t status;
-        if (si468x_get_fm_status(&status) == SI468X_SUCCESS) {
-            int8_t rssi_signed = (int8_t)status.rssi;
 
-            // Check if active station is found (including strict absolute frequency offset check <= 15 kHz)
-            if (rssi_signed >= rssi_threshold && status.snr >= snr_threshold && std::abs((int)status.freq_offset) <= 15) {
-                total_stations_found++;
-                std::cout << "\n--------------------------------------------------" << std::endl;
-                std::cout << "FOUND: " << std::fixed << std::setprecision(1) << mhz << " MHz" << std::endl;
-                std::cout << "  RSSI:      " << (int)rssi_signed << " dBuV" << std::endl;
-                std::cout << "  SNR:       " << (int)status.snr << " dB" << std::endl;
-                std::cout << "  Offset:    " << (int)status.freq_offset << " kHz" << std::endl;
-                std::cout << "  HD Sync:   " << (status.hd_synced ? "YES" : "NO") << std::endl;
-                std::cout << "  RDS Sync:  " << (status.rds_synced ? "YES" : "NO") << std::endl;
-                std::cout << "  DWELL: Waiting up to 12s to acquire RDS Station Text..." << std::endl;
-
-                // Stop and dwell on this station for up to 12 seconds to acquire RDS text
-                auto dwell_start = std::chrono::steady_clock::now();
-                bool rds_text_acquired = false;
-                char rds_text[65];
-                std::memset(rds_text, 0, sizeof(rds_text));
-
-                while (std::chrono::steady_clock::now() - dwell_start < std::chrono::seconds(12)) {
-                    // Update sync metrics
-                    if (si468x_get_fm_status(&status) == SI468X_SUCCESS && status.rds_synced) {
-                        int updated = si468x_get_rds_text(rds_text, sizeof(rds_text));
-                        if (updated > 0 && std::strlen(rds_text) > 0) {
-                            std::cout << "  -> RDS Text: \"" << rds_text << "\"" << std::endl;
-                            rds_text_acquired = true;
-                            total_rds_decoded++;
-                            break; // Stop dwelling immediately once RDS is decoded successfully
-                        }
-                    }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        while (std::chrono::steady_clock::now() - seek_start_time < std::chrono::seconds(5)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            
+            if (si468x_get_fm_status(&status) == SI468X_SUCCESS) {
+                uint32_t status_khz = status.frequency_hz / 1000;
+                
+                // If the frequency has moved and is valid, seek is complete!
+                if (status_khz > current_freq_khz && status_khz <= 108000) {
+                    current_freq_khz = status_khz;
+                    seek_success = true;
+                    break;
                 }
-
-                if (!rds_text_acquired) {
-                    std::cout << "  -> RDS Text: (No RDS metadata decoded within dwell time)" << std::endl;
+                
+                // If the frequency remained the same and we've waited a bit, it means no more stations
+                if (status_khz == current_freq_khz && std::chrono::steady_clock::now() - seek_start_time > std::chrono::seconds(1)) {
+                    break;
                 }
-                std::cout << "--------------------------------------------------" << std::endl;
             }
         }
+
+        if (!seek_success) {
+            std::cout << "\nSeek finished (reached band limit)." << std::endl;
+            break;
+        }
+
+        double mhz = current_freq_khz / 1000.0;
+        int8_t rssi_signed = (int8_t)status.rssi;
+
+        total_stations_found++;
+        std::cout << "\n--------------------------------------------------" << std::endl;
+        std::cout << "FOUND: " << std::fixed << std::setprecision(1) << mhz << " MHz" << std::endl;
+        std::cout << "  RSSI:      " << (int)rssi_signed << " dBuV" << std::endl;
+        std::cout << "  SNR:       " << (int)status.snr << " dB" << std::endl;
+        std::cout << "  Offset:    " << (int)status.freq_offset << " kHz" << std::endl;
+        std::cout << "  HD Sync:   " << (status.hd_synced ? "YES" : "NO") << std::endl;
+        std::cout << "  RDS Sync:  " << (status.rds_synced ? "YES" : "NO") << std::endl;
+        std::cout << "  DWELL: Waiting up to 12s to acquire RDS Station Text..." << std::endl;
+
+        // Stop and dwell on this station for up to 12 seconds to acquire RDS text
+        auto dwell_start = std::chrono::steady_clock::now();
+        bool rds_text_acquired = false;
+        char rds_text[65];
+        std::memset(rds_text, 0, sizeof(rds_text));
+
+        while (std::chrono::steady_clock::now() - dwell_start < std::chrono::seconds(12)) {
+            // Update sync metrics
+            if (si468x_get_fm_status(&status) == SI468X_SUCCESS && status.rds_synced) {
+                int updated = si468x_get_rds_text(rds_text, sizeof(rds_text));
+                if (updated > 0 && std::strlen(rds_text) > 0) {
+                    std::cout << "  -> RDS Text: \"" << rds_text << "\"" << std::endl;
+                    rds_text_acquired = true;
+                    total_rds_decoded++;
+                    break; // Stop dwelling immediately once RDS is decoded successfully
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        }
+
+        if (!rds_text_acquired) {
+            std::cout << "  -> RDS Text: (No RDS metadata decoded within dwell time)" << std::endl;
+        }
+        std::cout << "--------------------------------------------------" << std::endl;
     }
 
     std::cout << "\rScan Sweep Complete!" << std::endl;
