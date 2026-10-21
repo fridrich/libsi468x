@@ -135,6 +135,10 @@ static bool test_new_fm_rds_api_uninitialized()
     int ret_freq_table_uninit = si468x_set_frequency_table(freqs, 3);
     ASSERT_TRUE(ret_freq_table_uninit == -1, "si468x_set_frequency_table must fail when uninitialized");
 
+    // Failed table upload must not activate it: 5B (not in freqs) still maps via standard table
+    ASSERT_TRUE(si468x_set_frequency(176640000) != SI468X_ERROR_PARAM,
+                "failed si468x_set_frequency_table must not replace standard channel table");
+
     // 3. Verify si468x_tune_fm signature and uninitialized failure
     int ret_tune = si468x_tune_fm(98100);
     ASSERT_TRUE(ret_tune == -1, "si468x_tune_fm must fail safely when uninitialized");
