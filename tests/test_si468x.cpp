@@ -279,6 +279,10 @@ static bool test_new_seek_and_telemetry_uninitialized()
     int ret_calib = si468x_dab_calibrate_antenna(223936000, &peak_antcap);
     ASSERT_TRUE(ret_calib == -1, "si468x_dab_calibrate_antenna must fail safely when uninitialized");
 
+    // Off-table frequency must be rejected, not silently tuned to 5A
+    ASSERT_TRUE(si468x_set_frequency(223000000) == SI468X_ERROR_PARAM,
+                "si468x_set_frequency must reject frequency not in channel table");
+
     // Verify DAB other ensemble info retrieval fails safely
     uint16_t oe_eids[8];
     int ret_oe = si468x_dab_get_other_ensemble_info(0x12345678, oe_eids, 8);
@@ -309,6 +313,7 @@ static bool test_error_definitions()
     ASSERT_TRUE(SI468X_ERROR_BOOT == -4, "SI468X_ERROR_BOOT must be -4");
     ASSERT_TRUE(SI468X_ERROR_TIMEOUT == -5, "SI468X_ERROR_TIMEOUT must be -5");
     ASSERT_TRUE(SI468X_ERROR_COMMAND == -6, "SI468X_ERROR_COMMAND must be -6");
+    ASSERT_TRUE(SI468X_ERROR_PARAM == -7, "SI468X_ERROR_PARAM must be -7");
 
     std::cout << "PASS: test_error_definitions" << std::endl;
     return true;
