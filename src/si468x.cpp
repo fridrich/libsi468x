@@ -608,7 +608,8 @@ int si468x_clear_service_list(void)
 }
 
 /* Map center frequencies (in Hz) to the exact, firmware-defined co-processor channel indices */
-static uint8_t si468x_get_freq_index(uint32_t frequency_hz)
+/* -1 = not in table; never fall back to index 0 (5A) silently */
+static int si468x_get_freq_index(uint32_t frequency_hz)
 {
     if (custom_freq_count > 0) {
         for (int i = 0; i < custom_freq_count; i++) {
@@ -616,7 +617,7 @@ static uint8_t si468x_get_freq_index(uint32_t frequency_hz)
                 return i;
             }
         }
-        return 0;
+        return -1;
     }
 
     // Official Silicon Labs DAB Ensemble Frequencies (Index 0 to 40)
@@ -664,24 +665,27 @@ static uint8_t si468x_get_freq_index(uint32_t frequency_hz)
         239200000  // 40: 13F
     };
 
-    for (uint8_t i = 0; i < 41; i++) {
+    for (int i = 0; i < 41; i++) {
         if (standard_freqs[i] == frequency_hz) {
             return i;
         }
     }
 
-    return 0; // Fallback
+    return -1;
 }
 
 int si468x_set_frequency(uint32_t frequency_hz)
 {
+    // Map the requested frequency (in Hz) to its standard European Frequency Index (0-40) complied with firmware
+    int freq_index = si468x_get_freq_index(frequency_hz);
+    if (freq_index < 0) {
+        return SI468X_ERROR_PARAM;
+    }
+
     active_frequency = frequency_hz;
 
     // Cleanly wipe the on-chip service database list to prevent cross-frequency accumulation
     si468x_clear_service_list();
-
-    // Map the requested frequency (in Hz) to its standard European Frequency Index (0-40) complied with firmware
-    uint8_t freq_index = si468x_get_freq_index(frequency_hz);
 
 
     // Build DAB_TUNE_FREQ packet (must be exactly 6 bytes)
@@ -2307,7 +2311,10 @@ int si468x_dab_calibrate_antenna(uint32_t frequency_hz, uint16_t* peak_antcap)
         return -1;
     }
 
-    uint8_t freq_index = si468x_get_freq_index(frequency_hz);
+    int freq_index = si468x_get_freq_index(frequency_hz);
+    if (freq_index < 0) {
+        return SI468X_ERROR_PARAM;
+    }
     uint16_t optimal_antcap = 0;
     int32_t peak_rssi = -1000;
 
