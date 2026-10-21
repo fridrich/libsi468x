@@ -6,6 +6,7 @@
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <algorithm>
 #include <string>
 #include <chrono>
 #include <thread>
@@ -1604,13 +1605,15 @@ int si468x_set_frequency_table(const uint32_t* freqs, int count)
         cmd[5 + i * 4]     = (f >> 8) & 0xFF;
         cmd[6 + i * 4]     = (f >> 16) & 0xFF;
         cmd[7 + i * 4]     = (f >> 24) & 0xFF;
-        custom_freqs[i] = f;
     }
-    custom_freq_count = count;
 
     if (send_command(cmd.data(), cmd_len, nullptr, 0) != SI468X_SUCCESS) {
         return -1;
     }
+
+    // Commit only after chip accepted it; index lookup must match chip's table
+    std::copy(freqs, freqs + count, custom_freqs);
+    custom_freq_count = count;
     return SI468X_SUCCESS;
 }
 
