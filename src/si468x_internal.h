@@ -9,6 +9,16 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* Debug logging; C++ headers must stay outside extern "C" */
+#ifdef __cplusplus
+#include <iostream>
+#define SI468X_LOG if (si468x_debug_active) std::clog
+#define SI468X_ERR if (si468x_debug_active) std::cerr
+#else
+#define SI468X_LOG if (0)
+#define SI468X_ERR if (0)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -85,20 +95,8 @@ extern "C" {
 /* Helper macros */
 #define SI468X_CTS_MASK                      0x80
 
-// Dynamic diagnostic logging routing overrides
-#ifdef __cplusplus
-#include <iostream>
-extern "C" {
-    extern int si468x_debug_active;
-}
-#define SI468X_LOG if (si468x_debug_active) std::clog
-#define SI468X_ERR if (si468x_debug_active) std::cerr
-#else
-#define SI468X_LOG if (0)
-#define SI468X_ERR if (0)
-#endif
-
 /* Private Internal Helper Functions */
+extern int si468x_debug_active;
 void si468x_decode_short_label(const uint8_t* raw_label, int raw_len, uint16_t char_mask, uint8_t charset, char* short_label, int max_len);
 int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_len, int timeout_ms = 1000);
 
