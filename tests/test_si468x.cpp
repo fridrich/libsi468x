@@ -508,6 +508,14 @@ static bool test_dab_metadata()
     chip.expect(SI468X_CMD_DAB_GET_SERVICE_INFO, sinfo);
     ASSERT_TRUE(si468x_get_service_info(0x43D1, &si) == SI468X_SUCCESS, "service info");
     ASSERT_TRUE(si.charset == 0 && si.pty == 5 && si.ecc == 0xE1, "charset & 0x0F, PTY, ECC");
+    ASSERT_TRUE(si.char_mask == 0 && si.short_label[0] == '\0', "mask 0 -> empty short label");
+
+    // CHAR_ABREV 0xE0C0 at resp[25..26]: chars 0,1,2,8,9 of "RTS Premiere" -> "RTSie"
+    sinfo[25] = 0xC0;
+    sinfo[26] = 0xE0;
+    chip.expect(SI468X_CMD_DAB_GET_SERVICE_INFO, sinfo);
+    ASSERT_TRUE(si468x_get_service_info(0x43D1, &si) == SI468X_SUCCESS && si.char_mask == 0xE0C0, "char_mask LE16");
+    ASSERT_TRUE(std::strcmp(si.short_label, "RTSie") == 0, "short label from mask");
 
     // Service list: header, then one re-read of header + payload
     std::vector<uint8_t> pl = service_list_payload();

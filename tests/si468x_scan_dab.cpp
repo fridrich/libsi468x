@@ -144,32 +144,20 @@ int main(int argc, char** argv)
             std::cout << "      Discovered " << num_services << " active services on Channel " << ch.label << ":" << std::endl;
             std::cout << "    ================================================" << std::endl;
             for (int s = 0; s < num_services; s++) {
-                // Dynamically fetch detailed component info and short label directly from the chip over SPI (Opcode 0xBB)
-                char comp_label[17];
-                char comp_short_label[9];
-                uint8_t subchannel_id = 0;
-                std::memset(comp_label, 0, sizeof(comp_label));
-                std::memset(comp_short_label, 0, sizeof(comp_short_label));
-
-                uint16_t char_mask = 0;
-                int comp_ret = si468x_get_component_info(services[s].service_id, services[s].component_id, comp_label, comp_short_label, &char_mask, &subchannel_id);
+                // Short label: service label + CHAR_ABREV (DAB_GET_SERVICE_INFO); list fallback = first 8 chars
+                si468x_service_info_t sinfo;
+                bool has_short = si468x_get_service_info(services[s].service_id, &sinfo) == SI468X_SUCCESS
+                                 && sinfo.char_mask != 0;
 
                 std::cout << "      " << std::setw(2) << (s + 1) << ". "
-                          << std::left << std::setw(17) << services[s].label;
-
-                if (comp_ret == 0 && std::strlen(comp_short_label) > 0 && comp_short_label[0] != ' ') {
-                    std::cout << " (" << std::left << std::setw(8) << comp_short_label << ") "
-                              << " | SId: 0x" << std::hex << services[s].service_id
-                              << " | CompId: " << std::dec << services[s].component_id
-                              << " | SubChId: " << (int)services[s].subchannel_id
-                              << " | Mask: 0x" << std::hex << std::setw(4) << std::setfill('0') << char_mask << std::dec << std::setfill(' ')
-                              << " | CompLabel: '" << comp_label << "'";
-                }
-                else {
-                    std::cout << " (" << std::left << std::setw(8) << services[s].short_label << ") "
-                              << " | SId: 0x" << std::hex << services[s].service_id
-                              << " | CompId: " << std::dec << services[s].component_id
-                              << " | SubChId: " << (int)services[s].subchannel_id;
+                          << std::left << std::setw(17) << services[s].label
+                          << " (" << std::left << std::setw(8) << (has_short ? sinfo.short_label : services[s].short_label) << ") "
+                          << " | SId: 0x" << std::hex << services[s].service_id
+                          << " | CompId: " << std::dec << services[s].component_id
+                          << " | SubChId: " << (int)services[s].subchannel_id;
+                if (has_short) {
+                    std::cout << " | Mask: 0x" << std::hex << std::setw(4) << std::setfill('0') << sinfo.char_mask
+                              << std::dec << std::setfill(' ');
                 }
                 if (services[s].is_data_service) {
                     std::cout << " | Data (TMID " << (int)services[s].tmid << ", DSCTy " << (int)services[s].audio_type << ")";

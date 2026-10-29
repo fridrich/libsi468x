@@ -1281,6 +1281,8 @@ int si468x_get_service_info(uint32_t service_id, si468x_service_info_t* info)
     info->charset = resp[7] & 0x0F;
     info->ecc = resp[8];
     decode_dab_string_to_utf8(&resp[9], 16, info->charset, info->label, sizeof(info->label));
+    info->char_mask = le16(&resp[25]);
+    si468x_decode_short_label(&resp[9], 16, info->char_mask, info->charset, info->short_label, sizeof(info->short_label));
     return SI468X_SUCCESS;
 }
 

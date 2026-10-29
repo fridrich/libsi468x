@@ -118,8 +118,10 @@ typedef struct {
 typedef struct {
     uint8_t pty;                /**< Program Type (e.g., News, Pop Music). Range 0-31. */
     uint8_t ecc;                /**< Extended Country Code. */
-    char label[17];             /**< 16-character full service name (null-terminated). */
+    char label[49];             /**< 16-character service label as UTF-8 (up to 3 bytes per character), null-terminated. */
     uint8_t charset;            /**< Character Set Identifier (e.g., 0 for EBU Latin, 15 for UTF-8). */
+    uint16_t char_mask;         /**< CHAR_ABREV: bit 15 = 1st label character belongs to the short label. */
+    char short_label[25];       /**< Short label (up to 8 characters, UTF-8) selected by char_mask; empty if mask is 0. */
 } si468x_service_info_t;
 
 /**
