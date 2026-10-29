@@ -1096,9 +1096,9 @@ static int reread(std::vector<uint8_t>& resp, size_t total)
     return read_reply(resp.data(), total);
 }
 
-int si468x_get_ensemble_info(char* label, uint16_t* ueid)
+int si468x_get_ensemble_info(si468x_ensemble_info_t* info)
 {
-    if (!label) {
+    if (!info) {
         return SI468X_ERROR_PARAM;
     }
 
@@ -1110,15 +1110,22 @@ int si468x_get_ensemble_info(char* label, uint16_t* ueid)
     }
 
     // EID resp[5..6], LABEL resp[7..22], ECC resp[23], CHARSET resp[24], CHAR_ABREV resp[25..26]
-    if (ueid) {
-        *ueid = le16(&resp[5]);
-    }
-    decode_dab_string_to_utf8(&resp[7], 16, resp[24] & 0x0F, label, 32);
+    info->eid = le16(&resp[5]);
+    info->ecc = resp[23];
+    info->charset = resp[24] & 0x0F;
+    info->char_mask = le16(&resp[25]);
+    decode_dab_string_to_utf8(&resp[7], 16, info->charset, info->label, sizeof(info->label));
+    si468x_decode_short_label(&resp[7], 16, info->char_mask, info->charset, info->short_label, sizeof(info->short_label));
     return SI468X_SUCCESS;
 }
 
-int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint16_t* out_char_mask, uint8_t* subchannel_id)
+int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, size_t label_len,
+                              char* short_label, size_t short_len, uint16_t* out_char_mask)
 {
+    if (!label || label_len == 0 || (short_label && short_len == 0)) {
+        return SI468X_ERROR_PARAM;
+    }
+
     uint8_t cmd[12] = {
         SI468X_CMD_DAB_GET_COMPONENT_INFO, 0x00, 0x00, 0x00,
         (uint8_t)(service_id & 0xFF),
@@ -1132,6 +1139,7 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
     };
     uint8_t resp[SI468X_REP_COMPONENT_INFO] = {};
 
+    label[0] = '\0';
     int ret = send_command(cmd, 12, resp, sizeof(resp), 1000, SC_ERR_OK);
     if (ret != SI468X_SUCCESS) {
         return ret;
@@ -1140,25 +1148,15 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
         return SI468X_ERROR_NOT_FOUND; // component has no info/label
     }
 
-    // This reply has no SubChId; see si468x_service_t.subchannel_id
-    if (subchannel_id) {
-        *subchannel_id = 0;
-    }
-
     // LANG resp[7], CHARSETID resp[8], LABEL resp[9..24], CHAR_ABREV resp[25..26]
     uint8_t charset = resp[8] & 0x3F;
-    char comp_label[32];
-    decode_dab_string_to_utf8(&resp[9], 16, charset, comp_label, sizeof(comp_label));
-    if (label) {
-        std::strcpy(label, comp_label);
-    }
-
     uint16_t char_mask = le16(&resp[25]);
+    decode_dab_string_to_utf8(&resp[9], 16, charset, label, (int)std::min<size_t>(label_len, 4096));
+    if (short_label) {
+        si468x_decode_short_label(&resp[9], 16, char_mask, charset, short_label, (int)std::min<size_t>(short_len, 4096));
+    }
     if (out_char_mask) {
         *out_char_mask = char_mask;
-    }
-    if (short_label) {
-        si468x_decode_short_label(&resp[9], 16, char_mask, charset, short_label, 17);
     }
     return SI468X_SUCCESS;
 }
@@ -1219,16 +1217,12 @@ int si468x_parse_service_list(const uint8_t* resp, size_t len, si468x_service_t*
             e->num_components = ncomp;
             e->charset = resp[o + 6] & 0x0F;
 
-            char service_label[64];
-            decode_dab_string_to_utf8(&resp[o + 8], 16, e->charset, service_label, sizeof(service_label));
-            std::strncpy(e->label, service_label, 16);
-            e->label[16] = '\0';
+            decode_dab_string_to_utf8(&resp[o + 8], 16, e->charset, e->label, sizeof(e->label));
 
-            // List has no CHAR_ABREV: first 8 chars, trailing spaces stripped
-            std::strncpy(e->short_label, service_label, 8);
-            e->short_label[8] = '\0';
-            for (int n = 7; n >= 0 && (e->short_label[n] == ' ' || e->short_label[n] == '\0'); n--) {
-                e->short_label[n] = '\0';
+            // List has no CHAR_ABREV: first 8 characters, trailing spaces stripped
+            si468x_decode_short_label(&resp[o + 8], 16, 0xFF00, e->charset, e->short_label, sizeof(e->short_label));
+            for (size_t n = std::strlen(e->short_label); n > 0 && e->short_label[n - 1] == ' '; n--) {
+                e->short_label[n - 1] = '\0';
             }
         }
         o = c;
@@ -1972,10 +1966,9 @@ int si468x_fm_seek_start(int seek_up, int wrap)
     return SI468X_SUCCESS;
 }
 
-int si468x_dab_get_announcement_support(uint32_t service_id, uint32_t component_id, uint16_t* asw_flags)
+int si468x_dab_get_announcement_support(uint32_t service_id, uint16_t* asu_flags)
 {
-    (void)component_id; // command has no component argument; parameter removed in a later API revision
-    if (!asw_flags) {
+    if (!asu_flags) {
         return SI468X_ERROR_PARAM;
     }
 
@@ -1992,13 +1985,12 @@ int si468x_dab_get_announcement_support(uint32_t service_id, uint32_t component_
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
-    *asw_flags = le16(&resp[7]);
+    *asu_flags = le16(&resp[7]);
     return SI468X_SUCCESS;
 }
 
-int si468x_dab_get_announcement_info(int buf_empty, uint32_t* service_id, uint32_t* component_id, uint16_t* asw_flags)
+int si468x_dab_get_announcement_info(uint8_t* queue_size, uint32_t* service_id, uint32_t* component_id, uint16_t* asw_flags)
 {
-    (void)buf_empty; // command has no arguments; parameter replaced in a later API revision
     uint8_t cmd[1] = { 0xB6 };
     uint8_t resp[SI468X_REP_ANN_INFO] = {};
     int rc = send_command(cmd, 1, resp, sizeof(resp));
@@ -2007,6 +1999,9 @@ int si468x_dab_get_announcement_info(int buf_empty, uint32_t* service_id, uint32
     }
 
     // Q_SIZE resp[6] & 0x1F, CLUSTER resp[7], STAT/REGION/SRC resp[8], ASW resp[9..10], ID1 resp[11..12], ID2 resp[13..14]
+    if (queue_size) {
+        *queue_size = resp[6] & 0x1F;
+    }
     if (asw_flags) {
         *asw_flags = le16(&resp[9]);
     }

@@ -108,13 +108,16 @@ static bool test_api_signatures_uninitialized()
 {
     std::cout << "Running test: test_api_signatures_uninitialized..." << std::endl;
 
-    char label[17];
-    char short_label[9];
-    uint8_t subchannel_id = 0;
+    char label[49];
+    char short_label[25];
 
     // 1. Verify si468x_get_component_info signature and uninitialized failure
-    int ret_comp = si468x_get_component_info(0xf226, 6, label, short_label, nullptr, &subchannel_id);
+    int ret_comp = si468x_get_component_info(0xf226, 6, label, sizeof(label), short_label, sizeof(short_label), nullptr);
     ASSERT_TRUE(ret_comp == -1, "si468x_get_component_info must fail safely when uninitialized");
+    ASSERT_TRUE(si468x_get_component_info(0xf226, 6, label, 0, nullptr, 0, nullptr) == SI468X_ERROR_PARAM, "label_len 0 -> PARAM");
+    ASSERT_TRUE(si468x_get_component_info(0xf226, 6, nullptr, 49, nullptr, 0, nullptr) == SI468X_ERROR_PARAM, "null label -> PARAM");
+    ASSERT_TRUE(si468x_get_component_info(0xf226, 6, label, 49, short_label, 0, nullptr) == SI468X_ERROR_PARAM, "short_len 0 -> PARAM");
+    ASSERT_TRUE(si468x_get_ensemble_info(nullptr) == SI468X_ERROR_PARAM, "null ensemble info -> PARAM");
 
     // 2. Verify si468x_get_dls_text signature and uninitialized failure
     char dls_text[129];
@@ -257,12 +260,12 @@ static bool test_new_seek_and_telemetry_uninitialized()
 
     // Verify DAB announcement support fails safely
     uint16_t asw = 0;
-    int ret_ann_sup = si468x_dab_get_announcement_support(0x12345678, 0x11223344, &asw);
+    int ret_ann_sup = si468x_dab_get_announcement_support(0x12345678, &asw);
     ASSERT_TRUE(ret_ann_sup == -1, "si468x_dab_get_announcement_support must fail safely when uninitialized");
 
     // Verify DAB announcement info fails safely
     uint32_t sid, cid;
-    int ret_ann_info = si468x_dab_get_announcement_info(0, &sid, &cid, &asw);
+    int ret_ann_info = si468x_dab_get_announcement_info(nullptr, &sid, &cid, &asw);
     ASSERT_TRUE(ret_ann_info == -1, "si468x_dab_get_announcement_info must fail safely when uninitialized");
 
     // Verify DAB service linking fails safely
@@ -510,16 +513,17 @@ static bool test_dab_metadata()
 
     MockChip chip;
     char label[64];
-    uint16_t eid = 0;
 
-    // Ensemble: ECC 0xE1 must not leak into charset (old code: 0x0E -> raw 0x82 byte)
+    // Ensemble: ECC 0xE1 must not leak into charset (old code: 0x0E -> raw 0x82 byte); mask 0xFE00 = first 7 chars
+    si468x_ensemble_info_t ei;
     std::vector<uint8_t> ens = reply({ 0x80, 0x80, 0x00, 0xC0, 0x43, 0xF0 });
     put_label(ens, "M\x82tropolitain 1");
-    ens.insert(ens.end(), { 0xE1, 0x00, 0x00, 0xFF });
+    ens.insert(ens.end(), { 0xE1, 0x00, 0x00, 0xFE });
     chip.expect(SI468X_CMD_DAB_GET_ENSEMBLE_INFO, ens);
-    ASSERT_TRUE(si468x_get_ensemble_info(label, &eid) == SI468X_SUCCESS, "ensemble info");
-    ASSERT_TRUE(eid == 0xF043, "EId at resp[5..6]");
-    ASSERT_TRUE(std::strcmp(label, "M\xC3\xA9tropolitain 1 ") == 0, "EBU Latin 0x82 -> UTF-8 e-acute");
+    ASSERT_TRUE(si468x_get_ensemble_info(&ei) == SI468X_SUCCESS, "ensemble info");
+    ASSERT_TRUE(ei.eid == 0xF043 && ei.ecc == 0xE1 && ei.charset == 0 && ei.char_mask == 0xFE00, "EId/ECC/charset/mask");
+    ASSERT_TRUE(std::strcmp(ei.label, "M\xC3\xA9tropolitain 1 ") == 0, "EBU Latin 0x82 -> UTF-8 e-acute");
+    ASSERT_TRUE(std::strcmp(ei.short_label, "M\xC3\xA9tropo") == 0, "ensemble short label from CHAR_ABREV");
     ASSERT_TRUE(chip.reads.back() == SI468X_REP_ENSEMBLE_INFO, "ensemble read 27");
 
     // Component: charset resp[8] (UCS-2), no SubChId, ERR -> NOT_FOUND
@@ -527,13 +531,22 @@ static bool test_dab_metadata()
                                         0x00, 0x41, 0x00, 0x62 });
     comp.resize(SI468X_REP_COMPONENT_INFO, 0x00);
     chip.expect(SI468X_CMD_DAB_GET_COMPONENT_INFO, comp);
-    char short_label[17];
-    uint8_t subch = 99;
-    ASSERT_TRUE(si468x_get_component_info(0x43D1, 7, label, short_label, nullptr, &subch) == SI468X_SUCCESS, "component info");
+    char short_label[25];
+    ASSERT_TRUE(si468x_get_component_info(0x43D1, 7, label, sizeof(label), short_label, sizeof(short_label), nullptr)
+                == SI468X_SUCCESS, "component info");
     ASSERT_TRUE(std::strcmp(label, "Ab") == 0, "UCS-2 label via CHARSETID resp[8]");
-    ASSERT_TRUE(subch == 0, "component info provides no SubChId");
+    chip.expect(SI468X_CMD_DAB_GET_COMPONENT_INFO, comp);
+    ASSERT_TRUE(si468x_get_component_info(0x43D1, 7, label, 1, nullptr, 0, nullptr) == SI468X_SUCCESS && label[0] == '\0',
+                "label_len 1 -> empty, no overflow");
+    // "Premi\x83re" (EBU 0x83 = e-grave) into 5 bytes -> "Prem", never half a UTF-8 sequence
+    std::vector<uint8_t> comp2 = reply({ 0x80, 0x80, 0x00, 0xC0, 0x00, 0x00, 0x05, 0x00 });
+    put_label(comp2, "Pr\x83miere");
+    comp2.resize(SI468X_REP_COMPONENT_INFO, 0x00);
+    chip.expect(SI468X_CMD_DAB_GET_COMPONENT_INFO, comp2);
+    ASSERT_TRUE(si468x_get_component_info(0x43D1, 7, label, 4, nullptr, 0, nullptr) == SI468X_SUCCESS
+                && std::strcmp(label, "Pr") == 0, "2-byte char that does not fit is dropped whole");
     chip.expect(SI468X_CMD_DAB_GET_COMPONENT_INFO, reply({ 0xC0, 0x80, 0x00, 0xC0, 0x01 }));
-    ASSERT_TRUE(si468x_get_component_info(0x43D1, 0x63, label, short_label, nullptr, &subch) == SI468X_ERROR_NOT_FOUND,
+    ASSERT_TRUE(si468x_get_component_info(0x43D1, 0x63, label, sizeof(label), nullptr, 0, nullptr) == SI468X_ERROR_NOT_FOUND,
                 "component ERR -> NOT_FOUND");
 
     // Service info: ERR -> NOT_FOUND; charset masked
@@ -749,9 +762,10 @@ static bool test_dab_aux()
     uint16_t asu = 0, asw = 0;
     uint32_t a_sid = 0, a_cid = 0;
     chip.expect(0xB5, rep({ 0, 0, 0x22, 0x11 }));
-    ASSERT_TRUE(si468x_dab_get_announcement_support(0x43D1, 0, &asu) == SI468X_SUCCESS && asu == 0x1122, "ASU resp[7..8]");
+    ASSERT_TRUE(si468x_dab_get_announcement_support(0x43D1, &asu) == SI468X_SUCCESS && asu == 0x1122, "ASU resp[7..8]");
     chip.expect(0xB6, rep({ 0x01, 0x03, 0x07, 0x0A, 0x02, 0x00, 0xD1, 0x43, 0x07, 0x00, 1, 2 }));
-    ASSERT_TRUE(si468x_dab_get_announcement_info(0, &a_sid, &a_cid, &asw) == SI468X_SUCCESS, "anno info");
+    uint8_t qsize = 0;
+    ASSERT_TRUE(si468x_dab_get_announcement_info(&qsize, &a_sid, &a_cid, &asw) == SI468X_SUCCESS && qsize == 3, "anno info");
     ASSERT_TRUE(asw == 0x0002 && a_sid == 0x43D1 && a_cid == 7, "ASW/ID1/ID2");
 
     // BER

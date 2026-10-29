@@ -13,6 +13,7 @@
 #define __SI468X_H__
 
 #include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -103,8 +104,9 @@ typedef struct {
 typedef struct {
     uint32_t service_id;        /**< 32-bit Service ID (SId) of the radio program. */
     uint32_t component_id;      /**< 16-bit component word from the service list (TMID in bits 14-15); pass unchanged to si468x_play_service(). */
-    char label[17];             /**< 16-character full service name (null-terminated). */
-    char short_label[9];        /**< 8-character abbreviated name (null-terminated). */
+    char label[49];             /**< 16-character service label, UTF-8 (up to 3 bytes per character), null-terminated. */
+    char short_label[25];       /**< First 8 label characters, trailing spaces stripped (the list has no CHAR_ABREV;
+                                     see si468x_service_info_t.short_label). */
     uint16_t bitrate;           /**< Always 0 here; see si468x_dab_get_subchan_info(). */
     uint8_t audio_type;         /**< ASCTy (audio: 0 = MP2, 63 = DAB+) or DSCTy (data, e.g. 60 = MOT). */
     uint8_t subchannel_id;      /**< SubChId for TMID 0/1, else 0. */
@@ -342,12 +344,23 @@ int si468x_get_signal_status(si468x_signal_status_t* status);
 int si468x_set_audio_output(int enable_i2s);
 
 /**
- * @brief Retrieve the currently tuned DAB ensemble label name and Ensemble ID (EId).
- * @param label Pointer to pre-allocated char array (at least 17 bytes) to store the name.
- * @param ueid Pointer to 16-bit word to populate with the Ensemble ID.
+ * @brief DAB ensemble identity and labels (DAB_GET_ENSEMBLE_INFO).
+ */
+typedef struct {
+    uint16_t eid;               /**< Ensemble ID. */
+    uint8_t ecc;                /**< Extended Country Code. */
+    uint8_t charset;            /**< Label charset (0 EBU Latin, 6 UCS-2, 15 UTF-8). */
+    uint16_t char_mask;         /**< CHAR_ABREV: bit 15 = 1st label character belongs to the short label. */
+    char label[49];             /**< 16-character label, UTF-8, null-terminated. */
+    char short_label[25];       /**< Short label selected by char_mask; empty if mask is 0. */
+} si468x_ensemble_info_t;
+
+/**
+ * @brief Retrieve the currently tuned DAB ensemble's ID, ECC and labels.
+ * @param info Pointer to target struct.
  * @return SI468X_SUCCESS on success, or a negative error code on failure.
  */
-int si468x_get_ensemble_info(char* label, uint16_t* ueid);
+int si468x_get_ensemble_info(si468x_ensemble_info_t* info);
 
 /**
  * @brief Structure representing an assembled MOT Slideshow image (JPEG/PNG).
@@ -396,16 +409,19 @@ int si468x_set_rds_region(int region);
 int si468x_set_property(uint16_t property_id, uint16_t value);
 
 /**
- * @brief Retrieve detailed component-level specifications dynamically from the on-chip database.
- * @param service_id Globally unique 32-bit Service ID.
- * @param component_id Globally unique 32-bit Component ID.
- * @param label Pre-allocated 17-byte buffer to populate with the 16-character long label.
- * @param short_label Pre-allocated 9-byte buffer to populate with the 8-character short label.
- * @param char_mask Pointer to 16-bit word to populate with the short label character flag mask.
- * @param subchannel_id Pointer to 8-bit byte to populate with the component's subchannel ID.
- * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ * @brief Component label (DAB_GET_COMPONENT_INFO). Broadcasters rarely send component labels; empty is normal.
+ *        For the SubChId use si468x_service_t.subchannel_id.
+ * @param service_id Service ID.
+ * @param component_id Component ID as in si468x_service_t.component_id.
+ * @param label Output, UTF-8, truncated on a character boundary to fit label_len (49 bytes holds any label).
+ * @param label_len Size of label; must be > 0.
+ * @param short_label Optional output (may be nullptr), selected by the CHAR_ABREV mask.
+ * @param short_len Size of short_label; must be > 0 if short_label is given.
+ * @param char_mask Optional output, CHAR_ABREV.
+ * @return SI468X_SUCCESS, SI468X_ERROR_NOT_FOUND if the chip has no info, SI468X_ERROR_PARAM, or another negative code.
  */
-int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint16_t* char_mask, uint8_t* subchannel_id);
+int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, size_t label_len,
+                              char* short_label, size_t short_len, uint16_t* char_mask);
 
 /**
  * @brief Retrieve the dynamic, scrolling DAB DLS (Dynamic Label Segment) UTF-8 station text.
@@ -512,23 +528,22 @@ const char* si468x_get_service_type_text(uint8_t type);
 int si468x_fm_seek_start(int seek_up, int wrap);
 
 /**
- * @brief Query DAB announcement support flags for a specific service component.
- * @param service_id Globally unique 32-bit Service ID.
- * @param component_id Globally unique 32-bit Component ID.
- * @param asw_flags Pointer to target 16-bit variable to populate with support flags (ASW flags).
+ * @brief Announcement types a service supports (ASU flags, DAB_GET_ANNOUNCEMENT_SUPPORT_INFO).
+ * @param service_id Service ID.
+ * @param asu_flags Output, one bit per announcement type.
  * @return SI468X_SUCCESS on success, or a negative error code on failure.
  */
-int si468x_dab_get_announcement_support(uint32_t service_id, uint32_t component_id, uint16_t* asw_flags);
+int si468x_dab_get_announcement_support(uint32_t service_id, uint16_t* asu_flags);
 
 /**
- * @brief Retrieve current active announcement alert details.
- * @param buf_empty Clear/empty active queue buffer flag: 1 = empty, 0 = read only.
- * @param service_id Pointer to populate with the interrupting Service ID.
- * @param component_id Pointer to populate with the interrupting Component ID.
- * @param asw_flags Pointer to populate with the active alert flags.
+ * @brief Pop the oldest announcement event (DAB_GET_ANNOUNCEMENT_INFO). All outputs optional.
+ * @param queue_size Events left in the chip's queue (ANNO_Q_SIZE); 0 = nothing pending.
+ * @param service_id ID1 of the event.
+ * @param component_id ID2 of the event.
+ * @param asw_flags Announcement switching flags of the event.
  * @return SI468X_SUCCESS on success, or a negative error code on failure.
  */
-int si468x_dab_get_announcement_info(int buf_empty, uint32_t* service_id, uint32_t* component_id, uint16_t* asw_flags);
+int si468x_dab_get_announcement_info(uint8_t* queue_size, uint32_t* service_id, uint32_t* component_id, uint16_t* asw_flags);
 
 /**
  * @brief Query DAB Service Linking and alternate handover frequencies.

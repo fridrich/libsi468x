@@ -138,11 +138,10 @@ int main(int argc, char** argv)
                   << std::setw(3) << (int)status.cnr << " | ";
 
         // Query the current tuned Ensemble Name
-        char ensemble_label[49]; // 16 chars, up to 3 UTF-8 bytes each
-        uint16_t ensemble_id = 0;
-        std::memset(ensemble_label, 0, sizeof(ensemble_label));
-        if (si468x_get_ensemble_info(ensemble_label, &ensemble_id) == 0) {
-            std::cout << "[SYNCED] *** Ensemble: " << ensemble_label << " (EId: 0x" << std::hex << ensemble_id << std::dec << ") ***" << std::endl;
+        si468x_ensemble_info_t ens;
+        if (si468x_get_ensemble_info(&ens) == SI468X_SUCCESS) {
+            std::cout << "[SYNCED] *** Ensemble: " << ens.label << " (" << ens.short_label << ", EId: 0x"
+                      << std::hex << ens.eid << ", ECC: 0x" << (int)ens.ecc << std::dec << ") ***" << std::endl;
         }
         else {
             std::cout << "[SYNCED] *** Ensemble Found! ***" << std::endl;
@@ -213,15 +212,11 @@ int main(int argc, char** argv)
                         std::cout << "        [Play Sec " << sec << "/20] RSSI: " << (int)play_status.rssi
                                   << " dBuV | SNR: " << (int)play_status.snr << " dB | CNR: " << (int)play_status.cnr << " dB";
 
-                        // Query dynamic component info during playback of the active service!
-                        char play_comp_label[17];
-                        char play_comp_short[9];
-                        uint8_t play_subchannel_id = 0;
-                        std::memset(play_comp_label, 0, sizeof(play_comp_label));
-                        std::memset(play_comp_short, 0, sizeof(play_comp_short));
-
-                        if (si468x_get_component_info(services[p].service_id, services[p].component_id, play_comp_label, play_comp_short, nullptr, &play_subchannel_id) == 0) {
-                            std::cout << " | PlayLabel: '" << play_comp_label << "' (" << play_comp_short << ")";
+                        char comp_label[49];
+                        if (si468x_get_component_info(services[p].service_id, services[p].component_id,
+                                                      comp_label, sizeof(comp_label), nullptr, 0, nullptr) == SI468X_SUCCESS
+                                && comp_label[0]) {
+                            std::cout << " | Component: '" << comp_label << "'";
                         }
                         std::cout << std::endl;
 
