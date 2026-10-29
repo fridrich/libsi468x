@@ -542,6 +542,36 @@ static bool test_dab_metadata()
     return true;
 }
 
+static bool test_signal_status()
+{
+    std::cout << "Running test: test_signal_status..." << std::endl;
+
+    si468x_signal_status_t st;
+    ASSERT_TRUE(si468x_get_signal_status(&st) == SI468X_ERROR_SPI, "closed bus -> SPI error, no fake success");
+
+    MockChip chip;
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    ASSERT_TRUE(si468x_get_signal_status(&st) == SI468X_SUCCESS, "synced");
+    ASSERT_TRUE(st.rssi == 48 && st.snr == 2 && st.cnr == 24 && st.fic_quality == 100, "RSSI/SNR/CNR/FIC");
+    ASSERT_TRUE(st.fib_errors == 0 && st.tune_index == 30 && st.freq_offset == 60 && st.antcap == 19, "FIB/index/FFT/antcap");
+    ASSERT_TRUE(st.sync_status == 1, "VALID && ACQ -> synced");
+
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_ACQUIRING);
+    ASSERT_TRUE(si468x_get_signal_status(&st) == SI468X_SUCCESS && st.snr == 0 && st.sync_status == 1, "SNR -21 clamped to 0");
+
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_NOSIG);
+    ASSERT_TRUE(si468x_get_signal_status(&st) == SI468X_SUCCESS && st.sync_status == 0 && st.rssi == 15, "no signal");
+
+    // ACQINT/RSSIHINT interrupt bits alone (old rule: resp[5] & 0x06) are not a lock
+    std::vector<uint8_t> intr = FX_DIGRAD_NOSIG;
+    intr[5] = 0x06;
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, intr);
+    ASSERT_TRUE(si468x_get_signal_status(&st) == SI468X_SUCCESS && st.sync_status == 0, "interrupt bits are not sync");
+
+    std::cout << "PASS: test_signal_status" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -564,6 +594,7 @@ int main()
     success &= test_stop_service_ids();
     success &= test_dab_tune_waits_stc();
     success &= test_dab_metadata();
+    success &= test_signal_status();
 
     std::cout << "========================================" << std::endl;
     if (success) {

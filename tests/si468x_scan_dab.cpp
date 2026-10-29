@@ -91,7 +91,7 @@ int main(int argc, char** argv)
     std::cout << "Chip booted successfully in DAB mode!" << std::endl;
     std::cout << "Starting sweep of all 38 standard Band III channels..." << std::endl;
     std::cout << "--------------------------------------------------" << std::endl;
-    std::cout << " CH | Frequency  | RSSI   | SNR | Sync status" << std::endl;
+    std::cout << " CH | Frequency  | RSSI   | CNR | Sync status" << std::endl;
     std::cout << "----|------------|--------|-----|-----------------" << std::endl;
 
     int total_ensembles = 0;
@@ -120,7 +120,7 @@ int main(int argc, char** argv)
         }
 
         std::cout << std::right << std::setw(3) << (int)status.rssi << " dBuV | "
-                  << std::setw(3) << (int)status.snr << " | ";
+                  << std::setw(3) << (int)status.cnr << " | ";
 
         // Query the current tuned Ensemble Name
         char ensemble_label[17];
@@ -208,7 +208,7 @@ int main(int argc, char** argv)
                     si468x_signal_status_t play_status;
                     if (si468x_get_signal_status(&play_status) == SI468X_SUCCESS) {
                         std::cout << "        [Play Sec " << sec << "/20] RSSI: " << (int)play_status.rssi
-                                  << " dBuV | SNR: " << (int)play_status.snr << " dB";
+                                  << " dBuV | SNR: " << (int)play_status.snr << " dB | CNR: " << (int)play_status.cnr << " dB";
 
                         // Query dynamic component info during playback of the active service!
                         char play_comp_label[17];

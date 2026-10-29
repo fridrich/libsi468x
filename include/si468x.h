@@ -127,9 +127,14 @@ typedef struct {
  */
 typedef struct {
     uint8_t rssi;          /**< Received Signal Strength Indicator in dBµV. */
-    uint8_t snr;           /**< Signal-to-Noise Ratio in dB. */
-    int16_t freq_offset;   /**< Frequency offset from tuned carrier center in kHz. */
-    uint8_t sync_status;   /**< Synchronization lock flag (1 if synced, 0 if unlocked). */
+    uint8_t snr;           /**< Signal-to-Noise Ratio in dB, clamped to >= 0 (chip reports negative while acquiring). */
+    int16_t freq_offset;   /**< Raw FFT_OFFSET from DAB_DIGRAD_STATUS (unit undocumented). */
+    uint8_t sync_status;   /**< 1 if VALID and ACQ are set, 0 otherwise. */
+    uint8_t cnr;           /**< Carrier-to-noise ratio in dB (the value older versions reported as "snr"). */
+    uint8_t fic_quality;   /**< FIC quality in percent. */
+    uint8_t tune_index;    /**< Tuned frequency index. */
+    uint16_t fib_errors;   /**< FIB error count. */
+    uint16_t antcap;       /**< Antenna tuning capacitor value in use. */
 } si468x_signal_status_t;
 
 /**

@@ -177,7 +177,8 @@ int main(int argc, char* argv[])
         si468x_signal_status_t play_status;
         if (si468x_get_signal_status(&play_status) == SI468X_SUCCESS) {
             std::cout << "\r[Telemetry] RSSI: " << std::setw(2) << (int)play_status.rssi << " dBuV | "
-                      << "SNR: " << std::setw(2) << (int)play_status.snr << " dB" << std::flush;
+                      << "SNR: " << std::setw(2) << (int)play_status.snr << " dB | "
+                      << "CNR: " << std::setw(2) << (int)play_status.cnr << " dB" << std::flush;
         }
 
         if (si468x_get_dls_text(dls_text, sizeof(dls_text)) == 1) {

@@ -1290,37 +1290,24 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
         return SI468X_ERROR_PARAM;
     }
 
-    // 2-byte packet required (Opcode + INTACK) and 24-byte response payload (total 28 bytes)
-    uint8_t cmd[2] = { SI468X_CMD_DAB_DIGRAD_STATUS, 0x00 };
+    uint8_t cmd[2] = { SI468X_CMD_DAB_DIGRAD_STATUS, 0x00 }; // no ACKs
     uint8_t resp[SI468X_REP_DIGRAD_STATUS] = {};
-
-    if (send_command(cmd, 2, resp, sizeof(resp)) != SI468X_SUCCESS) {
-        // Return simulated parameters if physical bus is closed (mock fallback)
-        if (!bus_open()) {
-            status->rssi = 45;       // 45 dBuV (decent signal)
-            status->snr = 18;        // 18 dB SNR (clean sync)
-            status->freq_offset = 0;
-            status->sync_status = 1; // Synced
-            return SI468X_SUCCESS;
-        }
-        return SI468X_ERROR_SPI;
+    int rc = send_command(cmd, 2, resp, sizeof(resp));
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
-    // Parse DAB_DIGRAD_STATUS Response (24 parameter bytes):
-    // resp[0..3] : SPI status and padding bytes (Byte 0 is STATUS, Bytes 1-3 is padding)
-    // resp[4]    : Response parameter Byte 0 (state/status)
-    // resp[5]    : Response parameter Byte 1 (digital status: Bit 1 is SYNC, Bit 2 is FIC_SYNC)
-    // resp[6]    : Response parameter Byte 2 (acq status: Bit 2 is ACQ)
-    // resp[7]    : Response parameter Byte 3 (RSSI value in dBuV!)
-    // resp[10]   : Response parameter Byte 6 (SNR value in dB!)
-    // resp[21..22] : Response parameter Byte 17-18 (Antenna Tuning Cap)
-    status->rssi = resp[7];  // Aligned with native binary offset (Byte 3)
-    status->snr = resp[10];  // Aligned with native binary offset (Byte 6)
-    status->freq_offset = 0; // Handled as secondary telemetry
-
-    // Lock achieved if OFDM Frame Sync (Bit 1 of Byte 1), FIC Sync (Bit 2 of Byte 1),
-    // or Signal Acquisition (Bit 2 of Byte 2) are high.
-    status->sync_status = ((resp[5] & 0x06) || (resp[6] & 0x04)) ? 1 : 0;
+    // resp[5] = interrupt bits (ignored); resp[6]: FICERR 0x08, ACQ 0x04, VALID 0x01
+    status->rssi = resp[7];
+    int8_t snr = (int8_t)resp[8]; // negative while acquiring
+    status->snr = snr > 0 ? snr : 0;
+    status->fic_quality = resp[9];
+    status->cnr = resp[10];
+    status->fib_errors = le16(&resp[11]);
+    status->tune_index = resp[17];
+    status->freq_offset = (int8_t)resp[18]; // raw FFT_OFFSET, unit undocumented
+    status->antcap = le16(&resp[19]);
+    status->sync_status = (resp[6] & 0x05) == 0x05; // VALID && ACQ
 
     return SI468X_SUCCESS;
 }
