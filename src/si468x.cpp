@@ -194,9 +194,26 @@ static void gpio_shutdown()
     }
 }
 
+static si468x_transport_fn test_transport = nullptr;
+static void* test_transport_ctx = nullptr;
+
+void si468x_set_test_transport(si468x_transport_fn fn, void* ctx)
+{
+    test_transport = fn;
+    test_transport_ctx = ctx;
+}
+
+static bool bus_open(void)
+{
+    return spi_fd >= 0 || test_transport;
+}
+
 /* Low-level SPI transfer helper */
 static int spi_transfer(const uint8_t* tx, uint8_t* rx, size_t length)
 {
+    if (test_transport) {
+        return test_transport(tx, rx, length, test_transport_ctx);
+    }
     if (spi_fd < 0) {
         return -1;
     }
@@ -1262,7 +1279,7 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
 
     if (send_command(cmd, 2, resp.data(), 28) != SI468X_SUCCESS) {
         // Return simulated parameters if physical bus is closed (mock fallback)
-        if (spi_fd < 0) {
+        if (!bus_open()) {
             status->rssi = 45;       // 45 dBuV (decent signal)
             status->snr = 18;        // 18 dB SNR (clean sync)
             status->freq_offset = 0;
@@ -1295,7 +1312,7 @@ int si468x_set_audio_output(int enable_i2s)
 {
     active_audio_mode = enable_i2s;
 
-    if (spi_fd < 0) {
+    if (!bus_open()) {
         // If SPI is not open yet, store the mode statically so si468x_init can apply it dynamically during boot
         return SI468X_SUCCESS;
     }
@@ -1670,7 +1687,7 @@ int si468x_get_fm_status(si468x_fm_status_t* status)
 
 static void si468x_update_rds_decoder(void)
 {
-    if (spi_fd < 0) {
+    if (!bus_open()) {
         return;
     }
 
@@ -1730,7 +1747,7 @@ int si468x_get_rds_text(char* out_text, int max_len)
     if (!out_text || max_len <= 0) {
         return -1;
     }
-    if (spi_fd < 0) {
+    if (!bus_open()) {
         return -1;
     }
 
@@ -1792,7 +1809,7 @@ int si468x_get_rds_station_name(char* out_name, int max_len)
     if (!out_name || max_len <= 0) {
         return -1;
     }
-    if (spi_fd < 0) {
+    if (!bus_open()) {
         return -1;
     }
 
@@ -2310,7 +2327,7 @@ int si468x_dab_calibrate_antenna(uint32_t frequency_hz, uint16_t* peak_antcap)
         return -1;
     }
 
-    if (spi_fd < 0) {
+    if (!bus_open()) {
         return -1;
     }
 

@@ -172,7 +172,6 @@ int main(int argc, char* argv[])
     std::cout << "--------------------------------------------------" << std::endl;
 
     char dls_text[129] = {0};
-    int sec = 0;
 
     while (running) {
         si468x_signal_status_t play_status;
@@ -186,7 +185,6 @@ int main(int argc, char* argv[])
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        sec++;
     }
 
     std::cout << "\nlibsi468x: Stopping playback..." << std::endl;

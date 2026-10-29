@@ -143,7 +143,6 @@ int main(int argc, char* argv[])
         // Stop and dwell on this station for up to 12 seconds to acquire RDS text and name
         auto dwell_start = std::chrono::steady_clock::now();
         bool rds_text_acquired = false;
-        bool rds_name_acquired = false;
         char rds_text[65];
         char rds_name[9];
         std::memset(rds_text, 0, sizeof(rds_text));
@@ -156,7 +155,6 @@ int main(int argc, char* argv[])
                 int name_updated = si468x_get_rds_station_name(rds_name, sizeof(rds_name));
                 if (name_updated > 0 && std::strlen(rds_name) > 0) {
                     std::cout << "  -> Station Name: \"" << rds_name << "\"" << std::endl;
-                    rds_name_acquired = true;
                 }
 
                 // Poll for RadioText (RT)

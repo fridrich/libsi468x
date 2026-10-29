@@ -1,6 +1,8 @@
-noinst_PROGRAMS = test_si468x si468x_scan_dab si468x_scan_fm si468x_play_dab si468x_play_fm
+AM_CXXFLAGS = -Wall -Wextra -Wshadow
 
-test_si468x_SOURCES = test_si468x.cpp
+noinst_PROGRAMS = test_si468x si468x_scan_dab si468x_scan_fm si468x_play_dab si468x_play_fm si468x_probe
+
+test_si468x_SOURCES = test_si468x.cpp mock_chip.h fixtures.h
 test_si468x_CPPFLAGS = -I$(top_srcdir)/include -I$(top_srcdir)/src
 test_si468x_LDADD = $(top_builddir)/src/libsi468x.la
 
@@ -19,6 +21,10 @@ si468x_play_dab_LDADD = $(top_builddir)/src/libsi468x.la
 si468x_play_fm_SOURCES = si468x_play_fm.cpp
 si468x_play_fm_CPPFLAGS = -I$(top_srcdir)/include -I$(top_srcdir)/src
 si468x_play_fm_LDADD = $(top_builddir)/src/libsi468x.la
+
+si468x_probe_SOURCES = si468x_probe.cpp
+si468x_probe_CPPFLAGS = -I$(top_srcdir)/include -I$(top_srcdir)/src
+si468x_probe_LDADD = $(top_builddir)/src/libsi468x.la
 
 # Standard Automake test suite harness
 TESTS = test_si468x

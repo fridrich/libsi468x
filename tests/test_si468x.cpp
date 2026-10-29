@@ -8,6 +8,8 @@
 #include <cstring>
 #include "si468x.h"
 #include "si468x_internal.h"
+#include "mock_chip.h"
+#include "fixtures.h"
 
 // Macro helper for clean assertions
 #define ASSERT_TRUE(expr, msg) \
@@ -323,6 +325,22 @@ static bool test_error_definitions()
     return true;
 }
 
+static bool test_framing_cts_poll()
+{
+    std::cout << "Running test: test_framing_cts_poll..." << std::endl;
+
+    MockChip chip;
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED, 2);
+    si468x_signal_status_t st;
+    ASSERT_TRUE(si468x_get_signal_status(&st) == SI468X_SUCCESS, "CTS on 3rd poll must succeed");
+    ASSERT_TRUE(chip.reads.size() == 4, "3 CTS polls + 1 payload read");
+    ASSERT_TRUE(chip.reads.back() == 28, "payload read uses caller length"); // WP1: expected to change (24)
+    ASSERT_TRUE(chip.sent(SI468X_CMD_DAB_DIGRAD_STATUS).size() == 1, "one DIGRAD write");
+
+    std::cout << "PASS: test_framing_cts_poll" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -340,6 +358,7 @@ int main()
     success &= test_mot_slideshow_uninitialized();
     success &= test_new_seek_and_telemetry_uninitialized();
     success &= test_error_definitions();
+    success &= test_framing_cts_poll();
 
     std::cout << "========================================" << std::endl;
     if (success) {

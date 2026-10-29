@@ -98,6 +98,9 @@ extern "C" {
 /* Private Internal Helper Functions */
 extern int si468x_debug_active;
 void si468x_decode_short_label(const uint8_t* raw_label, int raw_len, uint16_t char_mask, uint8_t charset, char* short_label, int max_len);
+/* Test seam: replaces spidev when set; nullptr restores spidev. Not in the installed header. */
+typedef int (*si468x_transport_fn)(const uint8_t* tx, uint8_t* rx, size_t len, void* ctx);
+void si468x_set_test_transport(si468x_transport_fn fn, void* ctx);
 int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_len, int timeout_ms = 1000);
 
 #ifdef __cplusplus
