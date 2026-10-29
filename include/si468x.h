@@ -231,9 +231,13 @@ typedef struct {
  * @brief Structure representing RF Automatic Gain Control (AGC) diagnostic status.
  */
 typedef struct {
-    uint8_t rfagc_dis;       /**< RF AGC loop disabled flag (1 if disabled, 0 if enabled). */
-    uint8_t ifagc_dis;       /**< IF AGC loop disabled flag (1 if disabled, 0 if enabled). */
-    uint8_t lna_gain_index;  /**< LNA Gain attenuation step index (0 to 15, higher means more attenuation). */
+    uint8_t vhflna;          /**< VHF LNA gain state. */
+    uint8_t vhfcatt;         /**< VHF capacitive attenuator. */
+    uint8_t vhfrattlo;       /**< VHF resistive attenuator, low byte. */
+    uint8_t vhfratthi;       /**< VHF resistive attenuator, high byte. */
+    uint8_t lmhfrtanklo;     /**< LMHF tank, low byte. */
+    uint8_t lmhfrtankhi;     /**< LMHF tank, high byte. */
+    uint8_t rfindex;         /**< RF AGC index. */
 } si468x_agc_status_t;
 
 /**
@@ -367,7 +371,7 @@ int si468x_get_time(si468x_time_t* time);
 int si468x_get_audio_info(si468x_audio_info_t* info);
 
 /**
- * @brief Query the co-processor to retrieve the current active asynchronous event status flags.
+ * @brief Deprecated: reconfiguration/announcement flags; use si468x_dab_get_event_status().
  * @param status Pointer to target si468x_event_status_t struct to populate.
  * @return SI468X_SUCCESS on success, or a negative error code on failure.
  */
@@ -526,7 +530,8 @@ int si468x_dab_get_announcement_info(int buf_empty, uint32_t* service_id, uint32
 /**
  * @brief Query DAB Service Linking and alternate handover frequencies.
  * @param service_id Globally unique 32-bit Service ID.
- * @param link_info Pre-allocated buffer to store raw linking information payload.
+ * @param link_info Buffer for the raw reply from NUM_LINKSETS on: NUM_LINKSETS, reserved, then per linkset
+ *                  LSN u16 LE, flags, NUM_LINKS, NUM_LINKS x LINKID u32 LE.
  * @param max_len Size of the destination buffer.
  * @return Number of linking bytes successfully copied, or a negative error code on failure.
  */
@@ -574,13 +579,13 @@ int si468x_dab_calibrate_antenna(uint32_t frequency_hz, uint16_t* peak_antcap);
 int si468x_dab_get_other_ensemble_info(uint32_t service_id, uint16_t* eids, int max_eids);
 
 /**
- * @brief Retrieve current DAB Bit Error Rate (BER) and FIB frame block error counts.
+ * @brief Retrieve DAB bit error counters (DAB_TEST_GET_BER_INFO); BER = err_bits / total_bits.
  * @param clear Clear current count values: 1 = clear on read, 0 = read only.
- * @param ber_count Pointer to populate with the total bit error count.
- * @param fib_error_count Pointer to populate with the Fast Information Block (FIB) error count.
+ * @param err_bits Pointer to populate with the number of bit errors.
+ * @param total_bits Pointer to populate with the number of bits tested.
  * @return SI468X_SUCCESS on success, or a negative error code on failure.
  */
-int si468x_dab_get_ber_info(int clear, uint32_t* ber_count, uint32_t* fib_error_count);
+int si468x_dab_get_ber_info(int clear, uint32_t* err_bits, uint32_t* total_bits);
 
 /**
  * @brief Retrieve current HD Radio (FMHD) Bit Error Rate (BER) count.

@@ -655,6 +655,113 @@ static bool test_time_audio_fm_rds()
     return true;
 }
 
+static bool test_dab_aux()
+{
+    std::cout << "Running test: test_dab_aux..." << std::endl;
+
+    MockChip chip;
+    const std::vector<uint8_t> ok = { 0x80, 0x80, 0x00, 0xC0 }; // status bytes 0..3
+
+    auto rep = [&](std::initializer_list<uint8_t> data) {
+        std::vector<uint8_t> r = reply({});
+        r.insert(r.end(), ok.begin(), ok.end());
+        r.insert(r.end(), data);
+        return r;
+    };
+
+    // Event status: flags 0x95, active 0x0C, version 0x1234
+    si468x_dab_event_status_t ev;
+    chip.expect(SI468X_CMD_DAB_GET_EVENT_STATUS, rep({ 0x95, 0x0C, 0x34, 0x12 }));
+    ASSERT_TRUE(si468x_dab_get_event_status(&ev) == SI468X_SUCCESS, "event status");
+    ASSERT_TRUE(ev.recfg_int && !ev.recfg_warn_int && ev.anno_int && !ev.oeserv_int && ev.servlink_int
+                && !ev.freqinfo_int && ev.svrlist_int, "interrupt flags");
+    ASSERT_TRUE(!ev.anno_active && ev.oeserv_active && ev.servlink_active && !ev.svrlist_active, "active flags");
+    ASSERT_TRUE(ev.svrlist_ver == 0x1234 && chip.reads.back() == 9, "version, read 9");
+    ASSERT_TRUE(chip.sent(SI468X_CMD_DAB_GET_EVENT_STATUS).back()[1] == 0x01, "EVENT_ACK");
+
+    // Deprecated wrapper uses 0xB3, never 0x12 (GET_FUNC_INFO)
+    si468x_event_status_t old;
+    chip.expect(SI468X_CMD_DAB_GET_EVENT_STATUS, rep({ 0x40, 0x00, 0x00, 0x00 }));
+    ASSERT_TRUE(si468x_get_event_status(&old) == SI468X_SUCCESS && old.reconf == 1 && old.annc == 0, "wrapper");
+    ASSERT_TRUE(chip.sent(0x12).empty(), "no GET_FUNC_INFO as event status");
+
+    // Subchannel: DAB+ (4), EEP-A3 (8), 72 kbps, 54 CU at 300
+    si468x_subchan_info_t sc;
+    chip.expect(SI468X_CMD_DAB_GET_SUBCHAN_INFO, rep({ 4, 8, 72, 0, 54, 0, 0x2C, 0x01 }));
+    ASSERT_TRUE(si468x_dab_get_subchan_info(0x43D1, 7, &sc) == SI468X_SUCCESS, "subchan");
+    ASSERT_TRUE(sc.service_mode == 4 && sc.protection_info == 8 && sc.bitrate == 72 && sc.num_cu == 54
+                && sc.cu_address == 300, "subchan fields");
+
+    // Freq info: 2 elements, header then one re-read
+    si468x_freq_element_t fe[4];
+    chip.expect(SI468X_CMD_DAB_GET_FREQ_INFO, rep({ 2, 0, 0, 0,
+                                                   0x41, 0x40, 0, 0, 0xC0, 0x6A, 0x03, 0, 30, 1, 2, 3,
+                                                   0x42, 0x40, 0, 0, 0x50, 0xAB, 0x02, 0, 0, 4, 5, 6 }));
+    size_t nreads = chip.reads.size();
+    ASSERT_TRUE(si468x_dab_get_freq_info(fe, 4) == 2, "2 elements");
+    ASSERT_TRUE(chip.reads.back() == 9 + 24 && chip.reads.size() > nreads, "re-read 9 + 12*N");
+    ASSERT_TRUE(fe[0].id == 0x4041 && fe[0].frequency_hz == 223936000 && fe[0].freq_index == 30
+                && fe[0].rnm == 1 && fe[0].continuity == 2 && fe[0].control == 3, "element 0");
+    ASSERT_TRUE(fe[1].id == 0x4042 && fe[1].frequency_hz == 174928000 && fe[1].control == 6, "element 1");
+    ASSERT_TRUE(si468x_dab_get_freq_info(fe, 1) <= 1, "clamped to max_elements");
+
+    chip.expect(SI468X_CMD_DAB_GET_FREQ_INFO, rep({ 0xFF, 0xFF, 0xFF, 0x7F }));
+    ASSERT_TRUE(si468x_dab_get_freq_info(fe, 4) == SI468X_ERROR_INVALID_REPLY, "absurd count rejected");
+
+    // Other ensembles: 2 EIDs
+    uint16_t eids[4];
+    chip.expect(SI468X_CMD_DAB_GET_OE_SERVICES_INFO, rep({ 4, 0, 2, 0, 0x41, 0x40, 0x42, 0x40 }));
+    ASSERT_TRUE(si468x_dab_get_other_ensemble_info(0x43D1, eids, 4) == 2 && eids[0] == 0x4041 && eids[1] == 0x4042, "OE EIDs");
+
+    // Service linking: SIZE 10 = one linkset with one link
+    uint8_t link[32];
+    chip.expect(0xB7, rep({ 10, 0, 1, 0, 0x01, 0x00, 0xC0, 1, 0xD1, 0x43, 0, 0, 0, 0 }));
+    ASSERT_TRUE(si468x_dab_get_service_linking(0x43D1, link, sizeof(link)) == 12, "NUM_LINKSETS + rsvd + SIZE");
+    ASSERT_TRUE(link[0] == 1 && link[2] == 0x01 && link[4] == 0xC0 && link[5] == 1 && link[6] == 0xD1, "linkset bytes");
+    ASSERT_TRUE(si468x_dab_get_service_linking(0x43D1, link, 3) <= 3, "clamped to max_len");
+
+    // Announcements
+    uint16_t asu = 0, asw = 0;
+    uint32_t a_sid = 0, a_cid = 0;
+    chip.expect(0xB5, rep({ 0, 0, 0x22, 0x11 }));
+    ASSERT_TRUE(si468x_dab_get_announcement_support(0x43D1, 0, &asu) == SI468X_SUCCESS && asu == 0x1122, "ASU resp[7..8]");
+    chip.expect(0xB6, rep({ 0x01, 0x03, 0x07, 0x0A, 0x02, 0x00, 0xD1, 0x43, 0x07, 0x00, 1, 2 }));
+    ASSERT_TRUE(si468x_dab_get_announcement_info(0, &a_sid, &a_cid, &asw) == SI468X_SUCCESS, "anno info");
+    ASSERT_TRUE(asw == 0x0002 && a_sid == 0x43D1 && a_cid == 7, "ASW/ID1/ID2");
+
+    // BER
+    uint32_t eb = 0, tb = 0;
+    chip.expect(SI468X_CMD_DAB_TEST_GET_BER_INFO, rep({ 5, 0, 0, 0, 0x40, 0x42, 0x0F, 0 }));
+    ASSERT_TRUE(si468x_dab_get_ber_info(1, &eb, &tb) == SI468X_SUCCESS && eb == 5 && tb == 1000000, "ERR_BITS/TOTAL_BITS");
+    ASSERT_TRUE(chip.sent(SI468X_CMD_DAB_TEST_GET_BER_INFO).back()[1] == 1, "clear flag");
+
+    // AGC (Linux layout +1)
+    si468x_agc_status_t agc;
+    std::vector<uint8_t> ar = rep({});
+    for (int i = 5; i < 24; i++) {
+        ar.push_back((uint8_t)i);
+    }
+    chip.expect(SI468X_CMD_GET_AGC_STATUS, ar);
+    ASSERT_TRUE(si468x_get_agc_status(&agc) == SI468X_SUCCESS && agc.vhflna == 15 && agc.lmhfrtankhi == 20
+                && agc.rfindex == 22, "AGC index sweep");
+
+    // HD (unit tests only): station info and alert re-read 7 + LENGTH
+    char txt[16];
+    chip.expect(SI468X_CMD_HD_GET_STATION_INFO, rep({ 5, 0, 'H', 'e', 'l', 'l', 'o' }));
+    ASSERT_TRUE(si468x_fmhd_get_station_info(1, txt, sizeof(txt)) == 1 && std::strcmp(txt, "Hello") == 0, "SIS");
+    chip.expect(SI468X_CMD_HD_GET_ALERT_MSG, rep({ 3, 0, 'A', 'B', 'C' }));
+    ASSERT_TRUE(si468x_fmhd_get_alert_message(txt, 3) == 1 && std::strcmp(txt, "AB") == 0, "alert clamped");
+    chip.expect(SI468X_CMD_HD_GET_PSD_DECODE, rep({ 0, 0, 0, 4, 'S', 'o', 'n', 'g' }));
+    ASSERT_TRUE(si468x_fmhd_get_psd_text(0, 0, txt, sizeof(txt)) == 1 && std::strcmp(txt, "Song") == 0, "PSD");
+    std::vector<uint8_t> hb = rep({ 9, 0, 0, 0 });
+    hb.resize(SI468X_REP_HD_BER, 0);
+    chip.expect(SI468X_CMD_HD_TEST_GET_BER_INFO, hb);
+    ASSERT_TRUE(si468x_fmhd_get_ber_info(0, &eb) == SI468X_SUCCESS && eb == 9 && chip.reads.back() == 45, "HD BER");
+
+    std::cout << "PASS: test_dab_aux" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -679,6 +786,7 @@ int main()
     success &= test_dab_metadata();
     success &= test_signal_status();
     success &= test_time_audio_fm_rds();
+    success &= test_dab_aux();
 
     std::cout << "========================================" << std::endl;
     if (success) {

@@ -1874,27 +1874,19 @@ int si468x_get_audio_info(si468x_audio_info_t* info)
     return SI468X_SUCCESS;
 }
 
+/* Deprecated: wrapper over DAB_GET_EVENT_STATUS (0xB3); the old 0x12 is GET_FUNC_INFO */
 int si468x_get_event_status(si468x_event_status_t* status)
 {
     if (!status) {
         return SI468X_ERROR_PARAM;
     }
-
-    // Write 2-byte command for DAB_GET_EVENT_STATUS (Opcode 0x12, Param Byte 0 = 0x01 to clear INTACK)
-    uint8_t cmd[2] = { 0x12, 0x01 };
-    uint8_t resp[6];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 2, resp, 6);
-
+    si468x_dab_event_status_t ev;
+    int rc = si468x_dab_get_event_status(&ev);
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
-
-    // Extract event status bits from Parameter Byte 1 (resp[5])
-    status->reconf = resp[5] & 0x01; // Bit 0 represents database reconfigurations
-    status->annc = (resp[5] >> 1) & 0x01; // Bit 1 represents announcement alerts
-
+    status->reconf = ev.recfg_int | ev.recfg_warn_int;
+    status->annc = ev.anno_int;
     return SI468X_SUCCESS;
 }
 
@@ -1998,11 +1990,12 @@ int si468x_fm_seek_start(int seek_up, int wrap)
 
 int si468x_dab_get_announcement_support(uint32_t service_id, uint32_t component_id, uint16_t* asw_flags)
 {
+    (void)component_id; // command has no component argument; parameter removed in a later API revision
     if (!asw_flags) {
         return SI468X_ERROR_PARAM;
     }
 
-    // Write 8-byte command for DAB_GET_ANNOUNCEMENT_SUPPORT_INFO (Opcode 0xB5)
+    // SRC 0 = current ensemble; reply NUM_IDS resp[5], ASU resp[7..8], IDs from resp[9] (not returned)
     uint8_t cmd[8] = {
         0xB5, 0x00, 0x00, 0x00,
         (uint8_t)(service_id & 0xFF),
@@ -2010,46 +2003,46 @@ int si468x_dab_get_announcement_support(uint32_t service_id, uint32_t component_
         (uint8_t)((service_id >> 16) & 0xFF),
         (uint8_t)((service_id >> 24) & 0xFF)
     };
-
-    uint8_t resp[12];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 8, resp, 12);
-
+    uint8_t resp[SI468X_REP_ANN_SUPPORT_HDR] = {};
+    int rc = send_command(cmd, 8, resp, sizeof(resp));
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
-
-    // ASU is located at Parameter Byte 2 and 3 (resp[6..7])
-    *asw_flags = resp[6] | ((uint16_t)resp[7] << 8);
+    *asw_flags = le16(&resp[7]);
     return SI468X_SUCCESS;
 }
 
 int si468x_dab_get_announcement_info(int buf_empty, uint32_t* service_id, uint32_t* component_id, uint16_t* asw_flags)
 {
-    // Write 1-byte command for DAB_GET_ANNOUNCEMENT_INFO (Opcode 0xB6) - no arguments
+    (void)buf_empty; // command has no arguments; parameter replaced in a later API revision
     uint8_t cmd[1] = { 0xB6 };
-    uint8_t resp[16];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 1, resp, 16);
-
+    uint8_t resp[SI468X_REP_ANN_INFO] = {};
+    int rc = send_command(cmd, 1, resp, sizeof(resp));
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    // Extract fields matching standard offsets (ASW at resp[8..9], ID1/SId at resp[10..11], ID2/CompId at resp[12..13])
+    // Q_SIZE resp[6] & 0x1F, CLUSTER resp[7], STAT/REGION/SRC resp[8], ASW resp[9..10], ID1 resp[11..12], ID2 resp[13..14]
+    if (asw_flags) {
+        *asw_flags = le16(&resp[9]);
+    }
     if (service_id) {
-        *service_id = resp[10] | ((uint32_t)resp[11] << 8);
+        *service_id = le16(&resp[11]);
     }
     if (component_id) {
-        *component_id = resp[12] | ((uint32_t)resp[13] << 8);
+        *component_id = le16(&resp[13]);
     }
-    if (asw_flags) {
-        *asw_flags = resp[8] | ((uint16_t)resp[9] << 8);
-    }
-
     return SI468X_SUCCESS;
+}
+
+/* Variable reply: header read, then one re-read of header + payload (no second query) */
+static int reread(std::vector<uint8_t>& resp, size_t total)
+{
+    if (total > SI468X_REP_MAX_VAR) {
+        return SI468X_ERROR_INVALID_REPLY;
+    }
+    resp.assign(total, 0);
+    return read_reply(resp.data(), total);
 }
 
 int si468x_dab_get_service_linking(uint32_t service_id, uint8_t* link_info, int max_len)
@@ -2058,31 +2051,29 @@ int si468x_dab_get_service_linking(uint32_t service_id, uint8_t* link_info, int 
         return SI468X_ERROR_PARAM;
     }
 
-    // Write 8-byte command for DAB_GET_SERVICE_LINKING_INFO (Opcode 0xB7)
-    uint8_t cmd[8];
-    cmd[0] = 0xB7;
-    cmd[1] = 0x00; // Filter flags
-    cmd[2] = 0x00; // Enable flags
-    cmd[3] = 0x00; // Reserved
-    cmd[4] = service_id & 0xFF;
-    cmd[5] = (service_id >> 8) & 0xFF;
-    cmd[6] = (service_id >> 16) & 0xFF;
-    cmd[7] = (service_id >> 24) & 0xFF;
-
-    uint8_t resp[256];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 8, resp, 256);
-
+    uint8_t cmd[8] = {
+        0xB7, 0x00, 0x00, 0x00,
+        (uint8_t)(service_id & 0xFF),
+        (uint8_t)((service_id >> 8) & 0xFF),
+        (uint8_t)((service_id >> 16) & 0xFF),
+        (uint8_t)((service_id >> 24) & 0xFF)
+    };
+    std::vector<uint8_t> resp(SI468X_REP_LINKING_HDR);
+    int rc = send_command(cmd, 8, resp.data(), resp.size());
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    uint16_t data_size = resp[4] | ((uint16_t)resp[5] << 8);
-    int copy_len = (data_size < max_len) ? data_size : max_len;
-    std::memcpy(link_info, &resp[6], copy_len);
+    // SIZE resp[5..6] counts bytes from LSN_0 (resp[9]) on (total read = 9 + SIZE)
+    uint16_t size = le16(&resp[5]);
+    if (size > 0 && (rc = reread(resp, SI468X_REP_LINKING_HDR + size)) != SI468X_SUCCESS) {
+        return rc;
+    }
 
-    return copy_len;
+    // Output: NUM_LINKSETS, reserved, then linksets (LSN u16, flags, NUM_LINKS, LINKID u32 ...)
+    int n = std::min<int>(2 + size, max_len);
+    std::memcpy(link_info, &resp[7], n);
+    return n;
 }
 
 int si468x_fmhd_get_psd_text(int program, int field, char* out_text, int max_len)
@@ -2091,31 +2082,23 @@ int si468x_fmhd_get_psd_text(int program, int field, char* out_text, int max_len
         return SI468X_ERROR_PARAM;
     }
 
-    // Write 3-byte command for HD_GET_PSD_DECODE (Opcode 0x95)
-    uint8_t cmd[3];
-    cmd[0] = SI468X_CMD_HD_GET_PSD_DECODE;
-    cmd[1] = program & 0xFF;
-    cmd[2] = field & 0xFF;
-
-    uint8_t resp[256];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 3, resp, 256);
-
+    uint8_t cmd[3] = { SI468X_CMD_HD_GET_PSD_DECODE, (uint8_t)program, (uint8_t)field };
+    std::vector<uint8_t> resp(SI468X_REP_HD_PSD_HDR);
+    int rc = send_command(cmd, 3, resp.data(), resp.size());
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    uint8_t length = resp[7];
-    uint8_t charset = resp[6];
-
+    // DATATYPE resp[7], LENGTH resp[8], DATA0 resp[9]
+    uint8_t length = resp[8];
     if (length == 0) {
         out_text[0] = '\0';
         return 0;
     }
-
-    // Decode utilizing our universal decoder engine
-    decode_dab_string_to_utf8(&resp[8], length, charset, out_text, max_len);
+    if ((rc = reread(resp, SI468X_REP_HD_PSD_HDR + length)) != SI468X_SUCCESS) {
+        return rc;
+    }
+    decode_dab_string_to_utf8(&resp[9], length, 0, out_text, max_len);
     return 1;
 }
 
@@ -2125,30 +2108,25 @@ int si468x_fmhd_get_station_info(int info_select, char* out_text, int max_len)
         return SI468X_ERROR_PARAM;
     }
 
-    // Write 2-byte command for HD_GET_STATION_INFO (Opcode 0x94)
-    uint8_t cmd[2];
-    cmd[0] = SI468X_CMD_HD_GET_STATION_INFO;
-    cmd[1] = info_select & 0xFF;
-
-    uint8_t resp[256];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 2, resp, 256);
-
+    uint8_t cmd[2] = { SI468X_CMD_HD_GET_STATION_INFO, (uint8_t)info_select };
+    std::vector<uint8_t> resp(SI468X_REP_HD_STATION_HDR);
+    int rc = send_command(cmd, 2, resp.data(), resp.size());
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    uint16_t length = resp[4] | ((uint16_t)resp[5] << 8);
+    // LENGTH resp[5..6], DATA0 resp[7]
+    uint16_t length = le16(&resp[5]);
     if (length == 0) {
         out_text[0] = '\0';
         return 0;
     }
-
-    int copy_len = (length < max_len - 1) ? length : max_len - 1;
-    std::memcpy(out_text, &resp[6], copy_len);
-    out_text[copy_len] = '\0';
-
+    if ((rc = reread(resp, SI468X_REP_HD_STATION_HDR + length)) != SI468X_SUCCESS) {
+        return rc;
+    }
+    int n = std::min<int>(length, max_len - 1);
+    std::memcpy(out_text, &resp[7], n);
+    out_text[n] = '\0';
     return 1;
 }
 
@@ -2158,7 +2136,6 @@ int si468x_dab_get_subchan_info(uint32_t service_id, uint32_t component_id, si46
         return SI468X_ERROR_PARAM;
     }
 
-    // Write 12-byte command for DAB_GET_SUBCHAN_INFO (Opcode 0xBE)
     uint8_t cmd[12] = {
         SI468X_CMD_DAB_GET_SUBCHAN_INFO, 0x00, 0x00, 0x00,
         (uint8_t)(service_id & 0xFF),
@@ -2170,22 +2147,17 @@ int si468x_dab_get_subchan_info(uint32_t service_id, uint32_t component_id, si46
         (uint8_t)((component_id >> 16) & 0xFF),
         (uint8_t)((component_id >> 24) & 0xFF)
     };
-
-    uint8_t resp[12];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 12, resp, 12);
-
+    uint8_t resp[SI468X_REP_SUBCHAN_INFO] = {};
+    int rc = send_command(cmd, 12, resp, sizeof(resp));
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    info->service_mode = resp[4];
-    info->protection_info = resp[5];
-    info->bitrate = resp[6] | ((uint16_t)resp[7] << 8);
-    info->num_cu = resp[8] | ((uint16_t)resp[9] << 8);
-    info->cu_address = resp[10] | ((uint16_t)resp[11] << 8);
-
+    info->service_mode = resp[5];    // si468x_get_service_type_text()
+    info->protection_info = resp[6]; // si468x_get_protection_text()
+    info->bitrate = le16(&resp[7]);
+    info->num_cu = le16(&resp[9]);
+    info->cu_address = le16(&resp[11]);
     return SI468X_SUCCESS;
 }
 
@@ -2195,27 +2167,25 @@ int si468x_fmhd_get_alert_message(char* alert_text, int max_len)
         return SI468X_ERROR_PARAM;
     }
 
-    // Write 2-byte command for HD_GET_ALERT_MSG (Opcode 0x96)
-    uint8_t cmd[2] = { SI468X_CMD_HD_GET_ALERT_MSG, 0x00 };
-    uint8_t resp[256];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 2, resp, 256);
-
+    uint8_t cmd[2] = { SI468X_CMD_HD_GET_ALERT_MSG, (uint8_t)0x00 };
+    std::vector<uint8_t> resp(SI468X_REP_HD_ALERT_HDR);
+    int rc = send_command(cmd, 2, resp.data(), resp.size());
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    uint16_t length = resp[4] | ((uint16_t)resp[5] << 8);
+    // LENGTH resp[5..6], DATA0 resp[7]
+    uint16_t length = le16(&resp[5]);
     if (length == 0) {
         alert_text[0] = '\0';
         return 0;
     }
-
-    int copy_len = (length < max_len - 1) ? length : max_len - 1;
-    std::memcpy(alert_text, &resp[6], copy_len);
-    alert_text[copy_len] = '\0';
-
+    if ((rc = reread(resp, SI468X_REP_HD_ALERT_HDR + length)) != SI468X_SUCCESS) {
+        return rc;
+    }
+    int n = std::min<int>(length, max_len - 1);
+    std::memcpy(alert_text, &resp[7], n);
+    alert_text[n] = '\0';
     return 1;
 }
 
@@ -2225,62 +2195,59 @@ int si468x_dab_get_freq_info(si468x_freq_element_t* elements, int max_elements)
         return SI468X_ERROR_PARAM;
     }
 
-    // Write 2-byte command for DAB_GET_FREQ_INFO (Opcode 0xBF)
     uint8_t cmd[2] = { SI468X_CMD_DAB_GET_FREQ_INFO, 0x00 };
-    uint8_t resp[256];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 2, resp, 256);
-
+    std::vector<uint8_t> resp(SI468X_REP_FREQ_INFO_HDR);
+    int rc = send_command(cmd, 2, resp.data(), resp.size());
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    // Extract Number of Elements from resp[4..7] (32-bit Little-Endian)
-    uint32_t num_elements = resp[4] | ((uint32_t)resp[5] << 8) | ((uint32_t)resp[6] << 16) | ((uint32_t)resp[7] << 24);
-    if (num_elements == 0) {
+    // LENGTH_FI_LIST resp[5..8] = element count; 12-byte elements from resp[9]
+    uint32_t num = le32(&resp[5]);
+    if (num == 0) {
         return 0;
     }
-
-    int copy_count = (num_elements < (uint32_t)max_elements) ? num_elements : max_elements;
-
-    for (int i = 0; i < copy_count; i++) {
-        int offset = 8 + (i * 12);
-        if (offset + 12 <= 256) {
-            elements[i].id = resp[offset] | ((uint32_t)resp[offset + 1] << 8) | ((uint32_t)resp[offset + 2] << 16) | ((uint32_t)resp[offset + 3] << 24);
-            uint32_t freq_khz = resp[offset + 4] | ((uint32_t)resp[offset + 5] << 8) | ((uint32_t)resp[offset + 6] << 16) | ((uint32_t)resp[offset + 7] << 24);
-            elements[i].frequency_hz = freq_khz * 1000;
-            elements[i].freq_index = resp[offset + 8];
-            elements[i].rnm = resp[offset + 9];
-            elements[i].continuity = resp[offset + 10];
-            elements[i].control = resp[offset + 11];
-        }
+    if (num > (SI468X_REP_MAX_VAR - SI468X_REP_FREQ_INFO_HDR) / 12) {
+        return SI468X_ERROR_INVALID_REPLY;
+    }
+    if ((rc = reread(resp, SI468X_REP_FREQ_INFO_HDR + 12 * num)) != SI468X_SUCCESS) {
+        return rc;
     }
 
-    return copy_count;
+    int n = std::min<uint32_t>(num, max_elements);
+    for (int i = 0; i < n; i++) {
+        const uint8_t* e = &resp[SI468X_REP_FREQ_INFO_HDR + 12 * i];
+        elements[i].id = le32(&e[0]);
+        elements[i].frequency_hz = le32(&e[4]) * 1000;
+        elements[i].freq_index = e[8];
+        elements[i].rnm = e[9];
+        elements[i].continuity = e[10];
+        elements[i].control = e[11];
+    }
+    return n;
 }
 
+/* Linux si468x driver layout (+1). Q3: if DAB fw rejects 0x17, this returns SI468X_ERROR_COMMAND */
 int si468x_get_agc_status(si468x_agc_status_t* status)
 {
     if (!status) {
         return SI468X_ERROR_PARAM;
     }
 
-    // Write 2-byte command for GET_AGC_STATUS (Opcode 0x17)
     uint8_t cmd[2] = { SI468X_CMD_GET_AGC_STATUS, 0x00 };
-    uint8_t resp[7];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 2, resp, 7);
-
+    uint8_t resp[SI468X_REP_AGC_STATUS] = {};
+    int rc = send_command(cmd, 2, resp, sizeof(resp));
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    status->rfagc_dis = (resp[4] >> 2) & 0x01;
-    status->ifagc_dis = (resp[4] >> 1) & 0x01;
-    status->lna_gain_index = resp[5];
-
+    status->vhflna = resp[15];
+    status->vhfcatt = resp[16];
+    status->vhfrattlo = resp[17];
+    status->vhfratthi = resp[18];
+    status->lmhfrtanklo = resp[19];
+    status->lmhfrtankhi = resp[20];
+    status->rfindex = resp[22];
     return SI468X_SUCCESS;
 }
 
@@ -2290,33 +2257,26 @@ int si468x_dab_get_event_status(si468x_dab_event_status_t* status)
         return SI468X_ERROR_PARAM;
     }
 
-    // Write 2-byte command for DAB_GET_EVENT_STATUS (Opcode 0xB3, ACK = 1)
-    uint8_t cmd[2] = { SI468X_CMD_DAB_GET_EVENT_STATUS, 0x01 };
-    uint8_t resp[8];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 2, resp, 8);
-
+    uint8_t cmd[2] = { SI468X_CMD_DAB_GET_EVENT_STATUS, 0x01 }; // EVENT_ACK
+    uint8_t resp[SI468X_REP_DAB_EVENT_STATUS] = {};
+    int rc = send_command(cmd, 2, resp, sizeof(resp));
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    status->recfg_int = (resp[4] >> 7) & 0x01;
-    status->recfg_warn_int = (resp[4] >> 6) & 0x01;
-    status->anno_int = (resp[4] >> 4) & 0x01;
-    status->oeserv_int = (resp[4] >> 3) & 0x01;
-    status->servlink_int = (resp[4] >> 2) & 0x01;
-    status->freqinfo_int = (resp[4] >> 1) & 0x01;
-    status->svrlist_int = resp[4] & 0x01;
-
-    status->anno_active = (resp[5] >> 4) & 0x01;
-    status->oeserv_active = (resp[5] >> 3) & 0x01;
-    status->servlink_active = (resp[5] >> 2) & 0x01;
-    status->freqinfo_active = (resp[5] >> 1) & 0x01;
-    status->svrlist_active = resp[5] & 0x01;
-
-    status->svrlist_ver = resp[6] | ((uint16_t)resp[7] << 8);
-
+    status->recfg_int = (resp[5] >> 7) & 0x01;
+    status->recfg_warn_int = (resp[5] >> 6) & 0x01;
+    status->anno_int = (resp[5] >> 4) & 0x01;
+    status->oeserv_int = (resp[5] >> 3) & 0x01;
+    status->servlink_int = (resp[5] >> 2) & 0x01;
+    status->freqinfo_int = (resp[5] >> 1) & 0x01;
+    status->svrlist_int = resp[5] & 0x01;
+    status->anno_active = (resp[6] >> 4) & 0x01;
+    status->oeserv_active = (resp[6] >> 3) & 0x01;
+    status->servlink_active = (resp[6] >> 2) & 0x01;
+    status->freqinfo_active = (resp[6] >> 1) & 0x01;
+    status->svrlist_active = resp[6] & 0x01;
+    status->svrlist_ver = le16(&resp[7]);
     return SI468X_SUCCESS;
 }
 
@@ -2387,7 +2347,6 @@ int si468x_dab_get_other_ensemble_info(uint32_t service_id, uint16_t* eids, int 
         return SI468X_ERROR_PARAM;
     }
 
-    // Write 8-byte command for DAB_GET_OE_SERVICES_INFO (Opcode 0xC1)
     uint8_t cmd[8] = {
         SI468X_CMD_DAB_GET_OE_SERVICES_INFO, 0x00, 0x00, 0x00,
         (uint8_t)(service_id & 0xFF),
@@ -2395,74 +2354,56 @@ int si468x_dab_get_other_ensemble_info(uint32_t service_id, uint16_t* eids, int 
         (uint8_t)((service_id >> 16) & 0xFF),
         (uint8_t)((service_id >> 24) & 0xFF)
     };
-
-    uint8_t resp[256];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 8, resp, 256);
-
+    std::vector<uint8_t> resp(SI468X_REP_OE_SERVICES_HDR);
+    int rc = send_command(cmd, 8, resp.data(), resp.size());
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    // Extract number of EIDs at resp[6]
-    uint8_t num_eids = resp[6];
-    if (num_eids == 0) {
+    // SIZE resp[5..6], NUM_EIDS resp[7], EIDs u16 from resp[9]
+    uint8_t num = resp[7];
+    if (num == 0) {
         return 0;
     }
-
-    int copy_count = (num_eids < max_eids) ? num_eids : max_eids;
-
-    for (int i = 0; i < copy_count; i++) {
-        int offset = 8 + (i * 2);
-        if (offset + 2 <= 256) {
-            eids[i] = resp[offset] | ((uint16_t)resp[offset + 1] << 8);
-        }
+    if ((rc = reread(resp, SI468X_REP_OE_SERVICES_HDR + 2 * num)) != SI468X_SUCCESS) {
+        return rc;
     }
-
-    return copy_count;
+    int n = std::min<int>(num, max_eids);
+    for (int i = 0; i < n; i++) {
+        eids[i] = le16(&resp[SI468X_REP_OE_SERVICES_HDR + 2 * i]);
+    }
+    return n;
 }
 
-int si468x_dab_get_ber_info(int clear, uint32_t* ber_count, uint32_t* fib_error_count)
+int si468x_dab_get_ber_info(int clear, uint32_t* err_bits, uint32_t* total_bits)
 {
-    // Write 2-byte command for DAB_TEST_GET_BER_INFO (Opcode 0xE8)
     uint8_t cmd[2] = { SI468X_CMD_DAB_TEST_GET_BER_INFO, (uint8_t)(clear & 0x01) };
-    uint8_t resp[12];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 2, resp, 12);
-
+    uint8_t resp[SI468X_REP_DAB_BER] = {};
+    int rc = send_command(cmd, 2, resp, sizeof(resp));
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
-
-    if (ber_count) {
-        *ber_count = resp[4] | ((uint32_t)resp[5] << 8) | ((uint32_t)resp[6] << 16) | ((uint32_t)resp[7] << 24);
+    if (err_bits) {
+        *err_bits = le32(&resp[5]);
     }
-
-    if (fib_error_count) {
-        *fib_error_count = resp[8] | ((uint32_t)resp[9] << 8) | ((uint32_t)resp[10] << 16) | ((uint32_t)resp[11] << 24);
+    if (total_bits) {
+        *total_bits = le32(&resp[9]);
     }
-
     return SI468X_SUCCESS;
 }
 
+/* HD only (not on Si4684/Si4688): returns PIDS_BLOCK_ERRORS of the 10 counters at resp[5..44] */
 int si468x_fmhd_get_ber_info(int clear, uint32_t* ber_count)
 {
-    // Write 2-byte command for HD_TEST_GET_BER_INFO (Opcode 0x98)
     uint8_t cmd[2] = { SI468X_CMD_HD_TEST_GET_BER_INFO, (uint8_t)(clear & 0x01) };
-    uint8_t resp[8];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 2, resp, 8);
-
+    uint8_t resp[SI468X_REP_HD_BER] = {};
+    int rc = send_command(cmd, 2, resp, sizeof(resp));
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
-
     if (ber_count) {
-        *ber_count = resp[4] | ((uint32_t)resp[5] << 8) | ((uint32_t)resp[6] << 16) | ((uint32_t)resp[7] << 24);
+        *ber_count = le32(&resp[5]);
     }
-
     return SI468X_SUCCESS;
 }
+
