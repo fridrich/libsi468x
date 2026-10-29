@@ -6,6 +6,7 @@
 #include <iostream>
 #include <cassert>
 #include <cstring>
+#include <algorithm>
 #include <chrono>
 #include "si468x.h"
 #include "si468x_internal.h"
@@ -827,6 +828,63 @@ static bool test_fm_tune()
     return true;
 }
 
+static std::vector<uint8_t> dsd(uint8_t src, uint8_t dscty, uint8_t buff, const std::vector<uint8_t>& payload)
+{
+    uint16_t n = payload.size();
+    std::vector<uint8_t> r = reply({ 0x81, 0x80, 0x00, 0xC0, 0x01, buff, 0x03, (uint8_t)(src << 6 | dscty),
+                                     0xD1, 0x43, 0, 0, 7, 0, 0, 0, 0, 0, (uint8_t)n, (uint8_t)(n >> 8), 0, 0, 0, 0 });
+    r.insert(r.end(), payload.begin(), payload.end());
+    return r;
+}
+
+static bool test_dls_mot()
+{
+    std::cout << "Running test: test_dls_mot..." << std::endl;
+
+    MockChip chip;
+    char dls[129];
+
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA, FX_DSD_DLS_TEXT);
+    ASSERT_TRUE(si468x_get_dls_text(dls, sizeof(dls)) == 1 && std::strcmp(dls, "Juste mesure") == 0, "captured DLS");
+    ASSERT_TRUE(std::find(chip.reads.begin(), chip.reads.end(), FX_DSD_DLS_TEXT.size()) != chip.reads.end(),
+                "re-read 25 + BYTE_COUNT");
+    ASSERT_TRUE(si468x_get_dls_text(dls, sizeof(dls)) == 0 && std::strcmp(dls, "Juste mesure") == 0, "unchanged -> 0, text kept");
+
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA, FX_DSD_DLS_DLPLUS);
+    ASSERT_TRUE(si468x_get_dls_text(dls, sizeof(dls)) == 0 && std::strcmp(dls, "Juste mesure") == 0, "DL Plus ignored");
+
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA, FX_DSD_EMPTY);
+    ASSERT_TRUE(si468x_get_dls_text(dls, sizeof(dls)) == 0, "empty queue (ERR) is no data, not an error");
+
+    // DLS charset 4 -> UCS-2: "Été"
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA, dsd(2, 0, 0, { 0x00, 0x40, 0x00, 0xC9, 0x00, 0x74, 0x00, 0xE9 }));
+    ASSERT_TRUE(si468x_get_dls_text(dls, sizeof(dls)) == 1 && std::strcmp(dls, "\xC3\x89t\xC3\xA9") == 0, "charset 4 = UCS-2");
+    ASSERT_TRUE(si468x_get_dls_text(dls, 3) == 0 && std::strcmp(dls, "\xC3\x89") == 0, "truncated on char boundary");
+
+    // Clear command
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA, dsd(2, 0, 0, { 0x11, 0x00 }));
+    ASSERT_TRUE(si468x_get_dls_text(dls, sizeof(dls)) == 1 && dls[0] == '\0', "DLS clear");
+
+    // Mixed queue: MOT header, MOT body, DLS. Reading DLS must not lose the MOT packets.
+    const std::vector<uint8_t> mot_hdr = { 0, 0, 0x80, 0x00, 0x12, 0x12, 0x34, 0, 0, 0, 0x00, 0x00, 0x40, 0, 0 };
+    const std::vector<uint8_t> mot_body = { 0, 0, 0x00, 0x00, 0x12, 0x12, 0x34, 0, 0, 0xFF, 0xD8, 0xFF, 0xD9, 0, 0 };
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA, dsd(1, 60, 2, mot_hdr));
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA, dsd(1, 60, 1, mot_body));
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA, dsd(2, 0, 0, { 0x00, 0x00, 'H', 'i' }));
+    ASSERT_TRUE(si468x_get_dls_text(dls, sizeof(dls)) == 1 && std::strcmp(dls, "Hi") == 0, "DLS behind MOT packets");
+    si468x_mot_slideshow_t sl;
+    ASSERT_TRUE(si468x_get_mot_slideshow(&sl) == 1 && sl.is_new == 1, "MOT assembled by the DLS call's pump");
+    ASSERT_TRUE(sl.image_size == 4 && sl.transport_id == 0x1234 && sl.image_data[0] == 0xFF && sl.image_data[1] == 0xD8, "JPEG bytes");
+    ASSERT_TRUE(si468x_get_mot_slideshow(&sl) == 0 && sl.is_new == 0, "reported once");
+
+    // Short MOT packet (byte_count < 11): no underflow, ignored
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA, dsd(1, 60, 0, { 0, 0, 0x00, 0x01, 0x12, 0x12, 0x34, 0, 0, 0 }));
+    ASSERT_TRUE(si468x_get_mot_slideshow(&sl) == 0, "short segment ignored");
+
+    std::cout << "PASS: test_dls_mot" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -854,6 +912,7 @@ int main()
     success &= test_dab_aux();
     success &= test_property_values();
     success &= test_fm_tune();
+    success &= test_dls_mot();
 
     std::cout << "========================================" << std::endl;
     if (success) {

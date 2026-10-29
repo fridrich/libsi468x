@@ -1056,6 +1056,16 @@ static uint32_t le32(const uint8_t* p)
     return p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
+/* Variable reply: header read, then one re-read of header + payload (no second query) */
+static int reread(std::vector<uint8_t>& resp, size_t total)
+{
+    if (total > SI468X_REP_MAX_VAR) {
+        return SI468X_ERROR_INVALID_REPLY;
+    }
+    resp.assign(total, 0);
+    return read_reply(resp.data(), total);
+}
+
 int si468x_get_ensemble_info(char* label, uint16_t* ueid)
 {
     if (!label) {
@@ -1313,93 +1323,57 @@ int si468x_set_audio_output(int enable_i2s)
     return si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_FORMAT, 0x1000);
 }
 
-int si468x_get_dls_text(char* out_text, int max_len)
+/*
+ * GET_DIGITAL_SERVICE_DATA dispatcher (one reader for all consumers): each 0x84 ACK pops one
+ * packet, so DLS and MOT must share one reader or they steal each other's packets.
+ * Header (lib idx): DSRVPCKTINT resp[5]&1, BUFF_COUNT resp[6], DATA_SRC resp[8]>>6 (1 PAD data, 2 PAD DLS),
+ * DSCTY resp[8]&0x3F, SId resp[9..12], CompId resp[13..16], BYTE_COUNT resp[19..20], payload resp[25].
+ * Single consumer: static state, no locking.
+ */
+static std::string dls_text;
+static bool dls_changed = false;
+
+static void dls_feed(const uint8_t* p, uint16_t n)
 {
-    static std::string last_dls_text = "";
-
-    if (!out_text || max_len <= 0) {
-        return SI468X_ERROR_PARAM;
+    if (n < 2) {
+        return;
     }
-
-    // Command 0x84 (DAB_GET_DIGITAL_SERVICE_DATA) with parameter 0x01 (DLS Text)
-    uint8_t cmd[2] = { 0x84, 0x01 };
-    std::vector<uint8_t> resp(2073, 0x00);
-
-    int rc = send_command(cmd, 2, resp.data(), 2073, 1000, SC_ERR_OK);
-    if (rc != SI468X_SUCCESS) {
-        return rc;
-    }
-    if (resp[1] & 0x40) { // queue empty
-        out_text[0] = '\0';
-        return 0;
-    }
-
-    // Check DLS presence flag (Bit 0 of resp[5])
-    bool dls_present = resp[5] & 0x01;
-    if (!dls_present) {
-        out_text[0] = '\0';
-        return 0; // No active DLS text present
-    }
-
-    // Extract DLS length (16-bit Little-Endian word at resp[19..20])
-    uint16_t dls_len = resp[19] | ((uint16_t)resp[20] << 8);
-
-    // The first 2 bytes (resp[25] and resp[26]) are DLS Control Bytes (header)
-    // The actual text characters start at resp[27]
-    if (dls_len <= 2 || dls_len > 130) {
-        out_text[0] = '\0';
-        return 0; // No active DLS text in the queue
-    }
-
-    // Check if it is a DLS command (Bit 4 of resp[25] is set)
-    bool is_command = resp[25] & 0x10;
-    if (is_command) {
-        uint8_t cmd_type = resp[25] & 0x0F;
-        if (cmd_type == 0x01) { // DLS Clear command
-            out_text[0] = '\0';
-            if (last_dls_text != "") {
-                last_dls_text = "";
-                return 1; // Updated to empty display
-            }
+    if (p[0] & 0x10) {
+        // Command: 1 = clear display, 2 = DL Plus (ignored)
+        if ((p[0] & 0x0F) == 0x01 && !dls_text.empty()) {
+            dls_text.clear();
+            dls_changed = true;
         }
-        return 0; // Skip other binary commands (like DL+ tags)
+        return;
     }
-
-    uint16_t text_len = dls_len - 2;
-
-    if (text_len >= max_len) {
-        text_len = max_len - 1;
+    uint8_t charset = (p[1] >> 4) & 0x0F;
+    if (charset == 4) {
+        charset = 6; // DLS charset 4 is UCS-2
     }
-
-    uint8_t charset = (resp[26] >> 4) & 0x0F; // Charset is in the upper 4 bits of the second DLS Control Byte (resp[26])
-
-    // Dynamic UTF-8 DLS string payload parsing starting exactly at resp[27]
-    decode_dab_string_to_utf8(&resp[27], text_len, charset, out_text, max_len);
-
-    std::string current_dls(out_text);
-
-    if (current_dls != last_dls_text) {
-        last_dls_text = current_dls;
-        return 1; // New text frame assembled!
+    char buf[400]; // 128 chars, up to 3 UTF-8 bytes each
+    decode_dab_string_to_utf8(p + 2, n - 2, charset, buf, sizeof(buf));
+    if (dls_text != buf) {
+        dls_text = buf;
+        dls_changed = true;
     }
+}
 
-    return 0; // No change
-    }
+// MOT Slideshow static state
+#define SLS_MAX_SEGMENTS  80
+#define SLS_MAX_SEG_SIZE  512
+static uint8_t mot_segment_buf[SLS_MAX_SEGMENTS * SLS_MAX_SEG_SIZE];
+static uint16_t mot_segment_len[SLS_MAX_SEGMENTS];
+static uint8_t mot_segment_bitmap[32]; // 256 bits max
+static uint16_t mot_transport_id = 0;
+static uint32_t mot_byte_counter = 0;
+static uint32_t mot_expected_length = 0;
+static uint8_t mot_highest_segment = 0;
+static uint8_t mot_total_segments = 0;
+static uint32_t mot_last_activity = 0;
+static si468x_mot_slideshow_t mot_done; // completed image, is_new = 1 until fetched
 
-    // MOT Slideshow static state
-    #define SLS_MAX_SEGMENTS  80
-    #define SLS_MAX_SEG_SIZE  512
-    static uint8_t mot_segment_buf[SLS_MAX_SEGMENTS * SLS_MAX_SEG_SIZE];
-    static uint16_t mot_segment_len[SLS_MAX_SEGMENTS];
-    static uint8_t mot_segment_bitmap[32]; // 256 bits max
-    static uint16_t mot_transport_id = 0;
-    static uint32_t mot_byte_counter = 0;
-    static uint32_t mot_expected_length = 0;
-    static uint8_t mot_highest_segment = 0;
-    static uint8_t mot_total_segments = 0;
-    static uint32_t mot_last_activity = 0;
-
-    static void clear_mot_buffer() {
+static void clear_mot_buffer()
+{
     std::memset(mot_segment_len, 0, sizeof(mot_segment_len));
     std::memset(mot_segment_bitmap, 0, sizeof(mot_segment_bitmap));
     mot_transport_id = 0;
@@ -1407,63 +1381,40 @@ int si468x_get_dls_text(char* out_text, int max_len)
     mot_highest_segment = 0;
     mot_total_segments = 0;
     mot_expected_length = 0;
-    }
+}
 
-    static bool all_mot_segments_received() {
-    uint8_t segments_to_check = mot_total_segments;
-    if (segments_to_check == 0) {
-        segments_to_check = mot_highest_segment + 1;
-    }
-    if (segments_to_check == 0) return false;
-
-    for (uint8_t i = 0; i < segments_to_check; i++) {
-        uint8_t byte_idx = i / 8;
-        uint8_t bit_idx = i % 8;
-        if (!(mot_segment_bitmap[byte_idx] & (1 << bit_idx))) {
+static bool all_mot_segments_received()
+{
+    unsigned segments_to_check = mot_total_segments ? mot_total_segments : mot_highest_segment + 1u;
+    for (unsigned i = 0; i < segments_to_check; i++) {
+        if (!(mot_segment_bitmap[i / 8] & (1 << (i % 8)))) {
             return false;
         }
     }
     return true;
-    }
+}
 
-    int si468x_get_mot_slideshow(si468x_mot_slideshow_t* slideshow)
-    {
-    if (!slideshow) {
-        return SI468X_ERROR_PARAM;
-    }
+static void mot_complete(uint32_t size)
+{
+    mot_total_segments = mot_highest_segment + 1;
+    mot_done.image_data = mot_segment_buf;
+    mot_done.image_size = size;
+    mot_done.transport_id = mot_transport_id;
+    mot_done.is_new = 1;
+}
 
-    slideshow->is_new = 0;
-
-    // Timeout cleanup
+/* p = payload (old code's resp[25 + k] == p[k]), n = BYTE_COUNT */
+static void mot_feed(const uint8_t* p, uint16_t n)
+{
     uint32_t now = (uint32_t)time(NULL);
     if (mot_transport_id != 0 && mot_last_activity > 0 && (now - mot_last_activity) > 30) {
         clear_mot_buffer();
     }
 
-    // Polling opcode 0x84, param 0x01
-    uint8_t cmd[2] = { 0x84, 0x01 };
-    std::vector<uint8_t> resp(2073, 0x00);
-
-    int rc = send_command(cmd, 2, resp.data(), 2073, 1000, SC_ERR_OK);
-    if (rc != SI468X_SUCCESS) {
-        return rc;
-    }
-    if (resp[1] & 0x40) { // queue empty
-        return 0;
-    }
-
-    uint16_t byte_count = resp[19] | ((uint16_t)resp[20] << 8);
-    if (byte_count == 0) {
-        return 0;
-    }
-
-    uint8_t group_type = (resp[8] >> 6) & 0x03;
-
-    // Is it MOT Header?
-    if (group_type == 0x01 && resp[27] == 0x80 && resp[28] == 0x00 && resp[29] == 0x12 && byte_count < 200) {
-        uint16_t tid = (resp[30] << 8) | resp[31];
-        uint32_t new_len = (((uint32_t)resp[35] << 12) | ((uint32_t)resp[36] << 4) | ((uint32_t)resp[37] >> 4)) & 0x00FFFF;
-
+    // MOT header
+    if (n >= 13 && n < 200 && p[2] == 0x80 && p[3] == 0x00 && p[4] == 0x12) {
+        uint16_t tid = (p[5] << 8) | p[6];
+        uint32_t new_len = (((uint32_t)p[10] << 12) | ((uint32_t)p[11] << 4) | ((uint32_t)p[12] >> 4)) & 0x00FFFF;
         if (new_len > 0) {
             if (mot_expected_length == 0 || (mot_transport_id != 0 && tid != mot_transport_id)) {
                 clear_mot_buffer();
@@ -1471,81 +1422,129 @@ int si468x_get_dls_text(char* out_text, int max_len)
                 mot_transport_id = tid;
             }
             if (mot_byte_counter >= mot_expected_length && all_mot_segments_received()) {
-                mot_total_segments = mot_highest_segment + 1;
-                slideshow->image_data = mot_segment_buf;
-                slideshow->image_size = mot_expected_length;
-                slideshow->transport_id = mot_transport_id;
-                slideshow->is_new = 1;
-                return 1;
+                mot_complete(mot_expected_length);
             }
         }
     }
-    // Is it MOT Body Segment?
-    else if (group_type == 0x01 && (resp[27] == 0x00 || resp[27] == 0x80) && resp[29] == 0x12) {
-        uint16_t tid = (resp[30] << 8) | resp[31];
-        uint8_t seg_num = resp[28];
-
+    // MOT body segment: data p[9 .. n-3] (2 trailing CRC bytes)
+    else if (n >= 11 && (p[2] == 0x00 || p[2] == 0x80) && p[4] == 0x12) {
+        uint16_t tid = (p[5] << 8) | p[6];
+        uint8_t seg_num = p[3];
         if (mot_transport_id == 0) {
             mot_transport_id = tid;
         }
+        if (tid != mot_transport_id) {
+            return;
+        }
+        uint8_t byte_idx = seg_num / 8;
+        uint8_t bit_idx = seg_num % 8;
 
-        if (tid == mot_transport_id) {
-            uint8_t byte_idx = seg_num / 8;
-            uint8_t bit_idx = seg_num % 8;
-
-            if (!(mot_segment_bitmap[byte_idx] & (1 << bit_idx))) {
-                uint16_t data_len = byte_count - 11;
-                if (seg_num < SLS_MAX_SEGMENTS && data_len <= SLS_MAX_SEG_SIZE) {
-                    std::memcpy(&mot_segment_buf[seg_num * SLS_MAX_SEG_SIZE], &resp[34], data_len);
-                    mot_segment_len[seg_num] = data_len;
-                    mot_segment_bitmap[byte_idx] |= (1 << bit_idx);
-                    mot_byte_counter += data_len;
-                    if (seg_num > mot_highest_segment) {
-                        mot_highest_segment = seg_num;
-                    }
-                    mot_last_activity = now;
-
-                    if (mot_expected_length > 0 && mot_byte_counter >= mot_expected_length && all_mot_segments_received()) {
-                        mot_total_segments = mot_highest_segment + 1;
-                        slideshow->image_data = mot_segment_buf;
-                        slideshow->image_size = mot_expected_length;
-                        slideshow->transport_id = mot_transport_id;
-                        slideshow->is_new = 1;
-                        return 1;
-                    }
+        if (!(mot_segment_bitmap[byte_idx] & (1 << bit_idx))) {
+            uint16_t data_len = n - 11;
+            if (seg_num < SLS_MAX_SEGMENTS && data_len <= SLS_MAX_SEG_SIZE) {
+                std::memcpy(&mot_segment_buf[seg_num * SLS_MAX_SEG_SIZE], &p[9], data_len);
+                mot_segment_len[seg_num] = data_len;
+                mot_segment_bitmap[byte_idx] |= (1 << bit_idx);
+                mot_byte_counter += data_len;
+                if (seg_num > mot_highest_segment) {
+                    mot_highest_segment = seg_num;
                 }
-            } else if (seg_num == 0 && mot_expected_length == 0 && mot_highest_segment > 0) {
-                if (all_mot_segments_received()) {
-                    mot_total_segments = mot_highest_segment + 1;
-
-                    // We don't have the exact header length, but we have all segments. Sum lengths.
-                    uint32_t calc_len = 0;
-                    for (int i=0; i<mot_total_segments; i++) calc_len += mot_segment_len[i];
-
-                    // To keep it clean and sequential like SI4684-DAB-Receiver, we compact the buffer
-                    // so there are no 512-byte padding gaps between variable length segments!
-                    uint32_t cursor = 0;
-                    for (int i = 0; i < mot_total_segments; i++) {
-                        if (cursor != i * SLS_MAX_SEG_SIZE) {
-                            std::memmove(&mot_segment_buf[cursor], &mot_segment_buf[i * SLS_MAX_SEG_SIZE], mot_segment_len[i]);
-                        }
-                        cursor += mot_segment_len[i];
-                    }
-
-                    slideshow->image_data = mot_segment_buf;
-                    slideshow->image_size = calc_len;
-                    slideshow->transport_id = mot_transport_id;
-                    slideshow->is_new = 1;
-                    return 1;
+                mot_last_activity = now;
+                if (mot_expected_length > 0 && mot_byte_counter >= mot_expected_length && all_mot_segments_received()) {
+                    mot_complete(mot_expected_length);
                 }
             }
         }
+        else if (seg_num == 0 && mot_expected_length == 0 && mot_highest_segment > 0 && all_mot_segments_received()) {
+            // No header seen but all segments present: compact out the 512-byte slot padding
+            mot_total_segments = mot_highest_segment + 1;
+            uint32_t cursor = 0;
+            for (unsigned i = 0; i < mot_total_segments; i++) {
+                if (cursor != i * SLS_MAX_SEG_SIZE) {
+                    std::memmove(&mot_segment_buf[cursor], &mot_segment_buf[i * SLS_MAX_SEG_SIZE], mot_segment_len[i]);
+                }
+                cursor += mot_segment_len[i];
+            }
+            mot_complete(cursor);
+        }
+    }
+}
+
+/* Pop up to max_packets packets and route them; empty queue (ERR) is not an error */
+static int pump_service_data(int max_packets)
+{
+    uint8_t cmd[2] = { SI468X_CMD_GET_DIGITAL_SERVICE_DATA, 0x01 };
+    std::vector<uint8_t> resp(SI468X_REP_DSD_HDR);
+
+    for (int k = 0; k < max_packets; k++) {
+        resp.assign(SI468X_REP_DSD_HDR, 0);
+        int rc = send_command(cmd, 2, resp.data(), resp.size(), 1000, SC_ERR_OK);
+        if (rc != SI468X_SUCCESS) {
+            return rc;
+        }
+        if ((resp[1] & 0x40) || !(resp[5] & 0x01)) {
+            return SI468X_SUCCESS; // queue empty
+        }
+        uint16_t n = le16(&resp[19]);
+        if (n > 0 && (rc = reread(resp, SI468X_REP_DSD_HDR + n)) != SI468X_SUCCESS) {
+            return rc;
+        }
+        uint8_t src = resp[8] >> 6;
+        if (src == 2) {
+            dls_feed(&resp[SI468X_REP_DSD_HDR], n);
+        }
+        else if (src == 1) {
+            mot_feed(&resp[SI468X_REP_DSD_HDR], n);
+        }
+        if (resp[6] == 0) { // BUFF_COUNT: nothing left
+            break;
+        }
+    }
+    return SI468X_SUCCESS;
+}
+
+int si468x_get_dls_text(char* out_text, int max_len)
+{
+    if (!out_text || max_len <= 0) {
+        return SI468X_ERROR_PARAM;
+    }
+    int rc = pump_service_data(8);
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
-    return 0;
+    // Copy, truncated on a UTF-8 character boundary
+    size_t n = std::min(dls_text.size(), (size_t)max_len - 1);
+    while (n > 0 && n < dls_text.size() && ((uint8_t)dls_text[n] & 0xC0) == 0x80) {
+        n--;
     }
+    std::memcpy(out_text, dls_text.data(), n);
+    out_text[n] = '\0';
 
-    int si468x_get_chip_info(si468x_chip_info_t* info)
+    int changed = dls_changed ? 1 : 0;
+    dls_changed = false;
+    return changed;
+}
+
+int si468x_get_mot_slideshow(si468x_mot_slideshow_t* slideshow)
+{
+    if (!slideshow) {
+        return SI468X_ERROR_PARAM;
+    }
+    slideshow->is_new = 0;
+    int rc = pump_service_data(8);
+    if (rc != SI468X_SUCCESS) {
+        return rc;
+    }
+    if (!mot_done.is_new) {
+        return 0;
+    }
+    *slideshow = mot_done;
+    mot_done.is_new = 0;
+    return 1;
+}
+
+int si468x_get_chip_info(si468x_chip_info_t* info)
 {
     if (!info) {
         return SI468X_ERROR_PARAM;
@@ -1974,16 +1973,6 @@ int si468x_dab_get_announcement_info(int buf_empty, uint32_t* service_id, uint32
         *component_id = le16(&resp[13]);
     }
     return SI468X_SUCCESS;
-}
-
-/* Variable reply: header read, then one re-read of header + payload (no second query) */
-static int reread(std::vector<uint8_t>& resp, size_t total)
-{
-    if (total > SI468X_REP_MAX_VAR) {
-        return SI468X_ERROR_INVALID_REPLY;
-    }
-    resp.assign(total, 0);
-    return read_reply(resp.data(), total);
 }
 
 int si468x_dab_get_service_linking(uint32_t service_id, uint8_t* link_info, int max_len)
