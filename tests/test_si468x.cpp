@@ -429,14 +429,28 @@ static bool test_dab_tune_waits_stc()
     std::cout << "Running test: test_dab_tune_waits_stc..." << std::endl;
 
     MockChip chip;
-    // First tune rejected (previous tune still running), retry accepted with STCINT
+    // First tune rejected (chip busy), retry accepted with STCINT; locked; list after 2 event polls
     chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0xC0, 0x80, 0x00, 0xC0, 0x18 }));
     chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
     chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    chip.expect(SI468X_CMD_DAB_GET_EVENT_STATUS, reply({ 0x81, 0x80, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00 }));
+    chip.expect(SI468X_CMD_DAB_GET_EVENT_STATUS, reply({ 0x81, 0x80, 0x00, 0xC0, 0x01, 0x01, 0x27, 0x00 }));
+    auto t0 = std::chrono::steady_clock::now();
     ASSERT_TRUE(si468x_set_frequency(223936000) == SI468X_SUCCESS, "12A tune after retry");
+    ASSERT_TRUE(ms_since(t0) < 3000 + 1000, "no fixed 3 s FIC sleep beyond the retry's STC wait");
+    ASSERT_TRUE(si468x_get_frequency() == 223936000, "active_frequency set on success");
     auto tunes = chip.sent(SI468X_CMD_DAB_TUNE_FREQ);
     ASSERT_TRUE(tunes.size() == 2 && tunes[1][2] == 30, "retried DAB_TUNE_FREQ index 30");
+    ASSERT_TRUE(chip.sent(SI468X_CMD_DAB_GET_EVENT_STATUS).size() == 2, "stops polling at SVRLIST");
     ASSERT_TRUE(chip.sent(SI468X_CMD_GET_DIGITAL_SERVICE_LIST).empty(), "no bogus {0x80,0x02}");
+
+    // STC but no VALID/ACQ (empty channel): rejected after the short grace, not 2.5 s
+    chip.writes.clear();
+    chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
+    t0 = std::chrono::steady_clock::now();
+    ASSERT_TRUE(si468x_set_frequency(174928000) == SI468X_ERROR_TIMEOUT, "no lock -> timeout");
+    ASSERT_TRUE(ms_since(t0) < 1000, "fast reject of empty channel");
+    ASSERT_TRUE(si468x_get_frequency() == 0, "active_frequency cleared on failure");
 
     // STCINT never set -> timeout, no lock polling
     chip.writes.clear();
@@ -795,6 +809,24 @@ static bool test_property_values()
     return true;
 }
 
+static bool test_fm_tune()
+{
+    std::cout << "Running test: test_fm_tune..." << std::endl;
+
+    MockChip chip;
+    chip.expect(SI468X_CMD_FM_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 })); // STCINT set
+    ASSERT_TRUE(si468x_tune_fm(101700) == SI468X_SUCCESS, "FM tune");
+    const std::vector<uint8_t> want = { 0x30, 0x00, 0xBA, 0x27, 0x01, 0x00, 0x00 };
+    ASSERT_TRUE(chip.sent(SI468X_CMD_FM_TUNE_FREQ).back() == want, "101.7 MHz frame, ANTCAP 1");
+    ASSERT_TRUE(chip.writes.back() == std::vector<uint8_t>({ 0x32, 0x01 }), "STCACK after STC");
+
+    chip.expect(SI468X_CMD_FM_TUNE_FREQ, reply({ 0x80, 0x80, 0x00, 0xC0 })); // no STC
+    ASSERT_TRUE(si468x_tune_fm(101700) == SI468X_ERROR_TIMEOUT, "no STC -> timeout");
+
+    std::cout << "PASS: test_fm_tune" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -821,6 +853,7 @@ int main()
     success &= test_time_audio_fm_rds();
     success &= test_dab_aux();
     success &= test_property_values();
+    success &= test_fm_tune();
 
     std::cout << "========================================" << std::endl;
     if (success) {

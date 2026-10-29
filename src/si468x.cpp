@@ -703,26 +703,22 @@ static int si468x_get_freq_index(uint32_t frequency_hz)
     return -1;
 }
 
+/*
+ * Tune, STC, lock check, service list wait. Q4 (probe): STC ~0.5 s on 12A with VALID+ACQ already set,
+ * ~2.1 s on an empty channel with VALID never set. Lock rule: VALID && ACQ once after STC.
+ */
 int si468x_set_frequency(uint32_t frequency_hz)
 {
-    // Map the requested frequency (in Hz) to its standard European Frequency Index (0-40) complied with firmware
     int freq_index = si468x_get_freq_index(frequency_hz);
     if (freq_index < 0) {
         return SI468X_ERROR_PARAM;
     }
+    active_frequency = 0;
 
-    active_frequency = frequency_hz;
+    // DAB_TUNE_FREQ: index at byte 2, ANTCAP 0 = front-end calibration
+    uint8_t cmd[6] = { SI468X_CMD_DAB_TUNE_FREQ, 0x00, (uint8_t)freq_index, 0x00, 0x00, 0x00 };
 
-    // Build DAB_TUNE_FREQ packet (must be exactly 6 bytes)
-    uint8_t cmd[6];
-    cmd[0] = SI468X_CMD_DAB_TUNE_FREQ;
-    cmd[1] = 0x00;
-    cmd[2] = freq_index; // Pass the frequency index at Byte 2 (matches reference binary)
-    cmd[3] = 0x00;
-    cmd[4] = 0x00;
-    cmd[5] = 0x00;
-
-    // Tune while a previous tune runs -> ERR 0x18; let it finish, retry once
+    // Tune while the chip is still busy -> ERR 0x18; let it finish, retry once
     int rc = send_command(cmd, 6, nullptr, 0, 5000);
     if (rc == SI468X_ERROR_COMMAND) {
         wait_stc(3000);
@@ -732,33 +728,34 @@ int si468x_set_frequency(uint32_t frequency_hz)
         return rc;
     }
 
-    // Tune complete (STCINT) before the next tune can be accepted
     rc = wait_stc(3000);
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    // Wait for the RF synthesizers to lock and acquire OFDM sync (up to 2.5 seconds)
+    // ponytail: 500 ms grace beyond a single check, for marginal signals; drop if scans show no use
     bool locked = false;
-    for (int i = 0; i < 25; i++) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-        // Poll signal status using correct 2-byte command
-        si468x_signal_status_t status;
-        if (si468x_get_signal_status(&status) == SI468X_SUCCESS) {
-            if (status.sync_status == 1) {
-                locked = true;
-                break;
-            }
+    for (int i = 0; i < 6 && !locked; i++) {
+        if (i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
+        si468x_signal_status_t st;
+        locked = si468x_get_signal_status(&st) == SI468X_SUCCESS && st.sync_status;
     }
-
     if (!locked) {
-        return SI468X_ERROR_TIMEOUT; // No signal found on this frequency
+        return SI468X_ERROR_TIMEOUT;
     }
 
-    // Give the co-processor 3000ms to accumulate and decode the complete FIC database tables from the air
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    // Service list available (event SVRLIST), max 5 s
+    for (int t = 0; t < 5000; t += 100) {
+        si468x_dab_event_status_t ev;
+        if (si468x_dab_get_event_status(&ev) == SI468X_SUCCESS && (ev.svrlist_int || ev.svrlist_active)) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    active_frequency = frequency_hz;
     return SI468X_SUCCESS;
 }
 
@@ -884,7 +881,7 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
         playing_sid = service_id;
         playing_comp = component_id;
 
-        // Turn on the on-chip PAD/XPAD decoder so that DLS text and MOT slideshow are dynamically decoded
+        // Re-apply DAB_VALID timing + XPAD enable (DLS/slideshow)
         si468x_enable_service_data();
 
         return SI468X_SUCCESS;
@@ -1601,25 +1598,24 @@ int si468x_set_frequency_table(const uint32_t* freqs, int count)
 
 int si468x_tune_fm(uint32_t frequency_khz)
 {
-    // Clean and reset the RDS decoder state to isolate different frequencies
     rds_decoder.reset();
 
-    // Command size = 7 bytes. Set Byte 1 to 0x00 (Analog Only) and ANTCAP (Byte 4-5) to 0x0000 (Auto)
-    uint8_t cmd[7] = { SI468X_CMD_FM_TUNE_FREQ, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-    uint32_t freq_10khz = frequency_khz / 10;
-    cmd[2] = freq_10khz & 0xFF;
-    cmd[3] = (freq_10khz >> 8) & 0xFF;
-
+    // TUNE_MODE 0 (analog; Si4684/88 have no HD), FREQ in 10 kHz, ANTCAP 1, PROG_ID 0
+    uint32_t f = frequency_khz / 10;
+    uint8_t cmd[7] = { SI468X_CMD_FM_TUNE_FREQ, 0x00, (uint8_t)(f & 0xFF), (uint8_t)(f >> 8), 0x01, 0x00, 0x00 };
     int rc = send_command(cmd, 7, nullptr, 0);
-
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    // Give the RF synthesizer 300ms to lock and stabilize on-chip
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    rc = wait_stc(1000);
+    if (rc != SI468X_SUCCESS) {
+        return rc;
+    }
 
-    return SI468X_SUCCESS;
+    // STCACK
+    uint8_t ack[2] = { SI468X_CMD_FM_RSQ_STATUS, 0x01 };
+    return send_command(ack, 2, nullptr, 0);
 }
 
 static uint8_t rds_sync_last = 0; // RDSSYNC from the last FM_RDS_STATUS

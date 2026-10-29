@@ -82,7 +82,7 @@ extern "C" {
 #define SI468X_PROP_FM_RDS_CONFIG            0x3C02
 #define SI468X_PROP_DAB_XPAD_ENABLE          0xB400
 
-/* On-Chip PAD/XPAD Decoder properties */
+/* DAB_VALID_* acquisition timing (not PAD; only 0xB400 DAB_XPAD_ENABLE concerns XPAD) */
 #define SI468X_PROP_DAB_VALID_RSSI_TIME      0xB200
 #define SI468X_PROP_DAB_VALID_RSSI_THRESHOLD 0xB201
 #define SI468X_PROP_DAB_VALID_ACQ_TIME       0xB202
