@@ -161,7 +161,7 @@ int main(int argc, char** argv)
                     std::cout << " (" << std::left << std::setw(8) << comp_short_label << ") "
                               << " | SId: 0x" << std::hex << services[s].service_id
                               << " | CompId: " << std::dec << services[s].component_id
-                              << " | SubChId: " << (int)subchannel_id
+                              << " | SubChId: " << (int)services[s].subchannel_id
                               << " | Mask: 0x" << std::hex << std::setw(4) << std::setfill('0') << char_mask << std::dec << std::setfill(' ')
                               << " | CompLabel: '" << comp_label << "'";
                 }
@@ -169,20 +169,33 @@ int main(int argc, char** argv)
                     std::cout << " (" << std::left << std::setw(8) << services[s].short_label << ") "
                               << " | SId: 0x" << std::hex << services[s].service_id
                               << " | CompId: " << std::dec << services[s].component_id
-                              << " | SubChId: " << (int)services[s].audio_type; // Display database Subchannel ID
+                              << " | SubChId: " << (int)services[s].subchannel_id;
                 }
-                std::cout << " | DAB+ AAC" << std::endl;
+                if (services[s].is_data_service) {
+                    std::cout << " | Data (TMID " << (int)services[s].tmid << ", DSCTy " << (int)services[s].audio_type << ")";
+                }
+                else {
+                    std::cout << " | " << (services[s].audio_type == SI468X_AUDIO_TYPE_DAB_PLUS ? "DAB+" :
+                                           services[s].audio_type == SI468X_AUDIO_TYPE_DAB ? "DAB" : "ASCTy ")
+                              << (services[s].audio_type == SI468X_AUDIO_TYPE_DAB_PLUS || services[s].audio_type == SI468X_AUDIO_TYPE_DAB
+                                  ? "" : std::to_string(services[s].audio_type));
+                }
+                std::cout << std::endl;
                 total_stations++;
             }
             std::cout << "    ================================================" << std::endl;
 
-            // ACTIVE AUDIO PLAYBACK DIAGNOSTIC TEST (Plays the 1st discovered station for 20 seconds!)
+            // ACTIVE AUDIO PLAYBACK DIAGNOSTIC TEST (first audio service, 20 seconds)
+            int p = 0;
+            while (p < num_services - 1 && services[p].is_data_service) {
+                p++;
+            }
             std::cout << "    >>> [TEST] Activating 20-Second Hardware Headphone Playback..." << std::endl;
-            std::cout << "    >>> Station: '" << services[0].label << "' (SId: 0x" << std::hex << services[0].service_id
-                      << ", CompId: " << std::dec << services[0].component_id << ")" << std::endl;
+            std::cout << "    >>> Station: '" << services[p].label << "' (SId: 0x" << std::hex << services[p].service_id
+                      << ", CompId: " << std::dec << services[p].component_id << ")" << std::endl;
 
             // Trigger actual hardware play command
-            int play_ret = si468x_play_service(services[0].service_id, services[0].component_id);
+            int play_ret = si468x_play_service(services[p].service_id, services[p].component_id);
             if (play_ret == SI468X_SUCCESS) {
                 // Un-mute the analog DAC by setting hardware volume property 0x0300 to 55
                 si468x_set_volume(55);
@@ -204,8 +217,8 @@ int main(int argc, char** argv)
                         std::memset(play_comp_label, 0, sizeof(play_comp_label));
                         std::memset(play_comp_short, 0, sizeof(play_comp_short));
 
-                        if (si468x_get_component_info(services[0].service_id, services[0].component_id, play_comp_label, play_comp_short, nullptr, &play_subchannel_id) == 0) {
-                            std::cout << " | PlayLabel: '" << play_comp_label << "' (" << play_comp_short << ") | SubChId: " << (int)play_subchannel_id;
+                        if (si468x_get_component_info(services[p].service_id, services[p].component_id, play_comp_label, play_comp_short, nullptr, &play_subchannel_id) == 0) {
+                            std::cout << " | PlayLabel: '" << play_comp_label << "' (" << play_comp_short << ")";
                         }
                         std::cout << std::endl;
 

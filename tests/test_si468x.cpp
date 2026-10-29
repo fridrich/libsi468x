@@ -435,6 +435,113 @@ static bool test_dab_tune_waits_stc()
     return true;
 }
 
+static void put_label(std::vector<uint8_t>& v, const char* l)
+{
+    for (int i = 0; i < 16; i++) {
+        v.push_back(i < (int)std::strlen(l) ? (uint8_t)l[i] : ' ');
+    }
+}
+
+static void put_service(std::vector<uint8_t>& v, uint32_t sid, uint8_t b4, const char* label,
+                        std::initializer_list<std::pair<uint16_t, uint8_t>> comps)
+{
+    v.insert(v.end(), { (uint8_t)sid, (uint8_t)(sid >> 8), (uint8_t)(sid >> 16), (uint8_t)(sid >> 24) });
+    v.push_back(b4);
+    v.push_back((uint8_t)comps.size());
+    v.push_back(0x00); // SICHARSET 0
+    v.push_back(0xF0); // reserved; old code took charset from its high nibble (15)
+    put_label(v, label);
+    for (auto& c : comps) {
+        v.insert(v.end(), { (uint8_t)c.first, (uint8_t)(c.first >> 8), c.second, 0x00 });
+    }
+}
+
+// 3 services: DAB+ audio; MOT first then audio; data only
+static std::vector<uint8_t> service_list_payload()
+{
+    std::vector<uint8_t> p = { 0x01, 0x00, 3, 0, 0, 0 };
+    put_service(p, 0x43D1, 0x02, "RTS Premiere", { { 0x0007, 63 << 2 | 0x02 } });
+    put_service(p, 0x43D3, 0x04, "Couleur 3", { { 0xC010, 60 << 2 }, { 0x0009, 63 << 2 } });
+    put_service(p, 0xE1400103, 0x01, "SSG_SPI", { { 0xC010, 60 << 2 } });
+    return p;
+}
+
+static bool test_dab_metadata()
+{
+    std::cout << "Running test: test_dab_metadata..." << std::endl;
+
+    MockChip chip;
+    char label[64];
+    uint16_t eid = 0;
+
+    // Ensemble: ECC 0xE1 must not leak into charset (old code: 0x0E -> raw 0x82 byte)
+    std::vector<uint8_t> ens = reply({ 0x80, 0x80, 0x00, 0xC0, 0x43, 0xF0 });
+    put_label(ens, "M\x82tropolitain 1");
+    ens.insert(ens.end(), { 0xE1, 0x00, 0x00, 0xFF });
+    chip.expect(SI468X_CMD_DAB_GET_ENSEMBLE_INFO, ens);
+    ASSERT_TRUE(si468x_get_ensemble_info(label, &eid) == SI468X_SUCCESS, "ensemble info");
+    ASSERT_TRUE(eid == 0xF043, "EId at resp[5..6]");
+    ASSERT_TRUE(std::strcmp(label, "M\xC3\xA9tropolitain 1 ") == 0, "EBU Latin 0x82 -> UTF-8 e-acute");
+    ASSERT_TRUE(chip.reads.back() == SI468X_REP_ENSEMBLE_INFO, "ensemble read 27");
+
+    // Component: charset resp[8] (UCS-2), no SubChId, ERR -> NOT_FOUND
+    std::vector<uint8_t> comp = reply({ 0x80, 0x80, 0x00, 0xC0, 0x00, 0x00, 0x05, 0x06,
+                                        0x00, 0x41, 0x00, 0x62 });
+    comp.resize(SI468X_REP_COMPONENT_INFO, 0x00);
+    chip.expect(SI468X_CMD_DAB_GET_COMPONENT_INFO, comp);
+    char short_label[17];
+    uint8_t subch = 99;
+    ASSERT_TRUE(si468x_get_component_info(0x43D1, 7, label, short_label, nullptr, &subch) == SI468X_SUCCESS, "component info");
+    ASSERT_TRUE(std::strcmp(label, "Ab") == 0, "UCS-2 label via CHARSETID resp[8]");
+    ASSERT_TRUE(subch == 0, "component info provides no SubChId");
+    chip.expect(SI468X_CMD_DAB_GET_COMPONENT_INFO, reply({ 0xC0, 0x80, 0x00, 0xC0, 0x01 }));
+    ASSERT_TRUE(si468x_get_component_info(0x43D1, 0x63, label, short_label, nullptr, &subch) == SI468X_ERROR_NOT_FOUND,
+                "component ERR -> NOT_FOUND");
+
+    // Service info: ERR -> NOT_FOUND; charset masked
+    si468x_service_info_t si;
+    chip.expect(SI468X_CMD_DAB_GET_SERVICE_INFO, reply({ 0xC0, 0x80, 0x00, 0xC0, 0x01 }));
+    ASSERT_TRUE(si468x_get_service_info(0xDEADBEEF, &si) == SI468X_ERROR_NOT_FOUND, "unknown SId -> NOT_FOUND");
+    std::vector<uint8_t> sinfo = reply({ 0x80, 0x80, 0x00, 0xC0, 0x0A, 0x01, 0xF0, 0xE1 });
+    put_label(sinfo, "RTS Premiere");
+    sinfo.resize(SI468X_REP_SERVICE_INFO, 0x00);
+    chip.expect(SI468X_CMD_DAB_GET_SERVICE_INFO, sinfo);
+    ASSERT_TRUE(si468x_get_service_info(0x43D1, &si) == SI468X_SUCCESS, "service info");
+    ASSERT_TRUE(si.charset == 0 && si.pty == 5 && si.ecc == 0xE1, "charset & 0x0F, PTY, ECC");
+
+    // Service list: header, then one re-read of header + payload
+    std::vector<uint8_t> pl = service_list_payload();
+    std::vector<uint8_t> sl = reply({ 0x80, 0x80, 0x00, 0xC0, (uint8_t)pl.size(), (uint8_t)(pl.size() >> 8) });
+    sl.insert(sl.end(), pl.begin(), pl.end());
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_LIST, sl);
+    chip.writes.clear();
+    si468x_service_t svc[8];
+    int n = si468x_get_service_list(svc, 8);
+    ASSERT_TRUE(n == 3, "3 services");
+    ASSERT_TRUE(chip.sent(SI468X_CMD_GET_DIGITAL_SERVICE_LIST).size() == 1, "list queried once");
+    ASSERT_TRUE(chip.reads.back() == sl.size(), "full read = 7 + SIZE");
+    ASSERT_TRUE(svc[0].service_id == 0x43D1 && svc[0].component_id == 7 && svc[0].subchannel_id == 7
+                && svc[0].tmid == 0 && svc[0].audio_type == SI468X_AUDIO_TYPE_DAB_PLUS && svc[0].pty == 1
+                && svc[0].charset == 0 && !svc[0].is_data_service, "service a");
+    ASSERT_TRUE(std::strcmp(svc[0].label, "RTS Premiere    ") == 0 && std::strcmp(svc[0].short_label, "RTS Prem") == 0, "labels a");
+    ASSERT_TRUE(svc[1].component_id == 0x0009 && svc[1].num_components == 2 && !svc[1].is_data_service, "b: audio picked over MOT");
+    ASSERT_TRUE(svc[2].service_id == 0xE1400103 && svc[2].is_data_service && svc[2].tmid == 3
+                && svc[2].component_id == 0xC010 && svc[2].subchannel_id == 0 && svc[2].audio_type == 60, "c: data only");
+
+    // Truncated inside service c: 2 entries, never read past len (ASan)
+    std::vector<uint8_t> cut(sl.begin(), sl.end() - 10);
+    std::vector<uint8_t> heap(cut); // exact-size heap copy so ASan sees overreads
+    ASSERT_TRUE(si468x_parse_service_list(heap.data(), heap.size(), svc, 8) == 2, "truncated list keeps complete services");
+    ASSERT_TRUE(si468x_parse_service_list(heap.data(), 20, svc, 8) == SI468X_ERROR_INVALID_REPLY, "nothing complete -> INVALID_REPLY");
+
+    // ERR / SIZE 0 = list not ready
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_LIST, reply({ 0xC0, 0x80, 0x00, 0xC0, 0x00, 0x00 }));
+    ASSERT_TRUE(si468x_get_service_list(svc, 8) == 0, "list not ready -> 0");
+
+    std::cout << "PASS: test_dab_metadata" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -456,6 +563,7 @@ int main()
     success &= test_send_command_err_timeout();
     success &= test_stop_service_ids();
     success &= test_dab_tune_waits_stc();
+    success &= test_dab_metadata();
 
     std::cout << "========================================" << std::endl;
     if (success) {

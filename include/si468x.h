@@ -64,7 +64,7 @@ extern "C" {
  * @{
  */
 #define SI468X_AUDIO_TYPE_DAB      0    /**< Legacy MPEG Layer II (MP2) audio component standard. */
-#define SI468X_AUDIO_TYPE_DAB_PLUS 15   /**< Modern HE-AAC v2 (DAB+ AAC) audio component standard. */
+#define SI468X_AUDIO_TYPE_DAB_PLUS 63   /**< HE-AAC v2 (DAB+), ETSI ASCTy 63. */
 /** @} */
 
 /**
@@ -99,11 +99,17 @@ typedef struct {
  */
 typedef struct {
     uint32_t service_id;        /**< 32-bit Service ID (SId) of the radio program. */
-    uint32_t component_id;      /**< 32-bit global Component ID. */
+    uint32_t component_id;      /**< 16-bit component word from the service list (TMID in bits 14-15); pass unchanged to si468x_play_service(). */
     char label[17];             /**< 16-character full service name (null-terminated). */
     char short_label[9];        /**< 8-character abbreviated name (null-terminated). */
-    uint16_t bitrate;           /**< Service audio stream compression bitrate in kbps. */
-    uint8_t audio_type;         /**< Codec format (e.g. 0 for legacy DAB, 15/0x0F for DAB+ AAC). */
+    uint16_t bitrate;           /**< Always 0 here; see si468x_dab_get_subchan_info(). */
+    uint8_t audio_type;         /**< ASCTy (audio: 0 = MP2, 63 = DAB+) or DSCTy (data, e.g. 60 = MOT). */
+    uint8_t subchannel_id;      /**< SubChId for TMID 0/1, else 0. */
+    uint8_t num_components;     /**< Components in this service. */
+    uint8_t tmid;               /**< Transport mode of the chosen component: 0 audio stream, 1 data stream, 2 FIDC, 3 data packet. */
+    uint8_t pty;                /**< Programme type. */
+    uint8_t is_data_service;    /**< 1 if the service has no audio stream component. */
+    uint8_t charset;            /**< Label charset (0 EBU Latin, 6 UCS-2, 15 UTF-8). */
 } si468x_service_t;
 
 /**

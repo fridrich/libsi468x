@@ -1072,39 +1072,41 @@ void si468x_decode_short_label(const uint8_t* raw_label, int raw_len, uint16_t c
     decode_dab_string_to_utf8(temp_raw, dst, charset, short_label, max_len);
 }
 
+static uint16_t le16(const uint8_t* p)
+{
+    return p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t le32(const uint8_t* p)
+{
+    return p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
 int si468x_get_ensemble_info(char* label, uint16_t* ueid)
 {
     if (!label) {
         return SI468X_ERROR_PARAM;
     }
 
-    // Write { 0xB4, 0x00 } (2 bytes) and read 26 response parameter bytes over SPI
-    uint8_t cmd[2] = { 0xB4, 0x00 };
-    uint8_t resp[26];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 2, resp, 26);
-
+    uint8_t cmd[2] = { SI468X_CMD_DAB_GET_ENSEMBLE_INFO, 0x00 };
+    uint8_t resp[SI468X_REP_ENSEMBLE_INFO] = {};
+    int rc = send_command(cmd, 2, resp, sizeof(resp));
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
+    // EID resp[5..6], LABEL resp[7..22], ECC resp[23], CHARSET resp[24], CHAR_ABREV resp[25..26]
     if (ueid) {
-        *ueid = resp[5] | ((uint16_t)resp[6] << 8);
+        *ueid = le16(&resp[5]);
     }
-
-    // Extract Ensemble Label (16 bytes starting exactly at resp[7])
-    uint8_t charset = (resp[23] >> 4) & 0x0F; // Charset is typically at byte 18 of parameters (resp[23])
-    decode_dab_string_to_utf8(&resp[7], 16, charset, label, 32);
-
-    return 0;
+    decode_dab_string_to_utf8(&resp[7], 16, resp[24] & 0x0F, label, 32);
+    return SI468X_SUCCESS;
 }
 
 int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* label, char* short_label, uint16_t* out_char_mask, uint8_t* subchannel_id)
 {
-    // Write 12-byte command: Opcode 0xBB + Service ID + 32-bit global Component ID
     uint8_t cmd[12] = {
-        0xBB, 0x00, 0x00, 0x00,
+        SI468X_CMD_DAB_GET_COMPONENT_INFO, 0x00, 0x00, 0x00,
         (uint8_t)(service_id & 0xFF),
         (uint8_t)((service_id >> 8) & 0xFF),
         (uint8_t)((service_id >> 16) & 0xFF),
@@ -1114,10 +1116,9 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
         (uint8_t)((component_id >> 16) & 0xFF),
         (uint8_t)((component_id >> 24) & 0xFF)
     };
-    uint8_t resp[29];
-    std::memset(resp, 0, sizeof(resp));
+    uint8_t resp[SI468X_REP_COMPONENT_INFO] = {};
 
-    int ret = send_command(cmd, 12, resp, 29, 1000, SC_ERR_OK);
+    int ret = send_command(cmd, 12, resp, sizeof(resp), 1000, SC_ERR_OK);
     if (ret != SI468X_SUCCESS) {
         return ret;
     }
@@ -1125,31 +1126,100 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
         return SI468X_ERROR_NOT_FOUND; // component has no info/label
     }
 
-    // Subchannel ID is at resp[7] & 0x3F (low 6 bits)
+    // This reply has no SubChId; see si468x_service_t.subchannel_id
     if (subchannel_id) {
-        *subchannel_id = resp[7] & 0x3F;
+        *subchannel_id = 0;
     }
 
-    // Component Label starts at resp[9] (16 bytes)
+    // LANG resp[7], CHARSETID resp[8], LABEL resp[9..24], CHAR_ABREV resp[25..26]
+    uint8_t charset = resp[8] & 0x3F;
     char comp_label[32];
-    uint8_t charset = (resp[6] >> 4) & 0x0F;
     decode_dab_string_to_utf8(&resp[9], 16, charset, comp_label, sizeof(comp_label));
-
     if (label) {
         std::strcpy(label, comp_label);
     }
 
-    // Short Label Character flag mask is at resp[25..26] (16-bit Little-Endian)
-    uint16_t char_mask = resp[25] | ((uint16_t)resp[26] << 8);
+    uint16_t char_mask = le16(&resp[25]);
     if (out_char_mask) {
         *out_char_mask = char_mask;
     }
-
     if (short_label) {
         si468x_decode_short_label(&resp[9], 16, char_mask, charset, short_label, 17);
     }
+    return SI468X_SUCCESS;
+}
 
-    return 0;
+/*
+ * List layout (DAB_Service_List_Handler.c): payload at resp[7]: version u16, NUM_SERVICES, 3 reserved;
+ * per service 24 bytes (SId u32, PTY/PD, LOCAL/CAId/NUM_COMP, SICHARSET, rsvd, label[16]),
+ * then NUM_COMP x 4 bytes (component word u16, ASCTy/DSCTy/PS/CA, flags).
+ * One entry per service: first TMID 0 (audio stream) component, else first component as data.
+ */
+int si468x_parse_service_list(const uint8_t* resp, size_t len, si468x_service_t* list, int max_services)
+{
+    if (len < 13) {
+        return SI468X_ERROR_INVALID_REPLY;
+    }
+    int num_services = resp[9];
+    int count = 0;
+    size_t o = 13;
+    bool truncated = false;
+
+    for (int i = 0; i < num_services && count < max_services; i++) {
+        if (o + 24 > len) {
+            truncated = true;
+            break;
+        }
+        size_t c = o + 24;
+        size_t first = 0, audio = 0;
+        int ncomp = resp[o + 5] & 0x0F;
+        for (int k = 0; k < ncomp; k++, c += 4) {
+            if (c + 4 > len) {
+                truncated = true;
+                break;
+            }
+            uint16_t w = le16(&resp[c]);
+            if (!first) {
+                first = c;
+            }
+            if (!audio && (w >> 14) == 0) {
+                audio = c;
+            }
+        }
+        if (truncated) {
+            break;
+        }
+
+        if (first) {
+            size_t pick = audio ? audio : first;
+            uint16_t w = le16(&resp[pick]);
+            si468x_service_t* e = &list[count++];
+            std::memset(e, 0, sizeof(*e));
+            e->service_id = le32(&resp[o]);
+            e->component_id = w;
+            e->tmid = w >> 14;
+            e->subchannel_id = (e->tmid <= 1) ? (w & 0x3F) : 0;
+            e->audio_type = (resp[pick + 2] >> 2) & 0x3F;
+            e->pty = (resp[o + 4] >> 1) & 0x1F;
+            e->is_data_service = audio ? 0 : 1;
+            e->num_components = ncomp;
+            e->charset = resp[o + 6] & 0x0F;
+
+            char service_label[64];
+            decode_dab_string_to_utf8(&resp[o + 8], 16, e->charset, service_label, sizeof(service_label));
+            std::strncpy(e->label, service_label, 16);
+            e->label[16] = '\0';
+
+            // List has no CHAR_ABREV: first 8 chars, trailing spaces stripped
+            std::strncpy(e->short_label, service_label, 8);
+            e->short_label[8] = '\0';
+            for (int n = 7; n >= 0 && (e->short_label[n] == ' ' || e->short_label[n] == '\0'); n--) {
+                e->short_label[n] = '\0';
+            }
+        }
+        o = c;
+    }
+    return (count == 0 && truncated) ? SI468X_ERROR_INVALID_REPLY : count;
 }
 
 int si468x_get_service_list(si468x_service_t* list, int max_services)
@@ -1158,110 +1228,28 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         return 0;
     }
 
-
-    // Step 1: Send GET_DIGITAL_SERVICE_LIST (0x80) command to query database size (7-byte read)
-    uint8_t size_cmd[2] = { 0x80, 0x00 };
-    uint8_t size_resp[7];
-    std::memset(size_resp, 0, sizeof(size_resp));
-
-    if (send_command(size_cmd, 2, size_resp, SI468X_REP_DSL_HDR, 1000, SC_ERR_OK) != SI468X_SUCCESS
-            || (size_resp[1] & 0x40)) {
-        return 0; // list not ready
+    // Header: SIZE at resp[5..6]; ERR or SIZE 0 = list not ready
+    uint8_t cmd[2] = { SI468X_CMD_GET_DIGITAL_SERVICE_LIST, 0x00 };
+    uint8_t hdr[SI468X_REP_DSL_HDR] = {};
+    int rc = send_command(cmd, 2, hdr, sizeof(hdr), 1000, SC_ERR_OK);
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
-
-    // Bytes 5-6 (Response Parameter Bytes 1-2) store the 16-bit database size in Little-Endian
-    uint16_t db_size = size_resp[5] | ((uint16_t)size_resp[6] << 8);
-
-    if (db_size == 0 || db_size > 2048) {
+    uint16_t size = le16(&hdr[5]);
+    if ((hdr[1] & 0x40) || size == 0) {
         return 0;
     }
-
-    // Step 2: re-read header + payload (reply buffer is re-readable; no second query)
-    uint16_t full_resp_len = db_size + SI468X_REP_DSL_HDR;
-    std::vector<uint8_t> resp(full_resp_len, 0x00);
-
-    if (read_reply(resp.data(), full_resp_len) != SI468X_SUCCESS) {
-        return 0;
+    if (size > SI468X_REP_MAX_VAR) {
+        return SI468X_ERROR_INVALID_REPLY;
     }
 
-    // Shift index to find number of services in this ensemble (Parameter Byte 5)
-    uint8_t num_services = resp[9];
-
-    if (num_services == 0) {
-        return 0;
+    // Re-read header + payload (reply buffer is re-readable; no second query)
+    std::vector<uint8_t> resp(SI468X_REP_DSL_HDR + size);
+    rc = read_reply(resp.data(), resp.size());
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
-
-    int services_count = 0;
-    size_t offset = 13; // Data payload starts at index 13 of the response parameters (after 5-byte header)
-
-    for (int i = 0; i < num_services; i++) {
-        if (services_count >= max_services) {
-            break;
-        }
-        if (offset + 24 > full_resp_len) {
-            break;    // Buffer boundary safety guard
-        }
-
-        // 1. Service ID (SId): 32-bit Little Endian (offset 0-3)
-        uint32_t service_id = resp[offset] |
-                              ((uint32_t)resp[offset + 1] << 8) |
-                              ((uint32_t)resp[offset + 2] << 16) |
-                              ((uint32_t)resp[offset + 3] << 24);
-
-        // 2. Number of Components (offset 5, low 4 bits)
-        uint8_t num_components = resp[offset + 5] & 0x0F;
-
-        // 3. Label: 16-character array (offset 8-23)
-        char service_label[32];
-        uint8_t charset = (resp[offset + 7] >> 4) & 0x0F;
-        decode_dab_string_to_utf8(&resp[offset + 8], 16, charset, service_label, sizeof(service_label));
-
-        // 4. Subchannel ID (SubChId) is stored at offset 24
-        uint8_t subchannel_id = resp[offset + 24];
-
-        // Offset advancement past the 24-byte Service Header
-        offset += 24;
-
-        // 5. Parse Components of this service
-        for (int c = 0; c < num_components; c++) {
-            if (offset + 4 > full_resp_len) {
-                break;
-            }
-
-            // Component block is exactly 4 bytes:
-            // - Component ID: 12-bit value packed in a 16-bit Little Endian word (offset 0-1)
-            uint16_t component_id = (resp[offset] | ((uint16_t)resp[offset + 1] << 8)) & 0x0FFF;
-
-            // Store the first audio component of the service in our output list
-            if (c == 0) {
-                list[services_count].service_id = service_id;
-                list[services_count].component_id = component_id;
-                list[services_count].audio_type = subchannel_id; // Reuse audio_type to pass Subchannel ID cleanly!
-                list[services_count].bitrate = 0;                // Resolved dynamically during playback
-
-                std::strncpy(list[services_count].label, service_label, 16);
-                list[services_count].label[16] = '\0';
-
-                // Reconstruct clean fallback short label dynamically (copy first 8 characters and strip trailing spaces)
-                std::strncpy(list[services_count].short_label, service_label, 8);
-                list[services_count].short_label[8] = '\0';
-                for (int len = 7; len >= 0; len--) {
-                    if (list[services_count].short_label[len] == ' ' || list[services_count].short_label[len] == '\0') {
-                        list[services_count].short_label[len] = '\0';
-                    }
-                    else {
-                        break;
-                    }
-                }
-
-                services_count++;
-            }
-
-            offset += 4; // Component Entry is 4 bytes
-        }
-    }
-
-    return services_count;
+    return si468x_parse_service_list(resp.data(), resp.size(), list, max_services);
 }
 
 int si468x_get_service_info(uint32_t service_id, si468x_service_info_t* info)
@@ -1270,44 +1258,30 @@ int si468x_get_service_info(uint32_t service_id, si468x_service_info_t* info)
         return SI468X_ERROR_PARAM;
     }
 
-    // Command 0xC0 (DAB_GET_SERVICE_INFO)
-    uint8_t cmd[8];
-    cmd[0] = 0xC0; // Opcode
-    cmd[1] = 0x00; // INTACK
-    cmd[2] = 0x00; // Reserved
-    cmd[3] = 0x00; // Reserved
-    cmd[4] = service_id & 0xFF;         // Service ID (Little-Endian)
-    cmd[5] = (service_id >> 8) & 0xFF;  // Service ID
-    cmd[6] = (service_id >> 16) & 0xFF; // Service ID
-    cmd[7] = (service_id >> 24) & 0xFF; // Service ID
+    uint8_t cmd[8] = {
+        SI468X_CMD_DAB_GET_SERVICE_INFO, 0x00, 0x00, 0x00,
+        (uint8_t)(service_id & 0xFF),
+        (uint8_t)((service_id >> 8) & 0xFF),
+        (uint8_t)((service_id >> 16) & 0xFF),
+        (uint8_t)((service_id >> 24) & 0xFF)
+    };
+    uint8_t resp[SI468X_REP_SERVICE_INFO] = {};
+    std::memset(info, 0, sizeof(*info));
 
-    uint8_t resp[26];
-    std::memset(resp, 0, sizeof(resp));
-
-    if (send_command(cmd, 8, resp, 26) != SI468X_SUCCESS) {
-        return SI468X_ERROR_SPI;
+    int rc = send_command(cmd, 8, resp, sizeof(resp), 1000, SC_ERR_OK);
+    if (rc != SI468X_SUCCESS) {
+        return rc;
+    }
+    if (resp[1] & 0x40) {
+        return SI468X_ERROR_NOT_FOUND; // unknown SId (Q6)
     }
 
-    // Check validity flag (Bit 7 of resp[1])
-    if ((resp[1] & 0x80) != 0) {
-        // Extract Label (16 bytes at resp[9..24])
-        char raw_label[17];
-        std::memset(raw_label, 0, sizeof(raw_label));
-        std::memcpy(raw_label, &resp[9], 16);
-
-        // Extract PTY (bits 1-5 of resp[5])
-        info->pty = (resp[5] >> 1) & 0x1F;
-        info->charset = resp[7];
-        info->ecc = resp[8];
-
-        decode_dab_string_to_utf8((uint8_t*)raw_label, 16, info->charset, info->label, sizeof(info->label));
-
-        return SI468X_SUCCESS;
-    }
-
-    // Invalid response or service not found
-    std::memset(info, 0, sizeof(si468x_service_info_t));
-    return -2;
+    // PTY resp[5] bits 1-5, SICHARSET resp[7] & 0x0F, ECC resp[8], LABEL resp[9..24]
+    info->pty = (resp[5] >> 1) & 0x1F;
+    info->charset = resp[7] & 0x0F;
+    info->ecc = resp[8];
+    decode_dab_string_to_utf8(&resp[9], 16, info->charset, info->label, sizeof(info->label));
+    return SI468X_SUCCESS;
 }
 
 int si468x_get_signal_status(si468x_signal_status_t* status)

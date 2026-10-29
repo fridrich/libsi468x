@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "si468x.h"
 
 /* Debug logging; C++ headers must stay outside extern "C" */
 #ifdef __cplusplus
@@ -56,6 +57,7 @@ extern "C" {
 #define SI468X_CMD_DAB_TUNE_FREQ             0xB0
 #define SI468X_CMD_DAB_DIGRAD_STATUS         0xB2
 #define SI468X_CMD_DAB_GET_EVENT_STATUS      0xB3
+#define SI468X_CMD_DAB_GET_ENSEMBLE_INFO     0xB4
 #define SI468X_CMD_DAB_SET_FREQ_LIST         0xB8
 #define SI468X_CMD_DAB_GET_COMPONENT_INFO    0xBB
 #define SI468X_CMD_DAB_GET_TIME              0xBC
@@ -126,6 +128,7 @@ extern "C" {
 
 /* Private Internal Helper Functions */
 extern int si468x_debug_active;
+int si468x_parse_service_list(const uint8_t* resp, size_t len, si468x_service_t* list, int max_services);
 void si468x_decode_short_label(const uint8_t* raw_label, int raw_len, uint16_t char_mask, uint8_t charset, char* short_label, int max_len);
 /* Test seam: replaces spidev when set; nullptr restores spidev. Not in the installed header. */
 typedef int (*si468x_transport_fn)(const uint8_t* tx, uint8_t* rx, size_t len, void* ctx);
