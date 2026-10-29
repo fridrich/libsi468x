@@ -885,6 +885,43 @@ static bool test_dls_mot()
     return true;
 }
 
+static bool test_calibrate_antenna()
+{
+    std::cout << "Running test: test_calibrate_antenna..." << std::endl;
+
+    MockChip chip;
+    // Previously tuned to 12A
+    chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    chip.expect(SI468X_CMD_DAB_GET_EVENT_STATUS, reply({ 0x81, 0x80, 0x00, 0xC0, 0x01, 0x01, 0x27, 0x00 }));
+    ASSERT_TRUE(si468x_set_frequency(223936000) == SI468X_SUCCESS, "initial tune");
+
+    // Sweep on 5A: RSSI 20 everywhere, 60 at ANTCAP 37
+    for (int antcap = 1; antcap <= 128; antcap++) {
+        chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
+        std::vector<uint8_t> d = FX_DIGRAD_NOSIG;
+        d[7] = (antcap == 37) ? 60 : 20;
+        for (int i = 0; i < 5; i++) {
+            chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, d);
+        }
+    }
+    // Restore tune of 12A
+    chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    chip.expect(SI468X_CMD_DAB_GET_EVENT_STATUS, reply({ 0x81, 0x80, 0x00, 0xC0, 0x01, 0x01, 0x27, 0x00 }));
+
+    uint16_t peak = 0;
+    ASSERT_TRUE(si468x_dab_calibrate_antenna(174928000, &peak) == SI468X_SUCCESS, "calibrate");
+    ASSERT_TRUE(peak == 37, "peak ANTCAP");
+    auto tunes = chip.sent(SI468X_CMD_DAB_TUNE_FREQ);
+    ASSERT_TRUE(tunes[37][2] == 0 && tunes[37][4] == 37, "sweep frame carries ANTCAP LE16");
+    ASSERT_TRUE(tunes.back()[2] == 30 && tunes.back()[4] == 0 && tunes.back()[5] == 0, "re-tune 12A with ANTCAP 0");
+    ASSERT_TRUE(si468x_get_frequency() == 223936000, "active frequency restored");
+
+    std::cout << "PASS: test_calibrate_antenna" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -913,6 +950,7 @@ int main()
     success &= test_property_values();
     success &= test_fm_tune();
     success &= test_dls_mot();
+    success &= test_calibrate_antenna();
 
     std::cout << "========================================" << std::endl;
     if (success) {
