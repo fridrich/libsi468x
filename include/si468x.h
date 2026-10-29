@@ -30,6 +30,8 @@ extern "C" {
 #define SI468X_ERROR_TIMEOUT   -5   /**< Timeout waiting for CTS, STC, or hardware state change. */
 #define SI468X_ERROR_COMMAND   -6   /**< Co-processor reported a command execution failure. */
 #define SI468X_ERROR_PARAM     -7   /**< Invalid argument (e.g. frequency not in channel table). */
+#define SI468X_ERROR_INVALID_REPLY -8 /**< Reply shorter than its declared length or malformed. */
+#define SI468X_ERROR_NOT_FOUND -9   /**< Requested item (service, component, time) not available. */
 /** @} */
 
 /**

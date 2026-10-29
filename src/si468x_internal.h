@@ -92,6 +92,35 @@ extern "C" {
 #define SI468X_SPI_BITS_PER_WORD             8
 #define SI468X_SPI_MODE                      0         /* Mode 0 */
 
+/* Reply read lengths: 1 (dummy resp[0]) + reply length; _HDR = fixed part of variable replies */
+#define SI468X_REP_PART_INFO        24
+#define SI468X_REP_FUNC_INFO        13
+#define SI468X_REP_GET_PROPERTY      7
+#define SI468X_REP_AGC_STATUS       24  /* Linux driver: 23 */
+#define SI468X_REP_FM_RSQ_STATUS    24
+#define SI468X_REP_FM_RDS_STATUS    21
+#define SI468X_REP_DSL_HDR           7  /* GET_DIGITAL_SERVICE_LIST, + SIZE */
+#define SI468X_REP_DSD_HDR          25  /* GET_DIGITAL_SERVICE_DATA, + BYTE_COUNT */
+#define SI468X_REP_HD_STATION_HDR    7  /* + LENGTH */
+#define SI468X_REP_HD_PSD_HDR        9  /* + LENGTH */
+#define SI468X_REP_HD_ALERT_HDR      7  /* + LENGTH */
+#define SI468X_REP_HD_BER           45
+#define SI468X_REP_DIGRAD_STATUS    24
+#define SI468X_REP_DAB_EVENT_STATUS  9
+#define SI468X_REP_ENSEMBLE_INFO    27
+#define SI468X_REP_ANN_SUPPORT_HDR   9  /* + 2 * NUM_IDS */
+#define SI468X_REP_ANN_INFO         17
+#define SI468X_REP_LINKING_HDR       9  /* + SIZE */
+#define SI468X_REP_COMPONENT_INFO   34
+#define SI468X_REP_TIME             12
+#define SI468X_REP_AUDIO_INFO       11  /* Linux driver: 21; Q1 */
+#define SI468X_REP_SUBCHAN_INFO     13
+#define SI468X_REP_FREQ_INFO_HDR     9  /* + 12 * N */
+#define SI468X_REP_SERVICE_INFO     27
+#define SI468X_REP_OE_SERVICES_HDR   9  /* + 2 * NUM_EIDS */
+#define SI468X_REP_DAB_BER          13
+#define SI468X_REP_MAX_VAR        4096  /* bound for chip-declared payload sizes */
+
 /* Helper macros */
 #define SI468X_CTS_MASK                      0x80
 
@@ -101,7 +130,11 @@ void si468x_decode_short_label(const uint8_t* raw_label, int raw_len, uint16_t c
 /* Test seam: replaces spidev when set; nullptr restores spidev. Not in the installed header. */
 typedef int (*si468x_transport_fn)(const uint8_t* tx, uint8_t* rx, size_t len, void* ctx);
 void si468x_set_test_transport(si468x_transport_fn fn, void* ctx);
-int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_len, int timeout_ms = 1000);
+#define SC_ERR_OK 1 /* ERR is an expected outcome; caller inspects resp[1] */
+int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_len, int timeout_ms = 1000, unsigned flags = 0);
+int read_reply(uint8_t* resp, size_t len);
+int wait_stc(int timeout_ms);
+uint8_t si468x_last_status(int i);
 
 #ifdef __cplusplus
 }

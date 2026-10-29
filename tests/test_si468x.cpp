@@ -6,6 +6,7 @@
 #include <iostream>
 #include <cassert>
 #include <cstring>
+#include <chrono>
 #include "si468x.h"
 #include "si468x_internal.h"
 #include "mock_chip.h"
@@ -94,7 +95,7 @@ static bool test_api_signatures_uninitialized()
     // 2. Verify si468x_get_dls_text signature and uninitialized failure
     char dls_text[129];
     int ret_dls = si468x_get_dls_text(dls_text, sizeof(dls_text));
-    ASSERT_TRUE(ret_dls == -2, "si468x_get_dls_text must fail safely when uninitialized");
+    ASSERT_TRUE(ret_dls == SI468X_ERROR_SPI, "si468x_get_dls_text must fail safely when uninitialized");
 
     // 3. Verify si468x_get_time signature and uninitialized failure
     si468x_time_t dtime;
@@ -132,7 +133,7 @@ static bool test_new_fm_rds_api_uninitialized()
     // 2. Verify si468x_set_frequency_table boundary parameters
     uint32_t freqs[3] = { 174928000, 188928000, 223936000 };
     int ret_freq_table_invalid = si468x_set_frequency_table(nullptr, 3);
-    ASSERT_TRUE(ret_freq_table_invalid == -1, "si468x_set_frequency_table must fail on null pointer");
+    ASSERT_TRUE(ret_freq_table_invalid == SI468X_ERROR_PARAM, "si468x_set_frequency_table must fail on null pointer");
 
     int ret_freq_table_uninit = si468x_set_frequency_table(freqs, 3);
     ASSERT_TRUE(ret_freq_table_uninit == -1, "si468x_set_frequency_table must fail when uninitialized");
@@ -213,10 +214,10 @@ static bool test_mot_slideshow_uninitialized()
 
     si468x_mot_slideshow_t slide;
     int ret = si468x_get_mot_slideshow(&slide);
-    ASSERT_TRUE(ret == -2, "si468x_get_mot_slideshow must fail safely when uninitialized");
+    ASSERT_TRUE(ret == SI468X_ERROR_SPI, "si468x_get_mot_slideshow must fail safely when uninitialized");
 
     int ret_null = si468x_get_mot_slideshow(nullptr);
-    ASSERT_TRUE(ret_null == -1, "si468x_get_mot_slideshow must fail gracefully with null pointer");
+    ASSERT_TRUE(ret_null == SI468X_ERROR_PARAM, "si468x_get_mot_slideshow must fail gracefully with null pointer");
 
     std::cout << "PASS: test_mot_slideshow_uninitialized" << std::endl;
     return true;
@@ -320,6 +321,8 @@ static bool test_error_definitions()
     ASSERT_TRUE(SI468X_ERROR_TIMEOUT == -5, "SI468X_ERROR_TIMEOUT must be -5");
     ASSERT_TRUE(SI468X_ERROR_COMMAND == -6, "SI468X_ERROR_COMMAND must be -6");
     ASSERT_TRUE(SI468X_ERROR_PARAM == -7, "SI468X_ERROR_PARAM must be -7");
+    ASSERT_TRUE(SI468X_ERROR_INVALID_REPLY == -8, "SI468X_ERROR_INVALID_REPLY must be -8");
+    ASSERT_TRUE(SI468X_ERROR_NOT_FOUND == -9, "SI468X_ERROR_NOT_FOUND must be -9");
 
     std::cout << "PASS: test_error_definitions" << std::endl;
     return true;
@@ -334,10 +337,101 @@ static bool test_framing_cts_poll()
     si468x_signal_status_t st;
     ASSERT_TRUE(si468x_get_signal_status(&st) == SI468X_SUCCESS, "CTS on 3rd poll must succeed");
     ASSERT_TRUE(chip.reads.size() == 4, "3 CTS polls + 1 payload read");
-    ASSERT_TRUE(chip.reads.back() == 28, "payload read uses caller length"); // WP1: expected to change (24)
+    ASSERT_TRUE(chip.reads.back() == 24, "DIGRAD payload read is 1 + reply length");
+    ASSERT_TRUE(chip.bad_reads == 0, "every read starts with RD_REPLY");
     ASSERT_TRUE(chip.sent(SI468X_CMD_DAB_DIGRAD_STATUS).size() == 1, "one DIGRAD write");
 
     std::cout << "PASS: test_framing_cts_poll" << std::endl;
+    return true;
+}
+
+static long ms_since(std::chrono::steady_clock::time_point t)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t).count();
+}
+
+static bool test_send_command_err_timeout()
+{
+    std::cout << "Running test: test_send_command_err_timeout..." << std::endl;
+
+    MockChip chip;
+    const uint8_t cmd[2] = { 0x12, 0x00 };
+    uint8_t resp[13];
+
+    // ERR is an error by default, but resp is still read for the error code
+    chip.expect(0x12, reply({ 0xC0, 0x80, 0x00, 0xC0, 0x03 }));
+    ASSERT_TRUE(send_command(cmd, 2, resp, 13) == SI468X_ERROR_COMMAND, "ERR must return SI468X_ERROR_COMMAND");
+    ASSERT_TRUE(resp[5] == 0x03, "error code readable after ERR");
+
+    chip.expect(0x12, reply({ 0xC0, 0x80, 0x00, 0xC0, 0x03 }));
+    ASSERT_TRUE(send_command(cmd, 2, resp, 13, 1000, SC_ERR_OK) == SI468X_SUCCESS, "SC_ERR_OK accepts ERR");
+    ASSERT_TRUE(resp[1] == 0xC0, "caller sees ERR in resp[1]");
+
+    // CTS never set
+    chip.expect(0x12, MockChip::cts(), 1 << 30);
+    auto t0 = std::chrono::steady_clock::now();
+    ASSERT_TRUE(send_command(cmd, 2, resp, 13, 20) == SI468X_ERROR_TIMEOUT, "no CTS must time out");
+    long el = ms_since(t0);
+    ASSERT_TRUE(el >= 20 && el < 60, "timeout honoured within 20-60 ms");
+
+    // CTS after ~450 polls (>= 400 ms): the old 50-poll cap would have failed
+    chip.expect(0x12, FX_FUNC_INFO, 450);
+    t0 = std::chrono::steady_clock::now();
+    ASSERT_TRUE(send_command(cmd, 2, resp, 13) == SI468X_SUCCESS, "late CTS within timeout_ms must succeed");
+    ASSERT_TRUE(ms_since(t0) >= 300, "loop really waited");
+
+    // read_reply: one transfer, RD_REPLY opcode
+    size_t n = chip.reads.size();
+    ASSERT_TRUE(read_reply(resp, 13) == SI468X_SUCCESS && chip.reads.size() == n + 1, "read_reply is one transfer");
+    ASSERT_TRUE(chip.bad_reads == 0 && resp[5] == 0x06, "read_reply re-reads the reply buffer");
+
+    // wait_stc
+    chip.current = FX_DIGRAD_SYNCED; // status 0x81
+    ASSERT_TRUE(wait_stc(100) == SI468X_SUCCESS, "STCINT set -> success");
+    chip.current = FX_DIGRAD_PRE_STC; // status 0x80
+    ASSERT_TRUE(wait_stc(30) == SI468X_ERROR_TIMEOUT, "no STCINT -> timeout");
+
+    std::cout << "PASS: test_send_command_err_timeout" << std::endl;
+    return true;
+}
+
+static bool test_stop_service_ids()
+{
+    std::cout << "Running test: test_stop_service_ids..." << std::endl;
+
+    MockChip chip;
+    ASSERT_TRUE(si468x_play_service(0x43D1, 7) == SI468X_SUCCESS, "play");
+    ASSERT_TRUE(si468x_stop_service() == SI468X_SUCCESS, "stop");
+    auto stop = chip.sent(SI468X_CMD_STOP_DIGITAL_SERVICE);
+    ASSERT_TRUE(stop.size() == 1, "one STOP frame");
+    const std::vector<uint8_t> want = { 0x82, 0, 0, 0, 0xD1, 0x43, 0, 0, 7, 0, 0, 0 };
+    ASSERT_TRUE(stop[0] == want, "STOP carries SId/CompId of the playing service (zeros -> ERR on chip)");
+
+    std::cout << "PASS: test_stop_service_ids" << std::endl;
+    return true;
+}
+
+static bool test_dab_tune_waits_stc()
+{
+    std::cout << "Running test: test_dab_tune_waits_stc..." << std::endl;
+
+    MockChip chip;
+    // First tune rejected (previous tune still running), retry accepted with STCINT
+    chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0xC0, 0x80, 0x00, 0xC0, 0x18 }));
+    chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    ASSERT_TRUE(si468x_set_frequency(223936000) == SI468X_SUCCESS, "12A tune after retry");
+    auto tunes = chip.sent(SI468X_CMD_DAB_TUNE_FREQ);
+    ASSERT_TRUE(tunes.size() == 2 && tunes[1][2] == 30, "retried DAB_TUNE_FREQ index 30");
+    ASSERT_TRUE(chip.sent(SI468X_CMD_GET_DIGITAL_SERVICE_LIST).empty(), "no bogus {0x80,0x02}");
+
+    // STCINT never set -> timeout, no lock polling
+    chip.writes.clear();
+    chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x80, 0x80, 0x00, 0xC0 }));
+    ASSERT_TRUE(si468x_set_frequency(174928000) == SI468X_ERROR_TIMEOUT, "no STC -> timeout");
+    ASSERT_TRUE(chip.sent(SI468X_CMD_DAB_DIGRAD_STATUS).empty(), "no lock polling before STC");
+
+    std::cout << "PASS: test_dab_tune_waits_stc" << std::endl;
     return true;
 }
 
@@ -359,6 +453,9 @@ int main()
     success &= test_new_seek_and_telemetry_uninitialized();
     success &= test_error_definitions();
     success &= test_framing_cts_poll();
+    success &= test_send_command_err_timeout();
+    success &= test_stop_service_ids();
+    success &= test_dab_tune_waits_stc();
 
     std::cout << "========================================" << std::endl;
     if (success) {

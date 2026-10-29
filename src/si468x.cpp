@@ -33,6 +33,7 @@ static int sysfs_ce1_pin = -1;
 static uint32_t active_frequency = 0;
 static int active_audio_mode = 0; // 0 = Analog Only, 1 = I2S Digital, 2 = Simultaneous Analog + I2S
 static int active_volume = 50;    // Standard default volume (0 to 63)
+static uint32_t playing_sid = 0, playing_comp = 0; // STOP_DIGITAL_SERVICE needs them; zeros -> ERR
 
 // Global debug logging status flag
 extern "C" {
@@ -242,65 +243,85 @@ static int spi_transfer(const uint8_t* tx, uint8_t* rx, size_t length)
     return 0;
 }
 
-/*
- * Transmit a command packet and wait for response.
- * Uses reference polling loop to check CTS via 7-byte READ_RESP queries.
- */
-int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_len, int timeout_ms)
+static uint8_t last_status[7];
+
+uint8_t si468x_last_status(int i)
 {
-    // 1. Write command over SPI
+    return (i >= 0 && i < 7) ? last_status[i] : 0;
+}
+
+/* One RD_REPLY. Reply buffer is re-readable: every read restarts at status byte 0. */
+int read_reply(uint8_t* resp, size_t len)
+{
+    std::vector<uint8_t> tx(len, 0x00); // tx[0] = RD_REPLY opcode
+    if (spi_transfer(tx.data(), resp, len) < 0) {
+        return SI468X_ERROR_SPI;
+    }
+    return SI468X_SUCCESS;
+}
+
+/*
+ * Write command, poll CTS with 7-byte RD_REPLYs until timeout_ms, then read resp_len bytes.
+ * ERR -> SI468X_ERROR_COMMAND (resp still read, resp[5] = error code) unless SC_ERR_OK.
+ */
+int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_len, int timeout_ms, unsigned flags)
+{
     if (spi_transfer(cmd, nullptr, cmd_len) < 0) {
         return SI468X_ERROR_SPI;
     }
 
-    // 2. Poll CTS using 7-byte READ_RESP (0x00) transfers in a loop
-    bool cts_high = false;
     auto start_time = std::chrono::steady_clock::now();
-
-    for (int retry = 0; retry < 50; retry++) {
-        uint8_t poll_tx[7] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-        uint8_t poll_rx[7] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-
-        if (spi_transfer(poll_tx, poll_rx, 7) == 0) {
-            // poll_rx[1] is the co-processor's status byte; Bit 7 (0x80) is the CTS flag
-            if (poll_rx[1] & 0x80) {
-                // Check for Command Error (ERR bit 6), silencing expected queue-empty codes for 0x84/0xBB/0x80
-                if ((poll_rx[1] & 0x40) && cmd && cmd[0] != 0x84 && cmd[0] != 0xBB && cmd[0] != 0x80) {
-                    SI468X_ERR << "libsi468x: WARNING: Command Error (Status: 0x"
-                               << std::hex << (int)poll_rx[1] << std::dec << ")" << std::endl;
-                }
-                cts_high = true;
-                break;
-            }
-        }
-
-        // Enforce maximum execution timeout window
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::steady_clock::now() - start_time
-                       ).count();
-        if (elapsed >= timeout_ms) {
-            break;
-        }
-
-        // Progressive delay: ((retry * 5) + 1) * 50 microseconds
-        int delay_us = ((retry * 5) + 1) * 50;
-        std::this_thread::sleep_for(std::chrono::microseconds(delay_us));
-    }
-
-    if (!cts_high) {
-        return SI468X_ERROR_TIMEOUT;
-    }
-
-    // 3. Read the response payload. If none was requested, exit immediately (matches native binary exactly!)
-    if (resp && resp_len > 0) {
-        std::vector<uint8_t> tx_dummy(resp_len, 0x00);
-        std::memset(resp, 0, resp_len);
-        if (spi_transfer(tx_dummy.data(), resp, resp_len) < 0) {
+    int delay_us = 50;
+    for (;;) {
+        uint8_t poll[7];
+        if (read_reply(poll, sizeof(poll)) != SI468X_SUCCESS) {
             return SI468X_ERROR_SPI;
         }
+        if (poll[1] & SI468X_CTS_MASK) {
+            std::memcpy(last_status, poll, sizeof(last_status));
+            break;
+        }
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - start_time).count();
+        if (elapsed >= timeout_ms) {
+            return SI468X_ERROR_TIMEOUT;
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(delay_us));
+        delay_us = std::min(delay_us * 2, 1000);
     }
 
+    if (resp && resp_len > 0 && read_reply(resp, resp_len) != SI468X_SUCCESS) {
+        return SI468X_ERROR_SPI;
+    }
+
+    if ((last_status[1] & 0x40) && !(flags & SC_ERR_OK)) {
+        SI468X_ERR << "libsi468x: Command 0x" << std::hex << (int)cmd[0]
+                   << " error (status 0x" << (int)last_status[1]
+                   << ", code 0x" << (int)last_status[5] << ")" << std::dec << std::endl;
+        return SI468X_ERROR_COMMAND;
+    }
     return SI468X_SUCCESS;
+}
+
+/* Poll status until STCINT or timeout */
+int wait_stc(int timeout_ms)
+{
+    auto start_time = std::chrono::steady_clock::now();
+    for (;;) {
+        uint8_t st[7];
+        if (read_reply(st, sizeof(st)) != SI468X_SUCCESS) {
+            return SI468X_ERROR_SPI;
+        }
+        if (st[1] & 0x01) {
+            return SI468X_SUCCESS;
+        }
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - start_time).count();
+        if (elapsed >= timeout_ms) {
+            return SI468X_ERROR_TIMEOUT;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
 }
 
 /* Streams a firmware image from RAM arrays using WRITE_FUT packets */
@@ -619,10 +640,10 @@ int si468x_shutdown(void)
     return SI468X_SUCCESS;
 }
 
+/* Deprecated no-op: no "clear" command exists ({0x80,0x02} was rejected with ERR); tune rebuilds the list */
 int si468x_clear_service_list(void)
 {
-    uint8_t cmd[2] = { 0x80, 0x02 }; // Opcode 0x80 + ACTION 0x02 (Clear Service List)
-    return send_command(cmd, 2, nullptr, 0);
+    return SI468X_SUCCESS;
 }
 
 /* Map center frequencies (in Hz) to the exact, firmware-defined co-processor channel indices */
@@ -702,10 +723,6 @@ int si468x_set_frequency(uint32_t frequency_hz)
 
     active_frequency = frequency_hz;
 
-    // Cleanly wipe the on-chip service database list to prevent cross-frequency accumulation
-    si468x_clear_service_list();
-
-
     // Build DAB_TUNE_FREQ packet (must be exactly 6 bytes)
     uint8_t cmd[6];
     cmd[0] = SI468X_CMD_DAB_TUNE_FREQ;
@@ -715,8 +732,20 @@ int si468x_set_frequency(uint32_t frequency_hz)
     cmd[4] = 0x00;
     cmd[5] = 0x00;
 
-    if (send_command(cmd, 6, nullptr, 0, 5000) != SI468X_SUCCESS) {
-        return SI468X_ERROR_SPI;
+    // Tune while a previous tune runs -> ERR 0x18; let it finish, retry once
+    int rc = send_command(cmd, 6, nullptr, 0, 5000);
+    if (rc == SI468X_ERROR_COMMAND) {
+        wait_stc(3000);
+        rc = send_command(cmd, 6, nullptr, 0, 5000);
+    }
+    if (rc != SI468X_SUCCESS) {
+        return rc;
+    }
+
+    // Tune complete (STCINT) before the next tune can be accepted
+    rc = wait_stc(3000);
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     // Wait for the RF synthesizers to lock and acquire OFDM sync (up to 2.5 seconds)
@@ -862,6 +891,9 @@ int si468x_play_service(uint32_t service_id, uint32_t component_id)
     }
 
     if (ret == SI468X_SUCCESS) {
+        playing_sid = service_id;
+        playing_comp = component_id;
+
         // Turn on the on-chip PAD/XPAD decoder so that DLS text and MOT slideshow are dynamically decoded
         si468x_enable_service_data();
 
@@ -875,11 +907,17 @@ int si468x_stop_service(void)
 {
     SI468X_LOG << "libsi468x: Stopping service playback..." << std::endl;
 
-    // Build 12-byte STOP_DIGITAL command matching native binary exactly (using opcode 0x82)
+    // Same layout as START_DIGITAL_SERVICE: SId, CompId of the playing service
     uint8_t cmd[12] = {
         SI468X_CMD_STOP_DIGITAL_SERVICE, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00
+        (uint8_t)(playing_sid & 0xFF),
+        (uint8_t)((playing_sid >> 8) & 0xFF),
+        (uint8_t)((playing_sid >> 16) & 0xFF),
+        (uint8_t)((playing_sid >> 24) & 0xFF),
+        (uint8_t)(playing_comp & 0xFF),
+        (uint8_t)((playing_comp >> 8) & 0xFF),
+        (uint8_t)((playing_comp >> 16) & 0xFF),
+        (uint8_t)((playing_comp >> 24) & 0xFF)
     };
 
     // Send first attempt with SCIdS = 0 (reads 0 response parameter bytes, matches radio_cli!)
@@ -892,10 +930,9 @@ int si468x_stop_service(void)
     }
 
     if (ret == SI468X_SUCCESS) {
-        return SI468X_SUCCESS;
+        playing_sid = playing_comp = 0;
     }
-
-    return SI468X_ERROR_SPI;
+    return ret;
 }
 
 int si468x_set_volume(uint8_t volume)
@@ -1038,7 +1075,7 @@ void si468x_decode_short_label(const uint8_t* raw_label, int raw_len, uint16_t c
 int si468x_get_ensemble_info(char* label, uint16_t* ueid)
 {
     if (!label) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Write { 0xB4, 0x00 } (2 bytes) and read 26 response parameter bytes over SPI
@@ -1046,8 +1083,10 @@ int si468x_get_ensemble_info(char* label, uint16_t* ueid)
     uint8_t resp[26];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 2, resp, 26) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 2, resp, 26);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     if (ueid) {
@@ -1078,9 +1117,12 @@ int si468x_get_component_info(uint32_t service_id, uint32_t component_id, char* 
     uint8_t resp[29];
     std::memset(resp, 0, sizeof(resp));
 
-    int ret = send_command(cmd, 12, resp, 29);
+    int ret = send_command(cmd, 12, resp, 29, 1000, SC_ERR_OK);
     if (ret != SI468X_SUCCESS) {
-        return -1;
+        return ret;
+    }
+    if (resp[1] & 0x40) {
+        return SI468X_ERROR_NOT_FOUND; // component has no info/label
     }
 
     // Subchannel ID is at resp[7] & 0x3F (low 6 bits)
@@ -1122,8 +1164,9 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
     uint8_t size_resp[7];
     std::memset(size_resp, 0, sizeof(size_resp));
 
-    if (send_command(size_cmd, 2, size_resp, 7) != SI468X_SUCCESS) {
-        return 0;
+    if (send_command(size_cmd, 2, size_resp, SI468X_REP_DSL_HDR, 1000, SC_ERR_OK) != SI468X_SUCCESS
+            || (size_resp[1] & 0x40)) {
+        return 0; // list not ready
     }
 
     // Bytes 5-6 (Response Parameter Bytes 1-2) store the 16-bit database size in Little-Endian
@@ -1133,11 +1176,11 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
         return 0;
     }
 
-    // Step 2: Send GET_DIGITAL_SERVICE_LIST (0x80) again to download full payload (db_size + 7 bytes)
-    uint16_t full_resp_len = db_size + 7;
+    // Step 2: re-read header + payload (reply buffer is re-readable; no second query)
+    uint16_t full_resp_len = db_size + SI468X_REP_DSL_HDR;
     std::vector<uint8_t> resp(full_resp_len, 0x00);
 
-    if (send_command(size_cmd, 2, resp.data(), full_resp_len) != SI468X_SUCCESS) {
+    if (read_reply(resp.data(), full_resp_len) != SI468X_SUCCESS) {
         return 0;
     }
 
@@ -1224,7 +1267,7 @@ int si468x_get_service_list(si468x_service_t* list, int max_services)
 int si468x_get_service_info(uint32_t service_id, si468x_service_info_t* info)
 {
     if (!info) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Command 0xC0 (DAB_GET_SERVICE_INFO)
@@ -1270,14 +1313,14 @@ int si468x_get_service_info(uint32_t service_id, si468x_service_info_t* info)
 int si468x_get_signal_status(si468x_signal_status_t* status)
 {
     if (!status) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // 2-byte packet required (Opcode + INTACK) and 24-byte response payload (total 28 bytes)
     uint8_t cmd[2] = { SI468X_CMD_DAB_DIGRAD_STATUS, 0x00 };
-    std::vector<uint8_t> resp(28, 0x00);
+    uint8_t resp[SI468X_REP_DIGRAD_STATUS] = {};
 
-    if (send_command(cmd, 2, resp.data(), 28) != SI468X_SUCCESS) {
+    if (send_command(cmd, 2, resp, sizeof(resp)) != SI468X_SUCCESS) {
         // Return simulated parameters if physical bus is closed (mock fallback)
         if (!bus_open()) {
             status->rssi = 45;       // 45 dBuV (decent signal)
@@ -1368,15 +1411,20 @@ int si468x_get_dls_text(char* out_text, int max_len)
     static std::string last_dls_text = "";
 
     if (!out_text || max_len <= 0) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Command 0x84 (DAB_GET_DIGITAL_SERVICE_DATA) with parameter 0x01 (DLS Text)
     uint8_t cmd[2] = { 0x84, 0x01 };
     std::vector<uint8_t> resp(2073, 0x00);
 
-    if (send_command(cmd, 2, resp.data(), 2073) != SI468X_SUCCESS) {
-        return -2;
+    int rc = send_command(cmd, 2, resp.data(), 2073, 1000, SC_ERR_OK);
+    if (rc != SI468X_SUCCESS) {
+        return rc;
+    }
+    if (resp[1] & 0x40) { // queue empty
+        out_text[0] = '\0';
+        return 0;
     }
 
     // Check DLS presence flag (Bit 0 of resp[5])
@@ -1474,7 +1522,7 @@ int si468x_get_dls_text(char* out_text, int max_len)
     int si468x_get_mot_slideshow(si468x_mot_slideshow_t* slideshow)
     {
     if (!slideshow) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     slideshow->is_new = 0;
@@ -1489,8 +1537,12 @@ int si468x_get_dls_text(char* out_text, int max_len)
     uint8_t cmd[2] = { 0x84, 0x01 };
     std::vector<uint8_t> resp(2073, 0x00);
 
-    if (send_command(cmd, 2, resp.data(), 2073) != SI468X_SUCCESS) {
-        return -2;
+    int rc = send_command(cmd, 2, resp.data(), 2073, 1000, SC_ERR_OK);
+    if (rc != SI468X_SUCCESS) {
+        return rc;
+    }
+    if (resp[1] & 0x40) { // queue empty
+        return 0;
     }
 
     uint16_t byte_count = resp[19] | ((uint16_t)resp[20] << 8);
@@ -1589,13 +1641,14 @@ int si468x_get_dls_text(char* out_text, int max_len)
     int si468x_get_chip_info(si468x_chip_info_t* info)
 {
     if (!info) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
     uint8_t rev_cmd[1] = { 0x10 };
     uint8_t rev_resp[16];
     std::memset(rev_resp, 0, sizeof(rev_resp));
-    if (send_command(rev_cmd, 1, rev_resp, 16) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(rev_cmd, 1, rev_resp, 16);
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
     info->chip_id = rev_resp[5];
     info->rom_id = rev_resp[6];
@@ -1607,7 +1660,7 @@ int si468x_get_dls_text(char* out_text, int max_len)
 int si468x_set_frequency_table(const uint32_t* freqs, int count)
 {
     if (!freqs || count <= 0 || count > 48) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Prepare command packet
@@ -1624,8 +1677,10 @@ int si468x_set_frequency_table(const uint32_t* freqs, int count)
         cmd[7 + i * 4]     = (f >> 24) & 0xFF;
     }
 
-    if (send_command(cmd.data(), cmd_len, nullptr, 0) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd.data(), cmd_len, nullptr, 0);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     // Commit only after chip accepted it; index lookup must match chip's table
@@ -1645,8 +1700,10 @@ int si468x_tune_fm(uint32_t frequency_khz)
     cmd[2] = freq_10khz & 0xFF;
     cmd[3] = (freq_10khz >> 8) & 0xFF;
 
-    if (send_command(cmd, 7, nullptr, 0) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 7, nullptr, 0);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     // Give the RF synthesizer 300ms to lock and stabilize on-chip
@@ -1658,15 +1715,17 @@ int si468x_tune_fm(uint32_t frequency_khz)
 int si468x_get_fm_status(si468x_fm_status_t* status)
 {
     if (!status) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     uint8_t cmd[2] = { 0x32, 0x01 }; // Opcode 0x32 (FM_RSQ_STATUS) with INTACK = 1
     uint8_t resp[23];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 2, resp, 23) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 2, resp, 23);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     uint32_t freq_10khz = resp[7] | (resp[8] << 8);
@@ -1745,10 +1804,10 @@ static void si468x_update_rds_decoder(void)
 int si468x_get_rds_text(char* out_text, int max_len)
 {
     if (!out_text || max_len <= 0) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
     if (!bus_open()) {
-        return -1;
+        return SI468X_ERROR_SPI;
     }
 
     std::string old_text = rds_decoder.radio_text;
@@ -1807,10 +1866,10 @@ int si468x_get_rds_text(char* out_text, int max_len)
 int si468x_get_rds_station_name(char* out_name, int max_len)
 {
     if (!out_name || max_len <= 0) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
     if (!bus_open()) {
-        return -1;
+        return SI468X_ERROR_SPI;
     }
 
     static std::string last_station_name = "";
@@ -1846,7 +1905,7 @@ int si468x_get_rds_station_name(char* out_name, int max_len)
 int si468x_get_time(si468x_time_t* time)
 {
     if (!time) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Write 2-byte command for DAB_GET_TIME (Opcode 0xBC, Param Byte 0 = 0x01)
@@ -1854,8 +1913,10 @@ int si468x_get_time(si468x_time_t* time)
     uint8_t resp[15];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 2, resp, 15) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 2, resp, 15);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     // Parse time fields from standard offsets (Parameter Bytes 9 to 14)
@@ -1871,7 +1932,7 @@ int si468x_get_time(si468x_time_t* time)
 int si468x_get_audio_info(si468x_audio_info_t* info)
 {
     if (!info) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Write 2-byte command for DAB_GET_AUDIO_INFO (Opcode 0xBD, INTACK = 0x00)
@@ -1879,8 +1940,10 @@ int si468x_get_audio_info(si468x_audio_info_t* info)
     uint8_t resp[10];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 2, resp, 10) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 2, resp, 10);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     // Extract values matching reference offsets (Parameter Byte 0 starts at resp[4])
@@ -1906,7 +1969,7 @@ int si468x_get_audio_info(si468x_audio_info_t* info)
     int si468x_get_event_status(si468x_event_status_t* status)
 {
     if (!status) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Write 2-byte command for DAB_GET_EVENT_STATUS (Opcode 0x12, Param Byte 0 = 0x01 to clear INTACK)
@@ -1914,8 +1977,10 @@ int si468x_get_audio_info(si468x_audio_info_t* info)
     uint8_t resp[6];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 2, resp, 6) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 2, resp, 6);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     // Extract event status bits from Parameter Byte 1 (resp[5])
@@ -1938,8 +2003,10 @@ int si468x_set_rds_region(int region)
     cmd[4] = deemph_val & 0xFF;         // Low byte of Value
     cmd[5] = (deemph_val >> 8) & 0xFF;  // High byte of Value
 
-    if (send_command(cmd, 6, nullptr, 0) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 6, nullptr, 0);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     return SI468X_SUCCESS;
@@ -1955,8 +2022,10 @@ int si468x_set_property(uint16_t property_id, uint16_t value)
     cmd[4] = value & 0xFF;               // Low byte of Value
     cmd[5] = (value >> 8) & 0xFF;        // High byte of Value
 
-    if (send_command(cmd, 6, nullptr, 0) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 6, nullptr, 0);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     return SI468X_SUCCESS;
@@ -2010,8 +2079,10 @@ int si468x_fm_seek_start(int seek_up, int wrap)
     cmd[4] = 0x01; // ANTCAP Low byte (Set to 0x0001 for peak RF performance)
     cmd[5] = 0x00; // ANTCAP High byte
 
-    if (send_command(cmd, 6, nullptr, 0, 5000) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 6, nullptr, 0, 5000);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     return SI468X_SUCCESS;
@@ -2020,7 +2091,7 @@ int si468x_fm_seek_start(int seek_up, int wrap)
 int si468x_dab_get_announcement_support(uint32_t service_id, uint32_t component_id, uint16_t* asw_flags)
 {
     if (!asw_flags) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Write 8-byte command for DAB_GET_ANNOUNCEMENT_SUPPORT_INFO (Opcode 0xB5)
@@ -2035,8 +2106,10 @@ int si468x_dab_get_announcement_support(uint32_t service_id, uint32_t component_
     uint8_t resp[12];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 8, resp, 12) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 8, resp, 12);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     // ASU is located at Parameter Byte 2 and 3 (resp[6..7])
@@ -2051,8 +2124,10 @@ int si468x_dab_get_announcement_info(int buf_empty, uint32_t* service_id, uint32
     uint8_t resp[16];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 1, resp, 16) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 1, resp, 16);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     // Extract fields matching standard offsets (ASW at resp[8..9], ID1/SId at resp[10..11], ID2/CompId at resp[12..13])
@@ -2072,7 +2147,7 @@ int si468x_dab_get_announcement_info(int buf_empty, uint32_t* service_id, uint32
 int si468x_dab_get_service_linking(uint32_t service_id, uint8_t* link_info, int max_len)
 {
     if (!link_info || max_len <= 0) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Write 8-byte command for DAB_GET_SERVICE_LINKING_INFO (Opcode 0xB7)
@@ -2089,8 +2164,10 @@ int si468x_dab_get_service_linking(uint32_t service_id, uint8_t* link_info, int 
     uint8_t resp[256];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 8, resp, 256) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 8, resp, 256);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     uint16_t data_size = resp[4] | ((uint16_t)resp[5] << 8);
@@ -2103,7 +2180,7 @@ int si468x_dab_get_service_linking(uint32_t service_id, uint8_t* link_info, int 
 int si468x_fmhd_get_psd_text(int program, int field, char* out_text, int max_len)
 {
     if (!out_text || max_len <= 0) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Write 3-byte command for HD_GET_PSD_DECODE (Opcode 0x95)
@@ -2115,8 +2192,10 @@ int si468x_fmhd_get_psd_text(int program, int field, char* out_text, int max_len
     uint8_t resp[256];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 3, resp, 256) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 3, resp, 256);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     uint8_t length = resp[7];
@@ -2135,7 +2214,7 @@ int si468x_fmhd_get_psd_text(int program, int field, char* out_text, int max_len
 int si468x_fmhd_get_station_info(int info_select, char* out_text, int max_len)
 {
     if (!out_text || max_len <= 0) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Write 2-byte command for HD_GET_STATION_INFO (Opcode 0x94)
@@ -2146,8 +2225,10 @@ int si468x_fmhd_get_station_info(int info_select, char* out_text, int max_len)
     uint8_t resp[256];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 2, resp, 256) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 2, resp, 256);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     uint16_t length = resp[4] | ((uint16_t)resp[5] << 8);
@@ -2166,7 +2247,7 @@ int si468x_fmhd_get_station_info(int info_select, char* out_text, int max_len)
 int si468x_dab_get_subchan_info(uint32_t service_id, uint32_t component_id, si468x_subchan_info_t* info)
 {
     if (!info) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Write 12-byte command for DAB_GET_SUBCHAN_INFO (Opcode 0xBE)
@@ -2185,8 +2266,10 @@ int si468x_dab_get_subchan_info(uint32_t service_id, uint32_t component_id, si46
     uint8_t resp[12];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 12, resp, 12) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 12, resp, 12);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     info->service_mode = resp[4];
@@ -2201,7 +2284,7 @@ int si468x_dab_get_subchan_info(uint32_t service_id, uint32_t component_id, si46
 int si468x_fmhd_get_alert_message(char* alert_text, int max_len)
 {
     if (!alert_text || max_len <= 0) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Write 2-byte command for HD_GET_ALERT_MSG (Opcode 0x96)
@@ -2209,8 +2292,10 @@ int si468x_fmhd_get_alert_message(char* alert_text, int max_len)
     uint8_t resp[256];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 2, resp, 256) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 2, resp, 256);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     uint16_t length = resp[4] | ((uint16_t)resp[5] << 8);
@@ -2229,7 +2314,7 @@ int si468x_fmhd_get_alert_message(char* alert_text, int max_len)
 int si468x_dab_get_freq_info(si468x_freq_element_t* elements, int max_elements)
 {
     if (!elements || max_elements <= 0) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Write 2-byte command for DAB_GET_FREQ_INFO (Opcode 0xBF)
@@ -2237,8 +2322,10 @@ int si468x_dab_get_freq_info(si468x_freq_element_t* elements, int max_elements)
     uint8_t resp[256];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 2, resp, 256) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 2, resp, 256);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     // Extract Number of Elements from resp[4..7] (32-bit Little-Endian)
@@ -2268,7 +2355,7 @@ int si468x_dab_get_freq_info(si468x_freq_element_t* elements, int max_elements)
 int si468x_get_agc_status(si468x_agc_status_t* status)
 {
     if (!status) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Write 2-byte command for GET_AGC_STATUS (Opcode 0x17)
@@ -2276,8 +2363,10 @@ int si468x_get_agc_status(si468x_agc_status_t* status)
     uint8_t resp[7];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 2, resp, 7) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 2, resp, 7);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     status->rfagc_dis = (resp[4] >> 2) & 0x01;
@@ -2290,7 +2379,7 @@ int si468x_get_agc_status(si468x_agc_status_t* status)
 int si468x_dab_get_event_status(si468x_dab_event_status_t* status)
 {
     if (!status) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Write 2-byte command for DAB_GET_EVENT_STATUS (Opcode 0xB3, ACK = 1)
@@ -2298,8 +2387,10 @@ int si468x_dab_get_event_status(si468x_dab_event_status_t* status)
     uint8_t resp[8];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 2, resp, 8) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 2, resp, 8);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     status->recfg_int = (resp[4] >> 7) & 0x01;
@@ -2324,11 +2415,11 @@ int si468x_dab_get_event_status(si468x_dab_event_status_t* status)
 int si468x_dab_calibrate_antenna(uint32_t frequency_hz, uint16_t* peak_antcap)
 {
     if (!peak_antcap) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     if (!bus_open()) {
-        return -1;
+        return SI468X_ERROR_SPI;
     }
 
     int freq_index = si468x_get_freq_index(frequency_hz);
@@ -2385,7 +2476,7 @@ int si468x_dab_calibrate_antenna(uint32_t frequency_hz, uint16_t* peak_antcap)
 int si468x_dab_get_other_ensemble_info(uint32_t service_id, uint16_t* eids, int max_eids)
 {
     if (!eids || max_eids <= 0) {
-        return -1;
+        return SI468X_ERROR_PARAM;
     }
 
     // Write 8-byte command for DAB_GET_OE_SERVICES_INFO (Opcode 0xC1)
@@ -2400,8 +2491,10 @@ int si468x_dab_get_other_ensemble_info(uint32_t service_id, uint16_t* eids, int 
     uint8_t resp[256];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 8, resp, 256) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 8, resp, 256);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     // Extract number of EIDs at resp[6]
@@ -2429,8 +2522,10 @@ int si468x_dab_get_ber_info(int clear, uint32_t* ber_count, uint32_t* fib_error_
     uint8_t resp[12];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 2, resp, 12) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 2, resp, 12);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     if (ber_count) {
@@ -2451,8 +2546,10 @@ int si468x_fmhd_get_ber_info(int clear, uint32_t* ber_count)
     uint8_t resp[8];
     std::memset(resp, 0, sizeof(resp));
 
-    if (send_command(cmd, 2, resp, 8) != SI468X_SUCCESS) {
-        return -1;
+    int rc = send_command(cmd, 2, resp, 8);
+
+    if (rc != SI468X_SUCCESS) {
+        return rc;
     }
 
     if (ber_count) {

@@ -27,6 +27,7 @@ struct MockChip {
     int busy = 0;
     std::vector<std::vector<uint8_t>> writes; // command frames
     std::vector<size_t> reads;                // RD_REPLY lengths, CTS polls included
+    int bad_reads = 0;                        // reads whose TX did not start with RD_REPLY (0x00)
 
     static std::vector<uint8_t> cts() { return { 0x00, 0x80, 0x80, 0x00, 0xC0 }; }
 
@@ -64,6 +65,9 @@ struct MockChip {
             return 0;
         }
         m->reads.push_back(len);
+        if (!tx || tx[0] != 0x00) {
+            m->bad_reads++;
+        }
         std::memset(rx, 0, len);
         if (m->busy > 0) {
             m->busy--;
