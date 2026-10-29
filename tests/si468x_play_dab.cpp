@@ -11,6 +11,7 @@
 #include <thread>
 #include <atomic>
 #include <cstring>
+#include <cstdio>
 #include <csignal>
 #include "si468x.h"
 
@@ -172,6 +173,7 @@ int main(int argc, char* argv[])
     std::cout << "--------------------------------------------------" << std::endl;
 
     char dls_text[129] = {0};
+    int tick = 0;
 
     while (running) {
         si468x_signal_status_t play_status;
@@ -183,6 +185,20 @@ int main(int argc, char* argv[])
 
         if (si468x_get_dls_text(dls_text, sizeof(dls_text)) == 1) {
             std::cout << "\n[DLS] " << dls_text << std::endl;
+        }
+
+        if (++tick % 20 == 0) { // every 10 s
+            si468x_audio_info_t ai;
+            if (si468x_get_audio_info(&ai) == SI468X_SUCCESS) {
+                std::cout << "\n[Audio] " << ai.bitrate << " kbps, " << ai.sample_rate << " Hz, "
+                          << si468x_get_audio_mode_text(ai.audio_mode)
+                          << (ai.sbr ? ", SBR" : "") << (ai.ps ? ", PS" : "") << std::endl;
+            }
+            si468x_time_t t;
+            if (si468x_get_time(&t) == SI468X_SUCCESS) {
+                std::printf("[Time] %04u-%02u-%02u %02u:%02u:%02u UTC\n",
+                            t.year, t.month, t.day, t.hours, t.minutes, t.seconds);
+            }
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(500));

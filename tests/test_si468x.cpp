@@ -580,6 +580,68 @@ static bool test_signal_status()
     return true;
 }
 
+static std::vector<uint8_t> rds_group(uint8_t fifo_used, uint16_t a, uint16_t b, uint16_t c, uint16_t d, uint8_t ble = 0)
+{
+    return reply({ 0x80, 0x80, 0x00, 0xC0, 0x02, 0x02, 0x00, 0x00, (uint8_t)a, (uint8_t)(a >> 8), fifo_used, ble,
+                   (uint8_t)a, (uint8_t)(a >> 8), (uint8_t)b, (uint8_t)(b >> 8),
+                   (uint8_t)c, (uint8_t)(c >> 8), (uint8_t)d, (uint8_t)(d >> 8) });
+}
+
+static bool test_time_audio_fm_rds()
+{
+    std::cout << "Running test: test_time_audio_fm_rds..." << std::endl;
+
+    MockChip chip;
+
+    // DAB_GET_TIME: 2026-10-29 15:25:42 at reply 0x04..0x0A
+    si468x_time_t t;
+    chip.expect(SI468X_CMD_DAB_GET_TIME, reply({ 0x80, 0x80, 0x00, 0xC0, 0xEA, 0x07, 0x0A, 0x1D, 0x0F, 0x19, 0x2A }));
+    ASSERT_TRUE(si468x_get_time(&t) == SI468X_SUCCESS, "time");
+    ASSERT_TRUE(t.year == 2026 && t.month == 10 && t.day == 29 && t.hours == 15 && t.minutes == 25 && t.seconds == 42, "time fields");
+    ASSERT_TRUE(chip.reads.back() == SI468X_REP_TIME, "time read 12");
+    chip.expect(SI468X_CMD_DAB_GET_TIME, reply({ 0x80, 0x80, 0x00, 0xC0, 0, 0, 0, 0, 0, 0, 0 }));
+    ASSERT_TRUE(si468x_get_time(&t) == SI468X_ERROR_NOT_FOUND, "year 0 -> NOT_FOUND");
+
+    // DAB_GET_AUDIO_INFO: 64 kbps, 48000 Hz, SBR=1 PS=0 mode=2, DRC 3
+    si468x_audio_info_t ai;
+    chip.expect(SI468X_CMD_DAB_GET_AUDIO_INFO, reply({ 0x80, 0x80, 0x00, 0xC0, 64, 0, 0x80, 0xBB, 0x06, 0x03 }));
+    ASSERT_TRUE(si468x_get_audio_info(&ai) == SI468X_SUCCESS, "audio info");
+    ASSERT_TRUE(ai.bitrate == 64 && ai.sample_rate == 48000 && ai.audio_mode == 2 && ai.sbr == 1 && ai.ps == 0
+                && ai.drc_gain == 3, "audio info fields");
+
+    // FM_RSQ_STATUS: 101.7 MHz, FREQOFF -2, RSSI 40, SNR 25, MULT 3, VALID; RDS FIFO empty
+    si468x_fm_status_t fm;
+    std::vector<uint8_t> rsq = reply({ 0x80, 0x80, 0x00, 0xC0, 0x1F, 0x81, 0xBA, 0x27, 0xFE, 40, 25, 3 });
+    rsq.resize(SI468X_REP_FM_RSQ_STATUS, 0x00);
+    chip.expect(SI468X_CMD_FM_RSQ_STATUS, rsq);
+    chip.expect(SI468X_CMD_FM_RDS_STATUS, rds_group(0, 0, 0, 0, 0));
+    ASSERT_TRUE(si468x_get_fm_status(&fm) == SI468X_SUCCESS, "fm status");
+    ASSERT_TRUE(fm.frequency_hz == 101700000 && fm.freq_offset == -2 && fm.rssi == 40 && fm.snr == 25
+                && fm.multipath == 3 && fm.valid == 1 && fm.hd_synced == 0, "RSQ fields; interrupt bits ignored");
+    ASSERT_TRUE(fm.rds_synced == 1, "rds_synced from RDSSYNC of FM_RDS_STATUS");
+    ASSERT_TRUE(chip.sent(SI468X_CMD_FM_RSQ_STATUS).back()[1] == 0x00, "RSQ without STCACK");
+
+    // RDS: PS "RADIO 1 " over four 0A groups, then empty FIFO (stale blocks must not be decoded)
+    char ps[16];
+    const uint16_t seg[4] = { 0x5241, 0x4449, 0x4F20, 0x3120 }; // "RA" "DI" "O " "1 "
+    for (int i = 0; i < 4; i++) {
+        chip.expect(SI468X_CMD_FM_RDS_STATUS, rds_group(4 - i, 0x4321, 0x0000 | i, 0, seg[i]));
+    }
+    ASSERT_TRUE(si468x_get_rds_station_name(ps, sizeof(ps)) == 1 && std::strcmp(ps, "RADIO 1") == 0, "PS assembled");
+    ASSERT_TRUE(chip.sent(SI468X_CMD_FM_RDS_STATUS).back()[1] == 0x01, "RDS INTACK dequeues");
+    chip.expect(SI468X_CMD_FM_RDS_STATUS, rds_group(0, 0x4321, 0x0000, 0, 0x5858)); // stale "XX"
+    ASSERT_TRUE(si468x_get_rds_station_name(ps, sizeof(ps)) == 0 && std::strcmp(ps, "RADIO 1") == 0, "empty FIFO ignored");
+
+    // RT 2A segment 0 "Hell" + segment 1 "o\r"
+    char rt[80];
+    chip.expect(SI468X_CMD_FM_RDS_STATUS, rds_group(2, 0x4321, 0x2000, 0x4865, 0x6C6C));
+    chip.expect(SI468X_CMD_FM_RDS_STATUS, rds_group(1, 0x4321, 0x2001, 0x6F0D, 0x2020));
+    ASSERT_TRUE(si468x_get_rds_text(rt, sizeof(rt)) == 1 && std::strcmp(rt, "Hello") == 0, "RadioText assembled");
+
+    std::cout << "PASS: test_time_audio_fm_rds" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -603,6 +665,7 @@ int main()
     success &= test_dab_tune_waits_stc();
     success &= test_dab_metadata();
     success &= test_signal_status();
+    success &= test_time_audio_fm_rds();
 
     std::cout << "========================================" << std::endl;
     if (success) {

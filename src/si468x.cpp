@@ -461,8 +461,6 @@ public:
         }
     }
 
-    void decode_block_A(uint16_t block_A) {}
-
     void decode_block_B(uint16_t block_B)
     {
         group_type = block_B >> 12;
@@ -492,14 +490,6 @@ public:
             uint8_t segment_address = block_B_low_5 & 0x03;
             decode_PS_block(segment_address, block_D);
         }
-    }
-
-    void decode(uint16_t a, uint16_t b, uint16_t c, uint16_t d)
-    {
-        decode_block_A(a);
-        decode_block_B(b);
-        decode_block_C(c);
-        decode_block_D(d);
     }
 };
 
@@ -1675,90 +1665,77 @@ int si468x_tune_fm(uint32_t frequency_khz)
     return SI468X_SUCCESS;
 }
 
+static uint8_t rds_sync_last = 0; // RDSSYNC from the last FM_RDS_STATUS
+static void si468x_update_rds_decoder(void);
+
 int si468x_get_fm_status(si468x_fm_status_t* status)
 {
     if (!status) {
         return SI468X_ERROR_PARAM;
     }
 
-    uint8_t cmd[2] = { 0x32, 0x01 }; // Opcode 0x32 (FM_RSQ_STATUS) with INTACK = 1
-    uint8_t resp[23];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 2, resp, 23);
-
+    uint8_t cmd[2] = { SI468X_CMD_FM_RSQ_STATUS, 0x00 };
+    uint8_t resp[SI468X_REP_FM_RSQ_STATUS] = {};
+    int rc = send_command(cmd, 2, resp, sizeof(resp));
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    uint32_t freq_10khz = resp[7] | (resp[8] << 8);
-    status->frequency_hz = freq_10khz * 10000;
-    status->rssi = resp[9];
-    status->snr = resp[10];
-    status->multipath = resp[11];
-    status->freq_offset = (int8_t)resp[12];
+    // resp[5] = interrupt bits (ignored); resp[6]: BLTF 0x80, HDDETECTED 0x20, AFCRL 0x02, VALID 0x01
+    status->frequency_hz = le16(&resp[7]) * 10000u;
+    status->freq_offset = (int8_t)resp[9];
+    status->rssi = resp[10];
+    status->snr = resp[11];
+    status->multipath = resp[12];
+    status->hd_synced = (resp[6] & 0x20) != 0;
+    status->valid = resp[6] & 0x01;
 
-    // HD synchronization flag: Bit 0 of Parameter Byte 1 (resp[5] & 0x01)
-    status->hd_synced = resp[5] & 0x01;
-
-    // RDS synchronization flag: Bit 0 of Parameter Byte 2 (resp[6] & 0x01)
-    status->rds_synced = resp[6] & 0x01;
-
+    // RSQ has no RDS sync; take it from the RDS decoder (also drains the FIFO into it)
+    si468x_update_rds_decoder();
+    status->rds_synced = rds_sync_last;
     return SI468X_SUCCESS;
 }
 
+/*
+ * Drain FM_RDS_STATUS (INTACK, dequeues one group per call).
+ * RDSFIFOUSED counts groups including the returned one (1 = last group); 0 = empty, blocks stale.
+ */
 static void si468x_update_rds_decoder(void)
 {
     if (!bus_open()) {
         return;
     }
 
-    uint8_t cmd[2] = { 0x34, 0x00 }; // Opcode 0x34 (FM_RDS_STATUS) with INTACK = 0
-    uint8_t resp[21];
+    uint8_t cmd[2] = { SI468X_CMD_FM_RDS_STATUS, 0x01 };
+    uint8_t resp[SI468X_REP_FM_RDS_STATUS];
 
-    // Flush the RDS FIFO (up to 24 groups) and decode
     for (int i = 0; i < 24; i++) {
-        std::memset(resp, 0, sizeof(resp));
-        if (send_command(cmd, 2, resp, 21) != SI468X_SUCCESS) {
+        if (send_command(cmd, 2, resp, sizeof(resp)) != SI468X_SUCCESS) {
+            break;
+        }
+        rds_sync_last = (resp[6] & 0x02) ? 1 : 0;
+        uint8_t fifo_used = resp[11];
+        if (fifo_used == 0) {
             break;
         }
 
-        uint8_t rds_sync = resp[5] & 0x02;   // Bit 1 of Parameter Byte 1
-        uint8_t fifo_used = resp[7] & 0x1F;  // Low 5 bits of Parameter Byte 3
-
-        if (!rds_sync) {
-            if (fifo_used == 0) {
-                break;
-            }
-            continue;
-        }
-
-        // Combine blocks matching standard FMHD mode 0x34 (FM_RDS_STATUS) offsets
-        uint16_t block_A = (resp[10] << 8) | resp[9];
-        uint16_t block_B = (resp[16] << 8) | resp[15];
-        uint16_t block_C = (resp[18] << 8) | resp[17];
-        uint16_t block_D = (resp[20] << 8) | resp[19];
-
-        // Parse block error codes
-        uint8_t err_A = resp[12] >> 6;
-        uint8_t err_B = (resp[12] >> 4) & 0x03;
-        uint8_t err_C = (resp[12] >> 2) & 0x03;
-        uint8_t err_D = resp[12] & 0x03;
-
-        // Decode only if header blocks have no uncorrectable errors
-        if (err_A < 3 && err_B < 3) {
-            rds_decoder.decode_block_A(block_A);
-            rds_decoder.decode_block_B(block_B);
-
-            if (err_C < 3) {
-                rds_decoder.decode_block_C(block_C);
-            }
-            if (err_D < 3) {
-                rds_decoder.decode_block_D(block_D);
+        if (rds_sync_last) {
+            // BLE resp[12]: A 0xC0, B 0x30, C 0x0C, D 0x03 (3 = uncorrectable)
+            uint8_t err_A = resp[12] >> 6;
+            uint8_t err_B = (resp[12] >> 4) & 0x03;
+            uint8_t err_C = (resp[12] >> 2) & 0x03;
+            uint8_t err_D = resp[12] & 0x03;
+            if (err_A < 3 && err_B < 3) {
+                rds_decoder.decode_block_B(le16(&resp[15]));
+                if (err_C < 3) {
+                    rds_decoder.decode_block_C(le16(&resp[17]));
+                }
+                if (err_D < 3) {
+                    rds_decoder.decode_block_D(le16(&resp[19]));
+                }
             }
         }
-
-        if (fifo_used == 0) {
+        if (fifo_used <= 1) {
             break;
         }
     }
@@ -1871,26 +1848,21 @@ int si468x_get_time(si468x_time_t* time)
         return SI468X_ERROR_PARAM;
     }
 
-    // Write 2-byte command for DAB_GET_TIME (Opcode 0xBC, Param Byte 0 = 0x01)
-    uint8_t cmd[2] = { 0xBC, 0x01 };
-    uint8_t resp[15];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 2, resp, 15);
-
+    uint8_t cmd[2] = { SI468X_CMD_DAB_GET_TIME, 0x01 }; // TIME_TYPE 1 = UTC
+    uint8_t resp[SI468X_REP_TIME] = {};
+    int rc = send_command(cmd, 2, resp, sizeof(resp));
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    // Parse time fields from standard offsets (Parameter Bytes 9 to 14)
-    time->year = resp[9] | ((uint16_t)resp[10] << 8);
-    time->month = resp[11];
-    time->day = resp[12];
-    time->hours = resp[13];
-    time->minutes = resp[14];
-
-    return SI468X_SUCCESS;
-    }
+    time->year = le16(&resp[5]);
+    time->month = resp[7];
+    time->day = resp[8];
+    time->hours = resp[9];
+    time->minutes = resp[10];
+    time->seconds = resp[11];
+    return time->year ? SI468X_SUCCESS : SI468X_ERROR_NOT_FOUND; // no time received yet
+}
 
 int si468x_get_audio_info(si468x_audio_info_t* info)
 {
@@ -1898,38 +1870,24 @@ int si468x_get_audio_info(si468x_audio_info_t* info)
         return SI468X_ERROR_PARAM;
     }
 
-    // Write 2-byte command for DAB_GET_AUDIO_INFO (Opcode 0xBD, INTACK = 0x00)
-    uint8_t cmd[2] = { 0xBD, 0x00 };
-    uint8_t resp[10];
-    std::memset(resp, 0, sizeof(resp));
-
-    int rc = send_command(cmd, 2, resp, 10);
-
+    uint8_t cmd[2] = { SI468X_CMD_DAB_GET_AUDIO_INFO, 0x00 };
+    uint8_t resp[SI468X_REP_AUDIO_INFO] = {};
+    int rc = send_command(cmd, 2, resp, sizeof(resp));
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
 
-    // Extract values matching reference offsets (Parameter Byte 0 starts at resp[4])
-    uint16_t bitrate = resp[4] | ((uint16_t)resp[5] << 8);
-    uint16_t sample_rate = resp[6] | ((uint16_t)resp[7] << 8);
-    uint8_t audio_mode = resp[8] & 0x03;
-
-    // A non-zero bitrate indicates the audio stream info is valid and actively locked
-    if (bitrate > 0) {
-        info->bitrate = bitrate;
-        info->sample_rate = sample_rate;
-        info->audio_mode = audio_mode;
-        return SI468X_SUCCESS;
-    }
-
-    // Info not valid or stream not locked
-    info->bitrate = 0;
-    info->sample_rate = 0;
-    info->audio_mode = 0;
-    return SI468X_SUCCESS; // Not an SPI error, just not playing
+    // bitrate 0 = not decoding (fields then 0, still success)
+    info->bitrate = le16(&resp[5]);
+    info->sample_rate = le16(&resp[7]);
+    info->ps = (resp[9] >> 3) & 0x01;
+    info->sbr = (resp[9] >> 2) & 0x01;
+    info->audio_mode = resp[9] & 0x03;
+    info->drc_gain = resp[10];
+    return SI468X_SUCCESS;
 }
 
-    int si468x_get_event_status(si468x_event_status_t* status)
+int si468x_get_event_status(si468x_event_status_t* status)
 {
     if (!status) {
         return SI468X_ERROR_PARAM;

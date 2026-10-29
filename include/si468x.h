@@ -148,12 +148,13 @@ typedef struct {
     uint8_t snr;               /**< Signal-to-Noise Ratio in dB. */
     uint8_t multipath;         /**< Multipath distortion metric (range 0 to 100). */
     int8_t freq_offset;        /**< Frequency offset from tuned center in kHz. */
-    uint8_t hd_synced;         /**< HD Radio digital carrier synchronization flag (1 if synced, 0 if unlocked). */
-    uint8_t rds_synced;        /**< RDS subcarrier synchronization lock flag (1 if synced, 0 if unlocked). */
+    uint8_t hd_synced;         /**< HDDETECTED (always 0 on parts without HD Radio). */
+    uint8_t rds_synced;        /**< RDSSYNC from the RDS decoder (this call drains the RDS FIFO into it). */
+    uint8_t valid;             /**< Channel valid (RSSI/SNR above the FM_VALID_* thresholds). */
 } si468x_fm_status_t;
 
 /**
- * @brief Structure representing the dynamically retrieved UTC network date-time of a DAB ensemble.
+ * @brief UTC date-time transmitted by the DAB ensemble.
  */
 typedef struct {
     uint16_t year;             /**< Year (e.g. 2026). */
@@ -161,6 +162,7 @@ typedef struct {
     uint8_t day;               /**< Day of the month (1 to 31). */
     uint8_t hours;             /**< Hours (0 to 23). */
     uint8_t minutes;           /**< Minutes (0 to 59). */
+    uint8_t seconds;           /**< Seconds (0 to 59). */
 } si468x_time_t;
 
 /**
@@ -170,6 +172,9 @@ typedef struct {
     uint16_t bitrate;      /**< Current audio stream bitrate in kbps. */
     uint16_t sample_rate;  /**< Current audio stream sample rate in Hz (e.g. 48000). */
     uint8_t audio_mode;    /**< Audio mode (e.g. 0=Dual, 1=Mono, 2=Stereo, 3=Joint Stereo). */
+    uint8_t sbr;           /**< Spectral band replication in use (HE-AAC). */
+    uint8_t ps;            /**< Parametric stereo in use (HE-AAC v2). */
+    uint8_t drc_gain;      /**< Dynamic range control gain. */
 } si468x_audio_info_t;
 
 /**
@@ -350,7 +355,7 @@ typedef struct {
 /**
  * @brief Query the co-processor to retrieve the current dynamically synced UTC ensemble time.
  * @param time Pointer to target si468x_time_t struct to populate.
- * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ * @return SI468X_SUCCESS, SI468X_ERROR_NOT_FOUND if no time was received yet, or a negative error code.
  */
 int si468x_get_time(si468x_time_t* time);
 
