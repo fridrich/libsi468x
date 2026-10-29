@@ -762,6 +762,39 @@ static bool test_dab_aux()
     return true;
 }
 
+static std::vector<uint8_t> prop_frame(uint16_t id, uint16_t v)
+{
+    return { 0x13, 0x00, (uint8_t)id, (uint8_t)(id >> 8), (uint8_t)v, (uint8_t)(v >> 8) };
+}
+
+static bool test_property_values()
+{
+    std::cout << "Running test: test_property_values..." << std::endl;
+
+    MockChip chip;
+    ASSERT_TRUE(si468x_set_rds_region(SI468X_REGION_EUROPE) == SI468X_SUCCESS, "region EU");
+    ASSERT_TRUE(chip.writes.back() == prop_frame(0x3900, 1), "50 us = 1 (old: 0x3900 -> 75 us)");
+    ASSERT_TRUE(si468x_set_rds_region(SI468X_REGION_US) == SI468X_SUCCESS, "region US");
+    ASSERT_TRUE(chip.writes.back() == prop_frame(0x3900, 0), "75 us = 0");
+
+    chip.writes.clear();
+    ASSERT_TRUE(si468x_set_audio_output(SI468X_AUDIO_ANALOG) == SI468X_SUCCESS, "analog");
+    ASSERT_TRUE(chip.writes.size() == 1 && chip.writes[0] == prop_frame(0x0800, 0x8001), "analog: one frame, INTBOUTEN kept");
+
+    chip.writes.clear();
+    ASSERT_TRUE(si468x_set_audio_output(SI468X_AUDIO_I2S) == SI468X_SUCCESS, "i2s");
+    ASSERT_TRUE(chip.writes.size() == 3 && chip.writes[0] == prop_frame(0x0800, 0x8002)
+                && chip.writes[1] == prop_frame(0x0200, 0x8000) && chip.writes[2] == prop_frame(0x0202, 0x1000), "i2s frames");
+
+    chip.writes.clear();
+    ASSERT_TRUE(si468x_set_audio_output(SI468X_AUDIO_SIMUL) == SI468X_SUCCESS, "simul");
+    ASSERT_TRUE(chip.writes.size() == 3 && chip.writes[0] == prop_frame(0x0800, 0x8003), "simul pins");
+
+    si468x_set_audio_output(SI468X_AUDIO_ANALOG); // restore default for later tests
+    std::cout << "PASS: test_property_values" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -787,6 +820,7 @@ int main()
     success &= test_signal_status();
     success &= test_time_audio_fm_rds();
     success &= test_dab_aux();
+    success &= test_property_values();
 
     std::cout << "========================================" << std::endl;
     if (success) {

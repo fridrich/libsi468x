@@ -1296,54 +1296,24 @@ int si468x_set_audio_output(int enable_i2s)
     active_audio_mode = enable_i2s;
 
     if (!bus_open()) {
-        // If SPI is not open yet, store the mode statically so si468x_init can apply it dynamically during boot
+        // Applied by si468x_init()
         return SI468X_SUCCESS;
     }
 
-    // Set Property 0x0800 (AUDIO_OUT_SEL): 0x0001 (Analog), 0x0002 (I2S), 0x0003 (Simultaneous Analog + I2S)
-    uint8_t cmd[6];
-    cmd[0] = SI468X_CMD_SET_PROPERTY;
-    cmd[1] = 0x00;
-    cmd[2] = 0x00; // Low byte of Property ID 0x0800
-    cmd[3] = 0x08; // High byte of Property ID 0x0800
-    
-    uint16_t out_sel = 0x0001;
-    if (enable_i2s == SI468X_AUDIO_I2S) {
-        out_sel = 0x0002;
-    } else if (enable_i2s == SI468X_AUDIO_SIMUL) {
-        out_sel = 0x0003;
-    }
-    cmd[4] = out_sel & 0xFF;
-    cmd[5] = (out_sel >> 8) & 0xFF;
-
-    int ret = send_command(cmd, 6, nullptr, 0);
-    if (ret != SI468X_SUCCESS) {
+    // PIN_CONFIG_ENABLE: INTBOUTEN 0x8000 (default on), I2SOUTEN 0x0002, DACOUTEN 0x0001
+    bool i2s = (enable_i2s == SI468X_AUDIO_I2S || enable_i2s == SI468X_AUDIO_SIMUL);
+    uint16_t pins = 0x8000 | (i2s ? 0x0002 : 0) | (enable_i2s != SI468X_AUDIO_I2S ? 0x0001 : 0);
+    int ret = si468x_set_property(SI468X_PROP_PIN_CONFIG_ENABLE, pins);
+    if (ret != SI468X_SUCCESS || !i2s) {
         return ret;
     }
 
-    if (enable_i2s == SI468X_AUDIO_I2S || enable_i2s == SI468X_AUDIO_SIMUL) {
-        // Set Property 0x0200 (DIGITAL_IO_OUTPUT_FORMAT) to 0xC000 in Little-Endian (I2S Master)
-        cmd[0] = SI468X_CMD_SET_PROPERTY;
-        cmd[1] = 0x00;
-        cmd[2] = 0x00; // Low byte of Property ID 0x0200
-        cmd[3] = 0x02; // High byte of Property ID 0x0200
-        cmd[4] = 0x00; // Low byte of Value (0x00)
-        cmd[5] = 0xC0; // High byte of Value (0xC0 - Master Mode)
-        ret = send_command(cmd, 6, nullptr, 0);
-        if (ret != SI468X_SUCCESS) {
-            return ret;
-        }
-
-        // Set Property 0x0202 (DIGITAL_IO_OUTPUT_FORMAT_MASK) to 0x1000 in Little-Endian
-        cmd[0] = SI468X_CMD_SET_PROPERTY;
-        cmd[1] = 0x00;
-        cmd[2] = 0x02; // Low byte of Property ID 0x0202
-        cmd[3] = 0x02; // High byte of Property ID 0x0202
-        cmd[4] = 0x00; // Low byte of Value (0x00)
-        cmd[5] = 0x10; // High byte of Value (0x10)
-        ret = send_command(cmd, 6, nullptr, 0);
+    // DIGITAL_IO_OUTPUT_SELECT: MASTER 0x8000. OUTPUT_FORMAT: 16-bit sample (0x1000), slot = sample size, I2S framing
+    ret = si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_SELECT, 0x8000);
+    if (ret != SI468X_SUCCESS) {
+        return ret;
     }
-    return ret;
+    return si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_FORMAT, 0x1000);
 }
 
 int si468x_get_dls_text(char* out_text, int max_len)
@@ -1892,43 +1862,18 @@ int si468x_get_event_status(si468x_event_status_t* status)
 
 int si468x_set_rds_region(int region)
 {
-    // Configure FMHD_DEEMPHASIS property (0x3900) dynamically
-    uint16_t deemph_val = (region == SI468X_REGION_EUROPE) ? 0x3900 : 0x0000; // 0x3900 = 50us (Europe), 0x0000 = 75us (US default)
-
-    uint8_t cmd[6];
-    cmd[0] = SI468X_CMD_SET_PROPERTY;
-    cmd[1] = 0x00;
-    cmd[2] = SI468X_PROP_FM_AUDIO_DE_EMPHASIS & 0xFF; // Low byte of Property 0x3900 (FMHD_DEEMPHASIS)
-    cmd[3] = (SI468X_PROP_FM_AUDIO_DE_EMPHASIS >> 8) & 0xFF; // High byte of Property 0x3900 (FMHD_DEEMPHASIS)
-    cmd[4] = deemph_val & 0xFF;         // Low byte of Value
-    cmd[5] = (deemph_val >> 8) & 0xFF;  // High byte of Value
-
-    int rc = send_command(cmd, 6, nullptr, 0);
-
-    if (rc != SI468X_SUCCESS) {
-        return rc;
-    }
-
-    return SI468X_SUCCESS;
+    // FM_AUDIO_DE_EMPHASIS: 0 = 75 us, 1 = 50 us, 2 = off
+    return si468x_set_property(SI468X_PROP_FM_AUDIO_DE_EMPHASIS, region == SI468X_REGION_EUROPE ? 1 : 0);
 }
 
 int si468x_set_property(uint16_t property_id, uint16_t value)
 {
-    uint8_t cmd[6];
-    cmd[0] = SI468X_CMD_SET_PROPERTY;
-    cmd[1] = 0x00;
-    cmd[2] = property_id & 0xFF;         // Low byte of Property ID
-    cmd[3] = (property_id >> 8) & 0xFF;  // High byte of Property ID
-    cmd[4] = value & 0xFF;               // Low byte of Value
-    cmd[5] = (value >> 8) & 0xFF;        // High byte of Value
-
-    int rc = send_command(cmd, 6, nullptr, 0);
-
-    if (rc != SI468X_SUCCESS) {
-        return rc;
-    }
-
-    return SI468X_SUCCESS;
+    uint8_t cmd[6] = {
+        SI468X_CMD_SET_PROPERTY, 0x00,
+        (uint8_t)(property_id & 0xFF), (uint8_t)(property_id >> 8),
+        (uint8_t)(value & 0xFF), (uint8_t)(value >> 8)
+    };
+    return send_command(cmd, 6, nullptr, 0);
 }
 
 const char* si468x_get_protection_text(uint8_t level)
