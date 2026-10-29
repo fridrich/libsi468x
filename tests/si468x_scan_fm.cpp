@@ -68,10 +68,9 @@ int main(int argc, char* argv[])
     // Read chip info
     si468x_chip_info_t info;
     if (si468x_get_chip_info(&info) == SI468X_SUCCESS) {
-        std::cout << "Chip ID: 0x" << std::hex << (int)info.chip_id
-                  << " | ROM: 0x" << (int)info.rom_id
-                  << " | FW: " << std::dec << (info.fw_version >> 8) << "." << (info.fw_version & 0xFF)
-                  << " | Patch: " << (info.patch_version >> 8) << "." << (info.patch_version & 0xFF) << std::endl;
+        std::cout << "Chip: Si" << info.part << " rev " << (int)info.chip_rev
+                  << " | FW: " << (int)info.fw_major << "." << (int)info.fw_minor << "." << (int)info.fw_build
+                  << " (svn " << info.svn_id << ")" << std::endl;
     }
     std::cout << "--------------------------------------------------" << std::endl;
     std::cout << "Starting autonomous FM seek-driven sweep..." << std::endl;

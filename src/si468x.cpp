@@ -33,6 +33,7 @@ static int sysfs_ce1_pin = -1;
 static uint32_t active_frequency = 0;
 static int active_audio_mode = 0; // 0 = Analog Only, 1 = I2S Digital, 2 = Simultaneous Analog + I2S
 static int active_volume = 50;    // Standard default volume (0 to 63)
+static uint16_t boot_part = 0; // GET_PART_INFO PART after boot (4684, 4688, 4689 ...)
 static uint32_t playing_sid = 0, playing_comp = 0; // STOP_DIGITAL_SERVICE needs them; zeros -> ERR
 
 // Global debug logging status flag
@@ -502,6 +503,14 @@ static int custom_freq_count = 0;
 
 int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
 {
+    // Refuse before touching the chip: dummy arrays would "upload" nothing
+#if defined(SI468X_HAS_FIRMWARE) && !SI468X_HAS_FIRMWARE
+    SI468X_ERR << "libsi468x: built with --disable-firmware" << std::endl;
+    return SI468X_ERROR_FIRMWARE;
+#endif
+    if (fw_rom_patch_bin_len == 0 || fw_dab_radio_bin_len == 0 || fw_fmhd_radio_bin_len == 0) {
+        return SI468X_ERROR_FIRMWARE;
+    }
 
     // 1. Initialize GPIO
     if (!gpio_init(rst_pin)) {
@@ -544,6 +553,12 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         si468x_shutdown();
         return SI468X_ERROR_TIMEOUT;
     }
+    if ((si468x_last_status(4) & 0xC0) != 0x80) { // PUP_STATE 2 = bootloader
+        SI468X_ERR << "libsi468x: not in bootloader after POWER_UP (status 0x" << std::hex
+                   << (int)si468x_last_status(4) << std::dec << ")" << std::endl;
+        si468x_shutdown();
+        return SI468X_ERROR_BOOT;
+    }
 
     // 5. Upload statically embedded ROM Patch
     if (upload_firmware_memory(fw_rom_patch_bin, fw_rom_patch_bin_len) != SI468X_SUCCESS) {
@@ -580,10 +595,24 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     // Post-Application upload settling delay (100ms)
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    // 7. Send BOOT (0x07, must be 5 bytes) and read 2-byte response to boot both ROM + App images
-    uint8_t boot_cmd[5] = { SI468X_CMD_BOOT, 0x00, 0x00, 0x00, 0x00 };
-    uint8_t boot_resp[2];
-    if (send_command(boot_cmd, 5, boot_resp, 2) != SI468X_SUCCESS) {
+    // 7. BOOT (2 bytes), then PUP_STATE 3 = application running
+    uint8_t boot_cmd[2] = { SI468X_CMD_BOOT, 0x00 };
+    uint8_t st[7] = {};
+    bool running = send_command(boot_cmd, 2, nullptr, 0, 2000) == SI468X_SUCCESS;
+    for (int i = 0; running && i < 100; i++) { // CTS may precede PUP_STATE 3; allow 1 s
+        if (read_reply(st, sizeof(st)) != SI468X_SUCCESS) {
+            running = false;
+        }
+        else if ((st[4] & 0xC0) == 0xC0) {
+            break;
+        }
+        else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    if (!running || (st[4] & 0xC0) != 0xC0 || (st[1] & 0x40)) {
+        SI468X_ERR << "libsi468x: BOOT failed (status 0x" << std::hex << (int)st[1] << " 0x" << (int)st[4]
+                   << std::dec << ")" << std::endl;
         si468x_shutdown();
         return SI468X_ERROR_BOOT;
     }
@@ -605,11 +634,12 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
         si468x_set_rds_region(SI468X_REGION_EUROPE); // Set standard European de-emphasis (50 us) by default on boot
     }
 
-    // Diagnostic query: Print raw chip revision info over SPI
-    uint8_t rev_cmd[1] = { 0x10 };
-    uint8_t rev_resp[16];
-    std::memset(rev_resp, 0, sizeof(rev_resp));
-    send_command(rev_cmd, 1, rev_resp, 16);
+    si468x_chip_info_t ci;
+    if (si468x_get_chip_info(&ci) == SI468X_SUCCESS) {
+        boot_part = ci.part;
+        SI468X_LOG << "libsi468x: Si" << ci.part << " rev " << (int)ci.chip_rev << ", fw "
+                   << (int)ci.fw_major << "." << (int)ci.fw_minor << "." << (int)ci.fw_build << std::endl;
+    }
 
     SI468X_LOG << "libsi468x: Boot complete. Chip running successfully!" << std::endl;
     return SI468X_SUCCESS;
@@ -1549,17 +1579,30 @@ int si468x_get_chip_info(si468x_chip_info_t* info)
     if (!info) {
         return SI468X_ERROR_PARAM;
     }
-    uint8_t rev_cmd[1] = { 0x10 };
-    uint8_t rev_resp[16];
-    std::memset(rev_resp, 0, sizeof(rev_resp));
-    int rc = send_command(rev_cmd, 1, rev_resp, 16);
+
+    // GET_PART_INFO: CHIPREV resp[5], ROMID resp[6], PART resp[9..10]
+    uint8_t part_cmd[2] = { SI468X_CMD_GET_PART_INFO, 0x00 };
+    uint8_t part[SI468X_REP_PART_INFO] = {};
+    int rc = send_command(part_cmd, 2, part, sizeof(part));
     if (rc != SI468X_SUCCESS) {
         return rc;
     }
-    info->chip_id = rev_resp[5];
-    info->rom_id = rev_resp[6];
-    info->fw_version = (rev_resp[7] << 8) | rev_resp[8];
-    info->patch_version = (rev_resp[9] << 8) | rev_resp[10];
+
+    // GET_FUNC_INFO: REVEXT resp[5], REVBRANCH resp[6], REVINT resp[7], SVNID resp[9..12]
+    uint8_t func_cmd[2] = { SI468X_CMD_GET_FUNC_INFO, 0x00 };
+    uint8_t func[SI468X_REP_FUNC_INFO] = {};
+    rc = send_command(func_cmd, 2, func, sizeof(func));
+    if (rc != SI468X_SUCCESS) {
+        return rc;
+    }
+
+    info->chip_rev = part[5];
+    info->rom_id = part[6];
+    info->part = le16(&part[9]);
+    info->fw_major = func[5];
+    info->fw_minor = func[6];
+    info->fw_build = func[7];
+    info->svn_id = le32(&func[9]);
     return SI468X_SUCCESS;
 }
 
@@ -1599,9 +1642,10 @@ int si468x_tune_fm(uint32_t frequency_khz)
 {
     rds_decoder.reset();
 
-    // TUNE_MODE 0 (analog; Si4684/88 have no HD), FREQ in 10 kHz, ANTCAP 1, PROG_ID 0
+    // TUNE_MODE<<2: 0 analog, 2 hybrid (HD parts only, Si4689); FREQ in 10 kHz, ANTCAP 1, PROG_ID 0
     uint32_t f = frequency_khz / 10;
-    uint8_t cmd[7] = { SI468X_CMD_FM_TUNE_FREQ, 0x00, (uint8_t)(f & 0xFF), (uint8_t)(f >> 8), 0x01, 0x00, 0x00 };
+    uint8_t mode = (boot_part == 4689) ? (2 << 2) : 0;
+    uint8_t cmd[7] = { SI468X_CMD_FM_TUNE_FREQ, mode, (uint8_t)(f & 0xFF), (uint8_t)(f >> 8), 0x01, 0x00, 0x00 };
     int rc = send_command(cmd, 7, nullptr, 0);
     if (rc != SI468X_SUCCESS) {
         return rc;

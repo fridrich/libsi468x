@@ -88,10 +88,13 @@ extern "C" {
  * @brief Structure containing raw chip part revision and firmware specifications.
  */
 typedef struct {
-    uint8_t chip_id;        /**< Raw part ID (e.g. 0x05 for Si4685, 0x06 for Si4686). */
-    uint8_t rom_id;         /**< Hardcoded ROM revision ID. */
-    uint16_t fw_version;    /**< Application firmware version (e.g. 0x0500 represents 5.0). */
-    uint16_t patch_version; /**< Uploaded boot patch version. */
+    uint8_t chip_rev;       /**< GET_PART_INFO CHIPREV. */
+    uint8_t rom_id;         /**< GET_PART_INFO ROMID. */
+    uint16_t part;          /**< Part number, e.g. 4684. */
+    uint8_t fw_major;       /**< Running image version (GET_FUNC_INFO REVEXT). */
+    uint8_t fw_minor;       /**< REVBRANCH. */
+    uint8_t fw_build;       /**< REVINT. */
+    uint32_t svn_id;        /**< SVN revision of the running image. */
 } si468x_chip_info_t;
 
 /**
@@ -425,7 +428,7 @@ int si468x_get_dls_text(char* out_text, int max_len);
 int si468x_get_mot_slideshow(si468x_mot_slideshow_t* slideshow);
 
 /**
- * @brief Query the secure boot ROM for part number, chip ID, and hardware revision info.
+ * @brief Part number and running firmware version (GET_PART_INFO + GET_FUNC_INFO).
  * @param info Pointer to chip info structure to populate.
  * @return SI468X_SUCCESS on success, or a negative error code on failure.
  */

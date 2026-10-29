@@ -30,9 +30,10 @@ extern "C" {
 #define SI468X_CMD_HOST_LOAD                 0x04
 #define SI468X_CMD_LOAD_INIT                 0x06
 #define SI468X_CMD_BOOT                      0x07
+#define SI468X_CMD_GET_PART_INFO             0x08
 #define SI468X_CMD_GET_SYS_STATE             0x09
-#define SI468X_CMD_GET_SYS_REVISIONS         0x10
-#define SI468X_CMD_GET_EVENT_STATUS          0x12
+#define SI468X_CMD_READ_OFFSET               0x10 /* not a revision query */
+#define SI468X_CMD_GET_FUNC_INFO             0x12 /* firmware version; not event status */
 #define SI468X_CMD_SET_PROPERTY              0x13
 #define SI468X_CMD_GET_PROPERTY              0x14
 #define SI468X_CMD_GET_AGC_STATUS            0x17

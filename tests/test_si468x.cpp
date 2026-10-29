@@ -3,6 +3,9 @@
  *    test_si468x.cpp - Test Suite for libsi468x Driver Library
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 #include <iostream>
 #include <cassert>
 #include <cstring>
@@ -87,8 +90,15 @@ static bool test_initialization_failure()
 
     // We expect SI468X_ERROR_GPIO because exporting an invalid/locked pin (e.g. -5)
     // should fail during standard Linux sysfs gpio export stage.
+#if SI468X_HAS_FIRMWARE
     int ret = si468x_init("/dev/spidev-nonexistent", -5, SI468X_BOOT_DAB);
     ASSERT_TRUE(ret == SI468X_ERROR_GPIO, "Invalid GPIO pin must safely return SI468X_ERROR_GPIO");
+#else
+    MockChip chip;
+    int ret = si468x_init("/dev/spidev-nonexistent", 23, SI468X_BOOT_DAB);
+    ASSERT_TRUE(ret == SI468X_ERROR_FIRMWARE, "no firmware -> SI468X_ERROR_FIRMWARE");
+    ASSERT_TRUE(chip.writes.empty() && chip.reads.empty(), "chip untouched without firmware");
+#endif
 
     std::cout << "PASS: test_initialization_failure" << std::endl;
     return true;
@@ -922,6 +932,23 @@ static bool test_calibrate_antenna()
     return true;
 }
 
+static bool test_chip_info()
+{
+    std::cout << "Running test: test_chip_info..." << std::endl;
+
+    MockChip chip;
+    chip.expect(SI468X_CMD_GET_PART_INFO, FX_PART_INFO);
+    chip.expect(SI468X_CMD_GET_FUNC_INFO, FX_FUNC_INFO);
+    si468x_chip_info_t ci;
+    ASSERT_TRUE(si468x_get_chip_info(&ci) == SI468X_SUCCESS, "chip info");
+    ASSERT_TRUE(ci.part == 4684 && ci.chip_rev == 0 && ci.rom_id == 0, "board: Si4684");
+    ASSERT_TRUE(ci.fw_major == 6 && ci.fw_minor == 0 && ci.fw_build == 6 && ci.svn_id == 0x2746, "fw 6.0.6 svn 10054");
+    ASSERT_TRUE(chip.sent(SI468X_CMD_READ_OFFSET).empty(), "no READ_OFFSET (old 0x10)");
+
+    std::cout << "PASS: test_chip_info" << std::endl;
+    return true;
+}
+
 int main()
 {
     std::cout << "========================================" << std::endl;
@@ -951,6 +978,7 @@ int main()
     success &= test_fm_tune();
     success &= test_dls_mot();
     success &= test_calibrate_antenna();
+    success &= test_chip_info();
 
     std::cout << "========================================" << std::endl;
     if (success) {
