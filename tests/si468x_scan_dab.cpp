@@ -10,7 +10,16 @@
 #include <chrono>
 #include <thread>
 #include <cstring>
+#include <atomic>
+#include <csignal>
 #include "si468x.h"
+
+static std::atomic<bool> running(true);
+
+static void signal_handler(int)
+{
+    running = false;
+}
 
 struct DABChannel {
     const char* label;
@@ -60,6 +69,9 @@ static const DABChannel DAB_BAND_III[] = {
 
 int main(int argc, char** argv)
 {
+    std::signal(SIGINT, signal_handler);
+    std::signal(SIGTERM, signal_handler);
+    std::signal(SIGPIPE, SIG_IGN); // Ctrl-C under "| tee" kills tee first; still reach si468x_shutdown()
     si468x_enable_debug(1); // Enable diagnostic logging in tests
     std::cout << "==================================================" << std::endl;
     std::cout << "  libsi468x DAB Band III Diagnostic Frequency Scan" << std::endl;
@@ -98,6 +110,9 @@ int main(int argc, char** argv)
     int total_stations = 0;
 
     for (const auto& ch : DAB_BAND_III) {
+        if (!running) {
+            break;
+        }
         std::cout << " " << std::left << std::setw(3) << ch.label << "| "
                   << std::right << std::setw(3) << (ch.frequency_hz / 1000000) << "."
                   << std::left << std::setw(5) << (ch.frequency_hz % 1000000 / 1000) << " MHz| ";
@@ -189,7 +204,7 @@ int main(int argc, char** argv)
                 si468x_set_volume(55);
 
                 std::cout << "    >>> Playback active! Streaming analog audio directly to board headphone jack..." << std::endl;
-                for (int sec = 1; sec <= 20; sec++) {
+                for (int sec = 1; sec <= 20 && running; sec++) {
                     std::this_thread::sleep_for(std::chrono::seconds(1));
 
                     // Periodically print signal updates during playback to monitor stability

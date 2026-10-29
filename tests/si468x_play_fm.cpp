@@ -25,6 +25,7 @@ int main(int argc, char* argv[])
     si468x_enable_debug(1); // Enable diagnostic logging in tests
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
+    std::signal(SIGPIPE, SIG_IGN); // Ctrl-C under "| tee" kills tee first; still reach si468x_shutdown()
 
     if (argc < 2) {
         std::cerr << "Usage: sudo ./si468x_play_fm <frequency_khz> [i2s]" << std::endl;

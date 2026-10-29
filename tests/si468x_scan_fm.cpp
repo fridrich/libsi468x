@@ -21,6 +21,7 @@ int main(int argc, char* argv[])
     // Register signal handlers for clean teardown on Ctrl+C/termination
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
+    std::signal(SIGPIPE, SIG_IGN); // Ctrl-C under "| tee" kills tee first; still reach si468x_shutdown()
 
     const char* spi_dev = "/dev/spidev0.0";
     int rst_pin = 23;
