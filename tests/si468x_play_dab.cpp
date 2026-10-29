@@ -142,7 +142,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    char ensemble_label[17];
+    char ensemble_label[49]; // 16 chars, up to 3 UTF-8 bytes each
     uint16_t ueid = 0;
     if (si468x_get_ensemble_info(ensemble_label, &ueid) == 0) {
         std::cout << "Locked onto Ensemble: '" << ensemble_label << "' (EId: 0x" << std::hex << ueid << std::dec << ")" << std::endl;

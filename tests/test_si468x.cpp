@@ -59,6 +59,19 @@ static bool test_short_label_decoding()
     si468x_decode_short_label(raw5, 16, 0xAAAA, 0, short_label, sizeof(short_label));
     ASSERT_TRUE(std::strcmp(short_label, "acegikmo") == 0, "0xAAAA mask must extract alternating characters");
 
+    // Truncation fills the buffer, never splits a UTF-8 sequence (old bound: max_len - 4)
+    const uint8_t raw6[] = "LifeStyl";
+    si468x_decode_short_label(raw6, 8, 0xFF00, 0, short_label, 9);
+    ASSERT_TRUE(std::strcmp(short_label, "LifeStyl") == 0, "8 chars fit a 9-byte buffer");
+    const uint8_t raw7[] = "Caf\x82";
+    si468x_decode_short_label(raw7, 4, 0xF000, 0, short_label, 5);
+    ASSERT_TRUE(std::strcmp(short_label, "Caf") == 0, "2-byte char dropped whole when it does not fit");
+    si468x_decode_short_label(raw7, 4, 0xF000, 0, short_label, 6);
+    ASSERT_TRUE(std::strcmp(short_label, "Caf\xC3\xA9") == 0, "EBU 0x82 -> e-acute when it fits");
+    const uint8_t raw8[] = { 0x00, 'A', 0x00, 'b', 0x00, 0xC9 }; // UCS-2 "AbÉ"
+    si468x_decode_short_label(raw8, 6, 0xA000, 6, short_label, 9);
+    ASSERT_TRUE(std::strcmp(short_label, "A\xC3\x89") == 0, "UCS-2: mask bits select characters, not bytes");
+
     std::cout << "PASS: test_short_label_decoding" << std::endl;
     return true;
 }

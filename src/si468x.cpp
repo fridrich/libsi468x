@@ -962,81 +962,71 @@ static const uint16_t ebu_latin_80_9F[32] = {
     0x00FB, 0x00FC, 0x00F1, 0x00E7, 0x015F, 0x011F, 0x0131, 0x0133  // 98 - 9F
 };
 
-static void decode_dab_string_to_utf8(const uint8_t* in, int in_len, uint8_t charset, char* out, int max_out_len)
+// Append one code point as UTF-8; false (nothing written) if it would not fit before the NUL
+static bool put_utf8(char* out, int& idx, int max_out_len, uint16_t cp)
 {
-    int out_idx = 0;
-
-    if (charset == 6) {
-        // UCS-2 (16-bit Big-Endian) to UTF-8
-        for (int i = 0; i < in_len - 1 && out_idx < max_out_len - 4; i += 2) {
-            uint16_t codepoint = (in[i] << 8) | in[i + 1];
-            if (codepoint == 0x0000) {
-                break; // Stop on explicit UCS-2 null terminator
-            }
-            else if (codepoint < 0x0080) {
-                if (codepoint < 0x0020) {
-                    if (codepoint == 0x0A || codepoint == 0x0D) {
-                        out[out_idx++] = ' ';
-                    }
-                    // Skip all other non-printable/control characters (like 0x0B, 0x1F)
-                } else {
-                    out[out_idx++] = (char)codepoint;
-                }
-            }
-            else if (codepoint < 0x0800) {
-                out[out_idx++] = 0xC0 | (codepoint >> 6);
-                out[out_idx++] = 0x80 | (codepoint & 0x3F);
-            }
-            else {
-                out[out_idx++] = 0xE0 | (codepoint >> 12);
-                out[out_idx++] = 0x80 | ((codepoint >> 6) & 0x3F);
-                out[out_idx++] = 0x80 | (codepoint & 0x3F);
-            }
-        }
+    int n = cp < 0x80 ? 1 : cp < 0x800 ? 2 : 3;
+    if (idx + n >= max_out_len) {
+        return false;
+    }
+    if (n == 1) {
+        out[idx++] = (char)cp;
+    }
+    else if (n == 2) {
+        out[idx++] = 0xC0 | (cp >> 6);
+        out[idx++] = 0x80 | (cp & 0x3F);
     }
     else {
-        // Charset 0 (EBU Latin) or Charset 15 (UTF-8 fallback)
-        for (int i = 0; i < in_len && out_idx < max_out_len - 4; i++) {
-            uint8_t c = in[i];
-            if (c == 0x00) {
+        out[idx++] = 0xE0 | (cp >> 12);
+        out[idx++] = 0x80 | ((cp >> 6) & 0x3F);
+        out[idx++] = 0x80 | (cp & 0x3F);
+    }
+    return true;
+}
+
+/*
+ * DAB/RDS label -> NUL-terminated UTF-8, truncated on a character boundary to fit max_out_len.
+ * Charset 0 EBU Latin, 6 UCS-2 BE, 15 UTF-8; others passed through. CR/LF -> space, other controls dropped.
+ */
+static void decode_dab_string_to_utf8(const uint8_t* in, int in_len, uint8_t charset, char* out, int max_out_len)
+{
+    if (max_out_len <= 0) {
+        return;
+    }
+    int out_idx = 0;
+    int step = (charset == 6) ? 2 : 1;
+
+    for (int i = 0; i + step <= in_len; i += step) {
+        uint16_t cp = (step == 2) ? ((in[i] << 8) | in[i + 1]) : in[i];
+        if (cp == 0) {
+            break;
+        }
+        if (cp < 0x20) {
+            if ((cp == 0x0A || cp == 0x0D) && !put_utf8(out, out_idx, max_out_len, ' ')) {
                 break;
             }
-            if (c < 0x20) {
-                if (c == 0x0A || c == 0x0D) {
-                    out[out_idx++] = ' ';
-                }
-                // Skip all other non-printable/control characters (like 0x0B, 0x1F)
-                continue;
+            continue;
+        }
+        if (charset == 0 && cp >= 0x80 && cp <= 0x9F) {
+            cp = ebu_latin_80_9F[cp - 0x80];
+        }
+        if (step == 1 && charset != 0) {
+            // Raw bytes; for UTF-8 keep a multi-byte sequence whole
+            int n = 1;
+            if (charset == 15 && cp >= 0xC0) {
+                n = cp >= 0xE0 ? (cp >= 0xF0 ? 4 : 3) : 2;
             }
-            if (charset == 0) {
-                if (c >= 0x80 && c <= 0x9F) {
-                    // ETSI Specific EBU Latin range (e.g. 0x82 is 'é')
-                    uint16_t codepoint = ebu_latin_80_9F[c - 0x80];
-                    if (codepoint < 0x0080) {
-                        out[out_idx++] = (char)codepoint;
-                    }
-                    else if (codepoint < 0x0800) {
-                        out[out_idx++] = 0xC0 | (codepoint >> 6);
-                        out[out_idx++] = 0x80 | (codepoint & 0x3F);
-                    }
-                    else {
-                        out[out_idx++] = 0xE0 | (codepoint >> 12);
-                        out[out_idx++] = 0x80 | ((codepoint >> 6) & 0x3F);
-                        out[out_idx++] = 0x80 | (codepoint & 0x3F);
-                    }
-                }
-                else if (c >= 0xA0) {
-                    // Standard ISO-8859-1 mapping to UTF-8
-                    out[out_idx++] = 0xC0 | (c >> 6);
-                    out[out_idx++] = 0x80 | (c & 0x3F);
-                }
-                else {
-                    out[out_idx++] = c;
-                }
+            if (out_idx + n >= max_out_len || i + n > in_len) {
+                break;
             }
-            else {
-                out[out_idx++] = c;
+            for (int k = 0; k < n; k++) {
+                out[out_idx++] = in[i + k];
             }
+            i += n - 1;
+            continue;
+        }
+        if (!put_utf8(out, out_idx, max_out_len, cp)) {
+            break;
         }
     }
     out[out_idx] = '\0';
@@ -1046,19 +1036,16 @@ void si468x_decode_short_label(const uint8_t* raw_label, int raw_len, uint16_t c
 {
     uint8_t temp_raw[16];
     int dst = 0;
+    int w = (charset == 6) ? 2 : 1; // mask bits index characters; UCS-2 has 2 bytes each
 
-    // Extract the raw, unencoded bytes corresponding to the short label using the mask
-    for (int i = 0; i < raw_len; i++) {
-        // Bit 15 represents the first character (index 0) of the long label
-        if ((char_mask & (0x8000 >> i))) {
-            temp_raw[dst++] = raw_label[i];
-            if (dst >= 8) {
-                break;
+    // Bit 15 = first character; at most 8 characters
+    for (int i = 0; i < 16 && (i + 1) * w <= raw_len && dst < 8 * w; i++) {
+        if (char_mask & (0x8000 >> i)) {
+            for (int k = 0; k < w; k++) {
+                temp_raw[dst++] = raw_label[i * w + k];
             }
         }
     }
-
-    // Dynamically decode the extracted raw bytes into standard UTF-8
     decode_dab_string_to_utf8(temp_raw, dst, charset, short_label, max_len);
 }
 

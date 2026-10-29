@@ -123,7 +123,7 @@ int main(int argc, char** argv)
                   << std::setw(3) << (int)status.cnr << " | ";
 
         // Query the current tuned Ensemble Name
-        char ensemble_label[17];
+        char ensemble_label[49]; // 16 chars, up to 3 UTF-8 bytes each
         uint16_t ensemble_id = 0;
         std::memset(ensemble_label, 0, sizeof(ensemble_label));
         if (si468x_get_ensemble_info(ensemble_label, &ensemble_id) == 0) {
