@@ -28,3 +28,5 @@ si468x_probe_LDADD = $(top_builddir)/src/libsi468x.la
 
 # Standard Automake test suite harness
 TESTS = test_si468x
+
+EXTRA_DIST = README

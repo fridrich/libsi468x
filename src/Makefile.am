@@ -15,6 +15,8 @@ libsi468x_la_SOURCES = \
 nodist_libsi468x_la_SOURCES = \
     si468x_firmware.cpp
 
+AM_CXXFLAGS = -Wall -Wextra -Wshadow
+
 libsi468x_la_CPPFLAGS = -I$(top_srcdir)/include
 libsi468x_la_LDFLAGS = -version-info 0:0:0 -no-undefined @LIBS_WIRINGPI@
 

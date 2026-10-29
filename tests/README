@@ -1,0 +1,42 @@
+libsi468x tests
+===============
+
+Unit tests (no hardware)
+------------------------
+  make check
+
+test_si468x runs every parser and command sequence against a fake chip
+(mock_chip.h) behind the transport seam (si468x_set_test_transport in
+src/si468x_internal.h). Fixtures in fixtures.h are real replies captured on
+the board (lib indexing: resp[0] is the dummy byte, resp[1] = status byte 0).
+
+Sanitizers (any Linux host, no firmware needed):
+  ./configure --disable-firmware CXXFLAGS="-O1 -g -fsanitize=address,undefined" \
+              LDFLAGS="-fsanitize=address,undefined"
+  make check
+
+Hardware programs (need the board and sudo; not in TESTS)
+---------------------------------------------------------
+  si468x_probe        raw commands; without arguments a board check
+                      (GET_PART_INFO + GET_FUNC_INFO, expect Si4684 fw 6.0.6)
+  si468x_scan_dab     Band III sweep, service lists, 20 s play per ensemble
+  si468x_play_dab     sudo tests/si468x_play_dab 12A 17361   (RTS Premiere)
+  si468x_scan_fm      FM seek sweep with RDS
+  si468x_play_fm      sudo tests/si468x_play_fm 89600
+
+Probe examples (output is lib-indexed):
+  sudo tests/si468x_probe --tune 12A -- b200 24          DAB_DIGRAD_STATUS
+  sudo tests/si468x_probe --fmhd -- 14010039 7           GET_PROPERTY 0x3900 (COUNT=1!)
+
+Reference reception (Petit-Lancy, GE)
+-------------------------------------
+  DAB: 8 ensembles / 115 services, incl. 12A "SRG SSR F01" (EId 0x4041),
+       7A/7B "Metropolitain 1/2" (France), 10B "Romandie Medias".
+  FM:  89.6 MHz franceinfo, RSSI ~50 dBuV, SNR ~25 dB.
+
+Regression gate (after changes to boot, tune, service list, play, audio, send_command)
+------------------------------------------------------------------------------------
+  sudo tests/si468x_scan_dab 2>&1 | tee scan.log    -> same ensemble/service counts, audio
+  sudo tests/si468x_play_dab 12A 17361              -> audio, DLS, [Audio]/[Time] lines
+  sudo tests/si468x_play_fm 89600                   -> audio, RadioText
+Ctrl-C stops the programs and holds the chip in reset (also under "| tee").

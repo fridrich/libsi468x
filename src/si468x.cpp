@@ -1,6 +1,7 @@
 /*
  *    Copyright (C) 2026
  *    si468x.cpp - Hardware Driver Core Implementation for libsi468x
+ *    resp[] indexing: resp[0] is clocked in with the RD_REPLY opcode (garbage), status byte 0 is resp[1]
  */
 
 #include <iostream>
