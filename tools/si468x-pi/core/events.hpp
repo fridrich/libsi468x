@@ -53,6 +53,8 @@ public:
     virtual void onAudio(const si468x_audio_info_t& /*audio*/) {}
     virtual void onError(const std::string& /*message*/) {}
     virtual void onVolume(int /*percent*/, bool /*muted*/) {}
+    virtual void onMot(const std::string& /*file_path*/, const si468x_mot_slideshow_t& /*slide*/) {}
+    virtual void onSignalLost(bool /*lost*/) {}
 };
 
 } // namespace si468x_pi

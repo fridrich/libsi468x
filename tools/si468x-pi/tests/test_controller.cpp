@@ -60,6 +60,36 @@ public:
         station_lists.push_back(list);
     }
 
+    void onSignal(const si468x_signal_status_t& s) override
+    {
+        signals.push_back(s);
+    }
+
+    void onDls(const std::string& dls) override
+    {
+        dls_texts.push_back(dls);
+    }
+
+    void onSignalLost(bool lost) override
+    {
+        signal_lost_events.push_back(lost);
+    }
+
+    void onTime(const si468x_time_t& t) override
+    {
+        times.push_back(t);
+    }
+
+    void onAudio(const si468x_audio_info_t& a) override
+    {
+        audios.push_back(a);
+    }
+
+    void onMot(const std::string& p, const si468x_mot_slideshow_t&) override
+    {
+        mot_paths.push_back(p);
+    }
+
     struct ProgressEntry {
         std::string channel;
         int found;
@@ -72,6 +102,12 @@ public:
     std::vector<std::pair<int, bool>> volumes;
     std::vector<ProgressEntry> progress;
     std::vector<std::vector<si468x_pi::Station>> station_lists;
+    std::vector<si468x_signal_status_t> signals;
+    std::vector<std::string> dls_texts;
+    std::vector<bool> signal_lost_events;
+    std::vector<si468x_time_t> times;
+    std::vector<si468x_audio_info_t> audios;
+    std::vector<std::string> mot_paths;
 };
 
 void put_label(std::vector<uint8_t>& v, const char* label)
@@ -526,6 +562,134 @@ void test_scanning_screen_abort_wiring()
     check(aborted, "MENU triggers abort callback");
 }
 
+void test_dls_and_telemetry_polling()
+{
+    using namespace si468x_pi;
+
+    MockChip chip;
+    RecordingSink sink;
+
+    Settings s;
+    RadioController ctrl(s, &sink);
+
+    Station st{ "12A", "RTS Premiere", "RTS Prem", 0x43D1, 7, false };
+    ctrl.setSimulatedPlaying(st);
+    check(ctrl.state() == ControllerState::Playing, "playing station");
+
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA, FX_DSD_DLS_TEXT);
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    std::vector<uint8_t> time_rep = reply({ 0x80, 0x80, 0x00, 0xC0, 0xEA, 0x07, 0x00, 0x0A, 0x1E, 0x0C, 0x1E, 0x00 });
+    chip.expect(SI468X_CMD_DAB_GET_TIME, time_rep);
+
+    ctrl.pollTelemetry(1000);
+    ctrl.pollTelemetry(5000);
+
+    check(!sink.dls_texts.empty(), "DLS text received");
+    if (!sink.dls_texts.empty()) {
+        check(sink.dls_texts.back() == "Juste mesure", "exact DLS text matches captured broadcast");
+    }
+    check(!sink.signals.empty(), "signal status received");
+    if (!sink.signals.empty()) {
+        check(sink.signals.front().rssi == 48, "signal RSSI matches");
+    }
+    check(!sink.times.empty(), "time metrics received");
+    if (!sink.times.empty()) {
+        check(sink.times.back().year == 2026, "time year matches");
+    }
+}
+
+void test_signal_loss_banner_timing()
+{
+    using namespace si468x_pi;
+
+    MockChip chip;
+    RecordingSink sink;
+
+    Settings s;
+    s.poll.signal_ms = 500;
+    RadioController ctrl(s, &sink);
+
+    Station st{ "12A", "RTS Premiere", "RTS Prem", 0x43D1, 7, false };
+    ctrl.setSimulatedPlaying(st);
+
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    ctrl.pollTelemetry(1000);
+    check(!ctrl.isSignalLost(), "signal initially present");
+
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_NOSIG);
+    ctrl.pollTelemetry(1500);
+    check(!ctrl.isSignalLost(), "signal not marked lost before 2 s");
+
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_NOSIG);
+    ctrl.pollTelemetry(2500);
+    check(!ctrl.isSignalLost(), "signal still not marked lost at 1.5 s");
+
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_NOSIG);
+    ctrl.pollTelemetry(3600);
+    check(ctrl.isSignalLost(), "signal marked lost after 2 s without sync");
+
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    ctrl.pollTelemetry(4200);
+    check(!ctrl.isSignalLost(), "signal restored immediately when sync returns");
+}
+
+void test_spi_consecutive_errors()
+{
+    using namespace si468x_pi;
+
+    MockChip chip;
+    RecordingSink sink;
+
+    Settings s;
+    s.poll.signal_ms = 500;
+    RadioController ctrl(s, &sink);
+
+    Station st{ "12A", "RTS Premiere", "RTS Prem", 0x43D1, 7, false };
+    ctrl.setSimulatedPlaying(st);
+    check(ctrl.state() == ControllerState::Playing, "playing before SPI error test");
+
+    si468x_set_test_transport([](const uint8_t*, uint8_t*, size_t, void*) -> int {
+        return -1;
+    }, nullptr);
+
+    ctrl.pollTelemetry(1000);
+    check(ctrl.state() == ControllerState::Playing, "first SPI error does not abort");
+
+    ctrl.pollTelemetry(1600);
+    check(ctrl.state() == ControllerState::Error, "second consecutive SPI error transitions to Error state");
+
+    si468x_set_test_transport(nullptr, nullptr);
+}
+
+void test_synthetic_polling_flat_memory()
+{
+    using namespace si468x_pi;
+
+    MockChip chip;
+    RecordingSink sink;
+
+    Settings s;
+    s.poll.dls_ms = 300;
+    s.poll.signal_ms = 1000;
+    RadioController ctrl(s, &sink);
+
+    Station st{ "12A", "RTS Premiere", "RTS Prem", 0x43D1, 7, false };
+    ctrl.setSimulatedPlaying(st);
+
+    for (int i = 0; i < 20; i++) {
+        chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA, FX_DSD_EMPTY);
+        chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    }
+
+    uint64_t simulated_now = 10000;
+    for (int step = 0; step < 6000; ++step) {
+        simulated_now += 100;
+        ctrl.pollTelemetry(simulated_now);
+    }
+
+    check(ctrl.state() == ControllerState::Playing, "controller still playing after 10 min synthetic polling");
+}
+
 } // namespace
 
 int main()
@@ -543,6 +707,10 @@ int main()
     test_abort_between_channels_keeps_partial_cache();
     test_warm_start_does_not_scan();
     test_scanning_screen_abort_wiring();
+    test_dls_and_telemetry_polling();
+    test_signal_loss_banner_timing();
+    test_spi_consecutive_errors();
+    test_synthetic_polling_flat_memory();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed" << std::endl;

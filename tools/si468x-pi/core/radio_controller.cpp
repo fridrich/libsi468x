@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "radio_controller.hpp"
 #include "si468x.h"
+#include "utils.hpp"
 
 #include <algorithm>
+#include <fstream>
 #include <iostream>
 
 namespace si468x_pi {
@@ -203,6 +205,21 @@ bool RadioController::isScanning() const
     return m_state == ControllerState::Scanning;
 }
 
+void RadioController::setSimulatedPlaying(const Station& st)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_state = ControllerState::Playing;
+    m_current_station = st;
+    m_last_dls_poll = 0;
+    m_last_sig_poll = 0;
+    m_last_info_poll = 0;
+    m_last_ens_poll = 0;
+    m_last_ev_poll = 0;
+    m_sync_lost_start = 0;
+    m_consecutive_spi_errors = 0;
+    m_signal_lost = false;
+}
+
 void RadioController::postVolumeUp()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -305,9 +322,11 @@ void RadioController::threadLoop(bool auto_boot)
 
     while (m_running.load()) {
         Command cmd;
+        bool has_cmd = false;
         {
             std::unique_lock<std::mutex> lock(m_mutex);
-            m_cv.wait(lock, [this]() {
+            const int wait_ms = (m_state == ControllerState::Playing) ? 50 : 500;
+            m_cv.wait_for(lock, std::chrono::milliseconds(wait_ms), [this]() {
                 return !m_queue.empty() || !m_running.load();
             });
 
@@ -315,34 +334,41 @@ void RadioController::threadLoop(bool auto_boot)
                 break;
             }
 
-            cmd = m_queue.front();
-            m_queue.pop_front();
+            if (!m_queue.empty()) {
+                cmd = m_queue.front();
+                m_queue.pop_front();
+                has_cmd = true;
 
-            while (!m_queue.empty() &&
-                   (m_queue.front().type == CommandType::VolumeUp ||
-                    m_queue.front().type == CommandType::VolumeDown ||
-                    m_queue.front().type == CommandType::SetVolume)) {
-                if (cmd.type == CommandType::SetVolume) {
-                    cmd = m_queue.front();
-                    m_queue.pop_front();
-                } else {
-                    break;
+                while (!m_queue.empty() &&
+                       (m_queue.front().type == CommandType::VolumeUp ||
+                        m_queue.front().type == CommandType::VolumeDown ||
+                        m_queue.front().type == CommandType::SetVolume)) {
+                    if (cmd.type == CommandType::SetVolume) {
+                        cmd = m_queue.front();
+                        m_queue.pop_front();
+                    } else {
+                        break;
+                    }
                 }
+
+                m_busy = true;
             }
-
-            m_busy = true;
         }
 
-        executeCommand(cmd);
+        if (has_cmd) {
+            executeCommand(cmd);
 
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_busy = false;
-        }
-        m_idle_cv.notify_all();
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                m_busy = false;
+            }
+            m_idle_cv.notify_all();
 
-        if (cmd.type == CommandType::Shutdown) {
-            break;
+            if (cmd.type == CommandType::Shutdown) {
+                break;
+            }
+        } else if (state() == ControllerState::Playing) {
+            pollTelemetry();
         }
     }
 }
@@ -455,6 +481,14 @@ void RadioController::executePlay(const Station& station)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_current_station = station;
+        m_last_dls_poll = 0;
+        m_last_sig_poll = 0;
+        m_last_info_poll = 0;
+        m_last_ens_poll = 0;
+        m_last_ev_poll = 0;
+        m_sync_lost_start = 0;
+        m_consecutive_spi_errors = 0;
+        m_signal_lost = false;
     }
     notifyState(ControllerState::Playing);
 }
@@ -652,6 +686,200 @@ void RadioController::notifyStationListChanged(const std::vector<Station>& stati
     }
     if (ev) {
         ev->onStationListChanged(stations);
+    }
+}
+
+bool RadioController::isSignalLost() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_signal_lost;
+}
+
+void RadioController::pollTelemetry(uint64_t now_ms_override)
+{
+    const uint64_t now = (now_ms_override != 0) ? now_ms_override : now_ms();
+
+    // 1. DLS text (poll.dls_ms)
+    const uint64_t dls_interval = m_settings.poll.dls_ms > 0 ? static_cast<uint64_t>(m_settings.poll.dls_ms) : 300;
+    if (now >= m_last_dls_poll + dls_interval) {
+        m_last_dls_poll = now;
+        char dls_buf[129] = {};
+        const int rc = si468x_get_dls_text(dls_buf, sizeof(dls_buf));
+        if (rc == 1 && dls_buf[0] != '\0') {
+            notifyDls(std::string(dls_buf));
+        }
+    }
+
+    // 2. Signal status (poll.signal_ms)
+    const uint64_t sig_interval = m_settings.poll.signal_ms > 0 ? static_cast<uint64_t>(m_settings.poll.signal_ms) : 500;
+    if (now >= m_last_sig_poll + sig_interval) {
+        m_last_sig_poll = now;
+        si468x_signal_status_t sig;
+        const int rc = si468x_get_signal_status(&sig);
+        if (rc == SI468X_SUCCESS) {
+            m_consecutive_spi_errors = 0;
+            notifySignal(sig);
+            if (sig.sync_status) {
+                m_sync_lost_start = 0;
+                if (m_signal_lost) {
+                    m_signal_lost = false;
+                    notifySignalLost(false);
+                }
+            } else {
+                if (m_sync_lost_start == 0) {
+                    m_sync_lost_start = now;
+                } else if (now - m_sync_lost_start >= 2000 && !m_signal_lost) {
+                    m_signal_lost = true;
+                    notifySignalLost(true);
+                }
+            }
+        } else if (rc == SI468X_ERROR_SPI) {
+            ++m_consecutive_spi_errors;
+            if (m_consecutive_spi_errors >= 2) {
+                notifyError("SPI connection lost during playback");
+                executeStop();
+                notifyState(ControllerState::Error);
+            }
+        }
+    }
+
+    // 3. Info metrics: UTC time and audio parameters (poll.info_ms)
+    const uint64_t info_interval = m_settings.poll.info_ms > 0 ? static_cast<uint64_t>(m_settings.poll.info_ms) : 5000;
+    if (now >= m_last_info_poll + info_interval) {
+        m_last_info_poll = now;
+        si468x_time_t t;
+        if (si468x_get_time(&t) == SI468X_SUCCESS) {
+            notifyTime(t);
+        }
+        si468x_audio_info_t a;
+        if (si468x_get_audio_info(&a) == SI468X_SUCCESS) {
+            notifyAudio(a);
+        }
+    }
+
+    // 4. Ensemble info (10 s)
+    if (now >= m_last_ens_poll + 10000) {
+        m_last_ens_poll = now;
+        si468x_ensemble_info_t ens;
+        if (si468x_get_ensemble_info(&ens) == SI468X_SUCCESS) {
+            notifyEnsemble(ens);
+        }
+    }
+
+    // 5. Reconfiguration event checks (2 s)
+    if (now >= m_last_ev_poll + 2000) {
+        m_last_ev_poll = now;
+        si468x_dab_event_status_t ev;
+        if (si468x_dab_get_event_status(&ev) == SI468X_SUCCESS &&
+            (ev.svrlist_int || ev.svrlist_active)) {
+            si468x_service_t svcs[64];
+            si468x_get_service_list(svcs, 64);
+        }
+    }
+
+    // 6. MOT Slideshow
+    if (m_settings.ui.mot) {
+        si468x_mot_slideshow_t slide;
+        if (si468x_get_mot_slideshow(&slide) == 1 && slide.image_data && slide.image_size > 0) {
+            std::string ext = "bin";
+            if (slide.image_size >= 4 && slide.image_data[0] == 0x89 &&
+                slide.image_data[1] == 'P' && slide.image_data[2] == 'N' && slide.image_data[3] == 'G') {
+                ext = "png";
+            } else if (slide.image_size >= 3 && slide.image_data[0] == 0xFF &&
+                       slide.image_data[1] == 0xD8 && slide.image_data[2] == 0xFF) {
+                ext = "jpg";
+            }
+            const std::string path = "/tmp/si468x-pi-mot-" + std::to_string(m_current_station.service_id) + "." + ext;
+            std::ofstream out(path, std::ios::binary);
+            if (out) {
+                out.write(reinterpret_cast<const char*>(slide.image_data), slide.image_size);
+            }
+            notifyMot(path, slide);
+        }
+    }
+}
+
+void RadioController::notifySignal(const si468x_signal_status_t& sig)
+{
+    IControllerEvents* ev = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        ev = m_events;
+    }
+    if (ev) {
+        ev->onSignal(sig);
+    }
+}
+
+void RadioController::notifyDls(const std::string& dls)
+{
+    IControllerEvents* ev = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        ev = m_events;
+    }
+    if (ev) {
+        ev->onDls(dls);
+    }
+}
+
+void RadioController::notifyTime(const si468x_time_t& t)
+{
+    IControllerEvents* ev = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        ev = m_events;
+    }
+    if (ev) {
+        ev->onTime(t);
+    }
+}
+
+void RadioController::notifyAudio(const si468x_audio_info_t& a)
+{
+    IControllerEvents* ev = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        ev = m_events;
+    }
+    if (ev) {
+        ev->onAudio(a);
+    }
+}
+
+void RadioController::notifyEnsemble(const si468x_ensemble_info_t& ens)
+{
+    IControllerEvents* ev = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        ev = m_events;
+    }
+    if (ev) {
+        ev->onEnsemble(ens);
+    }
+}
+
+void RadioController::notifyMot(const std::string& path, const si468x_mot_slideshow_t& slide)
+{
+    IControllerEvents* ev = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        ev = m_events;
+    }
+    if (ev) {
+        ev->onMot(path, slide);
+    }
+}
+
+void RadioController::notifySignalLost(bool lost)
+{
+    IControllerEvents* ev = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        ev = m_events;
+    }
+    if (ev) {
+        ev->onSignalLost(lost);
     }
 }
 
