@@ -53,6 +53,10 @@ tools/si468x-pi/si468x-pi
 tools/si468x-pi/tests/test_settings
 tools/si468x-pi/tests/test_ui
 tools/si468x-pi/tests/test_display
+tools/si468x-pi/tests/test_plugins
+tools/si468x-pi/tests/si468x-pi-plugins/
+tools/si468x-pi/tests/*.la
+tools/si468x-pi/tests/*.so
 tools/si468x-pi/tests/*.log
 tools/si468x-pi/tests/*.trs
 tools/si468x-pi/.dirstamp
