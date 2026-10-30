@@ -11,10 +11,10 @@
 #include <stdint.h>
 
 // Reply bytes (status byte 0 first) -> lib reply; the dummy resp[0] keeps every test on the real +1 boundary
-static inline std::vector<uint8_t> reply(std::initializer_list<uint8_t> sdk)
+static inline std::vector<uint8_t> reply(std::initializer_list<uint8_t> bytes)
 {
     std::vector<uint8_t> r(1, 0x00);
-    r.insert(r.end(), sdk);
+    r.insert(r.end(), bytes);
     return r;
 }
 
