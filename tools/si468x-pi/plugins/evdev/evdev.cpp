@@ -1,230 +1,406 @@
 // SPDX-FileCopyrightText: 2026 Fridrich Strba
 // SPDX-License-Identifier: GPL-2.0-or-later
+// si468x-pi input plugin: remote control whose USB dongle appears as a
+// keyboard (2.4 GHz or infrared), read through /dev/input/event*
 #include "si468x-pi/plugin.h"
+#include "remote_config.hpp"
 
-#include <nlohmann/json.hpp>
-
-#include <cstdint>
-#include <fcntl.h>
+#include <algorithm>
+#include <cctype>
+#include <cerrno>
+#include <cstring>
+#include <ctime>
 #include <iostream>
-#include <linux/input.h>
 #include <map>
-#include <poll.h>
+#include <set>
 #include <string>
+#include <vector>
+
+#include <fcntl.h>
+#include <glob.h>
+#include <linux/input-event-codes.h>
+#include <linux/input.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
 extern "C" {
 const char si468x_pi_plugin_name[] = "evdev";
-const char si468x_pi_plugin_description[] = "Linux evdev input (/dev/input/event*)";
+const char si468x_pi_plugin_description[] = "Remote control as keyboard (evdev)";
 const int si468x_pi_input_abi = SI468X_PI_INPUT_ABI;
-
-int si468x_pi_input_run(const struct si468x_pi_input_host* host, const char* config);
 }
 
 namespace {
 
-using KeyMap = std::map<int, enum si468x_pi_action>;
+const char* const LOG = "evdev: ";
 
-const std::map<std::string, int> s_key_names = {
-    { "KEY_UP", KEY_UP },
-    { "KEY_DOWN", KEY_DOWN },
-    { "KEY_LEFT", KEY_LEFT },
-    { "KEY_RIGHT", KEY_RIGHT },
-    { "KEY_ENTER", KEY_ENTER },
-    { "KEY_OK", KEY_OK },
-    { "KEY_MENU", KEY_MENU },
-    { "KEY_ESC", KEY_ESC },
-    { "KEY_BACK", KEY_BACK },
-    { "KEY_POWER", KEY_POWER },
-    { "KEY_VOLUMEUP", KEY_VOLUMEUP },
-    { "KEY_VOLUMEDOWN", KEY_VOLUMEDOWN },
-    { "KEY_MUTE", KEY_MUTE },
-    { "KEY_HOMEPAGE", KEY_HOMEPAGE },
-    { "KEY_HOME", KEY_HOME },
+/* How long the input thread sleeps before it looks for a remote again, and
+ * how often it complains about not finding one. */
+const int RESCAN_MS = 2000;
+const unsigned RESCAN_QUIET = 15;
+
+/* A 2.4 GHz dongle often has two event nodes (keyboard and consumer
+ * control); read both, but not half the keyboards of a desktop. */
+const size_t MAX_DEVICES = 4;
+
+const int POLL_MS = 200;
+
+/* A button that is held down repeats: one step, a pause, then a steady rate,
+ * so that the station list scrolls and the volume ramps. The autorepeat of the
+ * remote itself (value 2, if the kernel sends it at all) is ignored: it runs
+ * at the keyboard rate of 33 ms, which the screens cannot follow. */
+const int REPEAT_DELAY_MS = 400;
+const int REPEAT_INTERVAL_MS = 120;
+
+struct Device {
+    int fd;
+    std::string path;
+    std::string name;
 };
 
-const std::map<std::string, enum si468x_pi_action> s_action_names = {
-    { "UP", SI468X_PI_UP },
-    { "DOWN", SI468X_PI_DOWN },
-    { "LEFT", SI468X_PI_LEFT },
-    { "RIGHT", SI468X_PI_RIGHT },
-    { "ENTER", SI468X_PI_ENTER },
-    { "MENU", SI468X_PI_MENU },
-    { "QUIT", SI468X_PI_QUIT },
-    { "VOLUME_UP", SI468X_PI_VOLUME_UP },
-    { "VOLUME_DOWN", SI468X_PI_VOLUME_DOWN },
-    { "MUTE", SI468X_PI_MUTE },
-    { "HOME", SI468X_PI_HOME },
+/* A button that is down: the action it sends and when it repeats next */
+struct Held {
+    int action;
+    long due;
 };
 
-const KeyMap s_default_map = {
-    { KEY_UP, SI468X_PI_UP },
-    { KEY_DOWN, SI468X_PI_DOWN },
-    { KEY_LEFT, SI468X_PI_LEFT },
-    { KEY_RIGHT, SI468X_PI_RIGHT },
-    { KEY_ENTER, SI468X_PI_ENTER },
-    { KEY_OK, SI468X_PI_ENTER },
-    { KEY_MENU, SI468X_PI_MENU },
-    { KEY_ESC, SI468X_PI_QUIT },
-    { KEY_BACK, SI468X_PI_MENU },
-    { KEY_POWER, SI468X_PI_QUIT },
-    { KEY_VOLUMEUP, SI468X_PI_VOLUME_UP },
-    { KEY_VOLUMEDOWN, SI468X_PI_VOLUME_DOWN },
-    { KEY_MUTE, SI468X_PI_MUTE },
-    { KEY_HOMEPAGE, SI468X_PI_HOME },
-    { KEY_HOME, SI468X_PI_HOME },
-};
-
-struct EvdevConfig {
-    std::string device;
-    bool grab = false;
-    KeyMap key_map = s_default_map;
-};
-
-// {"device": "...", "grab": true, "map": {"KEY_UP": "UP", "115": "VOLUME_UP"}};
-// keys by name or code, merged over the defaults; anything malformed is ignored
-EvdevConfig parse_config(const char* json_str)
+long nowMs()
 {
-    EvdevConfig cfg;
-    const nlohmann::json j = nlohmann::json::parse(json_str ? json_str : "", nullptr, false);
-    if (!j.is_object()) {
-        return cfg;
-    }
-    try {
-        cfg.device = j.value("device", "");
-        cfg.grab = j.value("grab", false);
-    } catch (const nlohmann::json::exception&) { // wrong value types
-        return EvdevConfig{};
-    }
-    const auto map = j.find("map");
-    if (map == j.end() || !map->is_object()) {
-        return cfg;
-    }
-    for (const auto& item : map->items()) {
-        const auto name = s_key_names.find(item.key());
-        int code = -1;
-        if (name != s_key_names.end()) {
-            code = name->second;
-        } else {
-            try {
-                code = std::stoi(item.key());
-            } catch (...) {
-            }
-        }
-        const auto act = item.value().is_string() ? s_action_names.find(item.value().get<std::string>())
-                                                  : s_action_names.end();
-        if (code >= 0 && act != s_action_names.end()) {
-            cfg.key_map[code] = act->second;
-        }
-    }
-    return cfg;
+    struct timespec ts = {};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
 }
 
-int find_best_device(const KeyMap& key_map)
+bool testBit(int bit, const unsigned long* bits)
 {
-    int best_fd = -1;
-    int best_matches = 0;
+    const size_t per_long = 8 * sizeof(long);
+    return (bits[size_t(bit) / per_long] >> (size_t(bit) % per_long)) & 1;
+}
 
-    for (int i = 0; i < 32; ++i) {
-        const std::string path = "/dev/input/event" + std::to_string(i);
-        int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
+std::string deviceName(int fd)
+{
+    char buf[256] = {};
+    if (ioctl(fd, EVIOCGNAME(sizeof buf), buf) < 0) {
+        return std::string();
+    }
+    return std::string(buf);
+}
+
+bool hasKeys(int fd)
+{
+    unsigned long bits[(EV_MAX / (8 * sizeof(long))) + 1] = {};
+    if (ioctl(fd, EVIOCGBIT(0, sizeof bits), bits) < 0) {
+        return false;
+    }
+    return testBit(EV_KEY, bits);
+}
+
+/* How many of the key codes we handle the device sends at all. */
+int keyScore(int fd, const RemoteConfig& cfg)
+{
+    unsigned long bits[(KEY_CNT / (8 * sizeof(long))) + 1] = {};
+    if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof bits), bits) < 0) {
+        return 0;
+    }
+    int score = 0;
+    for (const auto& key : cfg.map) {
+        if (testBit(key.first, bits)) {
+            score++;
+        }
+    }
+    return score;
+}
+
+bool containsNoCase(const std::string& text, const std::string& part)
+{
+    const auto it = std::search(text.begin(), text.end(), part.begin(), part.end(),
+            [](char a, char b) {
+                return std::tolower((unsigned char)a) == std::tolower((unsigned char)b);
+            });
+    return it != text.end();
+}
+
+std::vector<std::string> eventPaths()
+{
+    std::vector<std::string> paths;
+    glob_t found = {};
+    if (glob("/dev/input/event*", 0, nullptr, &found) == 0) {
+        for (size_t i = 0; i < found.gl_pathc; ++i) {
+            paths.push_back(found.gl_pathv[i]);
+        }
+    }
+    globfree(&found);
+    return paths;
+}
+
+/* The keyboard node of a 2.4 GHz dongle and its consumer control node (the
+ * one with the volume keys) have different names but come from one USB
+ * device, so they report the same vendor and product. Devices without an
+ * identity (vendor and product 0) are only matched by their name. */
+bool sameDevice(const struct input_id& id, const struct input_id& other)
+{
+    if (id.vendor == 0 && id.product == 0) {
+        return false;
+    }
+    return id.bustype == other.bustype && id.vendor == other.vendor
+        && id.product == other.product;
+}
+
+/* All event nodes of the remote: the ones that carry our keys, limited to the
+ * device of the node that carries the most of them. */
+std::vector<std::string> findDevices(const RemoteConfig& cfg)
+{
+    if (!cfg.device.empty()) {
+        return {cfg.device};
+    }
+
+    struct Candidate {
+        std::string path;
+        std::string name;
+        int score;
+        struct input_id id;
+    };
+    std::vector<Candidate> candidates;
+    for (const auto& path : eventPaths()) {
+        const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
         if (fd < 0) {
             continue;
         }
-
-        uint8_t key_bits[(KEY_MAX + 7) / 8] = {};
-        if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(key_bits)), key_bits) < 0) {
-            close(fd);
+        const std::string name = deviceName(fd);
+        const int score = hasKeys(fd) ? keyScore(fd, cfg) : 0;
+        /* stays empty when the device has no identity, then it is matched by
+         * its name only */
+        struct input_id id = {};
+        (void)ioctl(fd, EVIOCGID, &id);
+        close(fd);
+        if (score <= 0) {
             continue;
         }
+        if (!cfg.name.empty() && !containsNoCase(name, cfg.name)) {
+            continue;
+        }
+        candidates.push_back({path, name, score, id});
+    }
+    if (candidates.empty()) {
+        return {};
+    }
 
-        int matches = 0;
-        for (const auto& kv : key_map) {
-            int code = kv.first;
-            if (code >= 0 && code <= KEY_MAX) {
-                if (key_bits[code / 8] & (1 << (code % 8))) {
-                    ++matches;
+    size_t best = 0;
+    for (size_t i = 1; i < candidates.size(); ++i) {
+        if (candidates[i].score > candidates[best].score) {
+            best = i;
+        }
+    }
+
+    std::vector<std::string> paths;
+    for (const auto& candidate : candidates) {
+        const bool same = sameDevice(candidates[best].id, candidate.id)
+            || candidate.name == candidates[best].name;
+        if (same && paths.size() < MAX_DEVICES) {
+            paths.push_back(candidate.path);
+        }
+    }
+    return paths;
+}
+
+/* Lists what is there, so that "device" or "name" can be set from the log on
+ * a machine with several input devices. */
+void logCandidates(const RemoteConfig& cfg)
+{
+    for (const auto& path : eventPaths()) {
+        const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+        if (fd < 0) {
+            /* most often EACCES: the user is not in the "input" group */
+            std::cerr << LOG << path << ": " << strerror(errno) << std::endl;
+            continue;
+        }
+        const std::string name = deviceName(fd);
+        std::cerr << LOG << path << ": \"" << name << "\", "
+                  << (hasKeys(fd) ? keyScore(fd, cfg) : 0) << " of our keys" << std::endl;
+        close(fd);
+    }
+}
+
+/* How long the input thread sleeps at most, and when the next held button is
+ * due: the thread sleeps exactly as long as it can. */
+int repeatTimeout(const std::map<int, Held>& held)
+{
+    if (held.empty()) {
+        return POLL_MS;
+    }
+    const long now = nowMs();
+    long next = POLL_MS;
+    for (const auto& key : held) {
+        next = std::min(next, key.second.due - now);
+    }
+    return static_cast<int>(std::max(1L, next));
+}
+
+/* Sends the next step of every button that is held long enough */
+void repeatHeld(std::map<int, Held>& held, const si468x_pi_input_host* host)
+{
+    const long now = nowMs();
+    for (auto& key : held) {
+        if (key.second.due > now) {
+            continue;
+        }
+        host->push(host->ctx, static_cast<si468x_pi_action>(key.second.action));
+        key.second.due = now + REPEAT_INTERVAL_MS;
+    }
+}
+
+void handleKey(int code, const RemoteConfig& cfg, const si468x_pi_input_host* host,
+        std::set<int>& reported, std::map<int, Held>& held)
+{
+    int action = 0;
+    if (lookupKey(cfg, code, action)) {
+        if (action < 0) {
+            return;
+        }
+        host->push(host->ctx, static_cast<si468x_pi_action>(action));
+        /* a repeatable button stays down until its release event */
+        if (repeatableAction(action)) {
+            held[code] = {action, nowMs() + REPEAT_DELAY_MS};
+        }
+        return;
+    }
+
+    /* Mouse and gamepad buttons of the same dongle: never an action. */
+    if (code >= BTN_MISC && code < KEY_OK) {
+        return;
+    }
+
+    /* Once per code: the log tells which code to put into "map". */
+    if (reported.insert(code).second) {
+        const char* name = keyName(code);
+        std::cerr << LOG << "key " << code << " (" << (name ? name : "unknown")
+                  << ") is not mapped, see \"map\" in si468x-pi.json" << std::endl;
+    }
+}
+
+/* Reads the devices until one of them goes away (returns) or si468x-pi stops. */
+void readDevices(std::vector<Device>& devices, const RemoteConfig& cfg,
+        const si468x_pi_input_host* host)
+{
+    std::vector<pollfd> fds;
+    for (const auto& device : devices) {
+        fds.push_back({device.fd, POLLIN, 0});
+    }
+
+    std::set<int> reported;
+    std::map<int, Held> held;
+    while (!host->stop_requested(host->ctx)) {
+        const int ready = poll(fds.data(), fds.size(), repeatTimeout(held));
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            std::cerr << LOG << "poll: " << strerror(errno) << std::endl;
+            return;
+        }
+
+        for (size_t i = 0; i < fds.size(); ++i) {
+            if (!(fds[i].revents & (POLLIN | POLLERR | POLLHUP))) {
+                continue;
+            }
+            struct input_event events[64];
+            const ssize_t got = read(fds[i].fd, events, sizeof events);
+            if (got < 0) {
+                if (errno == EINTR || errno == EAGAIN) {
+                    continue;
+                }
+                std::cerr << LOG << devices[i].path << ": " << strerror(errno) << std::endl;
+                return;
+            }
+            if (got == 0) {
+                return;
+            }
+            const size_t count = size_t(got) / sizeof events[0];
+            for (size_t e = 0; e < count; ++e) {
+                if (events[e].type != EV_KEY) {
+                    continue;
+                }
+                /* 1 is the press, 0 the release that stops the repeat, 2 the
+                 * remote's own autorepeat, which repeatHeld() does itself */
+                if (events[e].value == 1) {
+                    handleKey(events[e].code, cfg, host, reported, held);
+                } else if (events[e].value == 0) {
+                    held.erase(events[e].code);
                 }
             }
         }
 
-        if (matches > best_matches) {
-            if (best_fd >= 0) {
-                close(best_fd);
-            }
-            best_fd = fd;
-            best_matches = matches;
-        } else {
-            close(fd);
-        }
+        repeatHeld(held, host);
     }
+}
 
-    return best_fd;
+void sleepUnlessStopped(const si468x_pi_input_host* host, int ms)
+{
+    for (int slept = 0; slept < ms && !host->stop_requested(host->ctx); slept += 100) {
+        usleep(100 * 1000);
+    }
+}
+
+int run(const RemoteConfig& cfg, const si468x_pi_input_host* host)
+{
+    std::cerr << LOG << cfg.map.size() << " keys, "
+              << (cfg.grab ? "grabbed" : "not grabbed") << ", "
+              << (cfg.device.empty() ? "looking for a device" : "device " + cfg.device)
+              << std::endl;
+
+    unsigned attempts = 0;
+    while (!host->stop_requested(host->ctx)) {
+        std::vector<Device> devices;
+        for (const auto& path : findDevices(cfg)) {
+            const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+            if (fd < 0) {
+                std::cerr << LOG << path << ": " << strerror(errno) << std::endl;
+                continue;
+            }
+            if (!hasKeys(fd)) {
+                std::cerr << LOG << path << ": not a keyboard, ignoring" << std::endl;
+                close(fd);
+                continue;
+            }
+            const std::string name = deviceName(fd);
+            if (cfg.grab && ioctl(fd, EVIOCGRAB, 1) < 0) {
+                std::cerr << LOG << path << ": cannot grab (" << strerror(errno)
+                          << "), keys reach the console as well" << std::endl;
+            }
+            std::cerr << LOG << "listening on " << path << " (\"" << name << "\")" << std::endl;
+            devices.push_back({fd, path, name});
+        }
+
+        if (devices.empty()) {
+            if (attempts++ % RESCAN_QUIET == 0) {
+                logCandidates(cfg);
+                std::cerr << LOG << "no remote found, retrying" << std::endl;
+            }
+        } else {
+            attempts = 0;
+            readDevices(devices, cfg, host);
+        }
+
+        for (auto& device : devices) {
+            if (cfg.grab) {
+                ioctl(device.fd, EVIOCGRAB, 0);
+            }
+            close(device.fd);
+        }
+        sleepUnlessStopped(host, RESCAN_MS);
+    }
+    return 0;
 }
 
 } // namespace
 
 int si468x_pi_input_run(const struct si468x_pi_input_host* host, const char* config)
 {
-    if (!host) {
-        return -1;
+    RemoteConfig cfg;
+    std::string error;
+    if (!parseRemoteConfig(config ? config : "", cfg, error)) {
+        std::cerr << LOG << error << std::endl;
+        return 1;
     }
-
-    const EvdevConfig cfg = parse_config(config);
-
-    int fd = -1;
-    if (!cfg.device.empty()) {
-        fd = open(cfg.device.c_str(), O_RDONLY | O_NONBLOCK);
-        if (fd < 0) {
-            std::cerr << "evdev: failed to open " << cfg.device << std::endl;
-            return 0; // Skip missing device cleanly without terminating radio
-        }
-    } else {
-        fd = find_best_device(cfg.key_map);
-        if (fd < 0) {
-            std::cerr << "evdev: no matching /dev/input/event* device found" << std::endl;
-            return 0;
-        }
-    }
-
-    if (cfg.grab) {
-        ioctl(fd, EVIOCGRAB, 1);
-    }
-
-    struct pollfd pfd;
-    pfd.fd = fd;
-    pfd.events = POLLIN;
-
-    while (!host->stop_requested(host->ctx)) {
-        int pr = poll(&pfd, 1, 100);
-        if (pr < 0) {
-            break;
-        }
-        if (pr == 0) {
-            continue;
-        }
-
-        struct input_event ev[16];
-        ssize_t bytes = read(fd, ev, sizeof(ev));
-        if (bytes <= 0) {
-            break;
-        }
-
-        const size_t count = static_cast<size_t>(bytes) / sizeof(struct input_event);
-        for (size_t i = 0; i < count; ++i) {
-            if (ev[i].type == EV_KEY && (ev[i].value == 1 || ev[i].value == 2)) {
-                auto it = cfg.key_map.find(ev[i].code);
-                if (it != cfg.key_map.end()) {
-                    host->push(host->ctx, it->second);
-                }
-            }
-        }
-    }
-
-    if (cfg.grab) {
-        ioctl(fd, EVIOCGRAB, 0);
-    }
-    close(fd);
-    return 0;
+    return run(cfg, host);
 }

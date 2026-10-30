@@ -74,26 +74,29 @@ journalctl -u si468x-pi.service -f
 Plugins extend `si468x-pi` with external hardware without rebuilding the main application binary. Shared modules reside in `/usr/local/lib/si468x-pi/`:
 
 ### 1. `evdev` (Remote Control Input)
-Reads Linux input event devices (`/dev/input/event*`) such as IR remotes, USB keypads, and GPIO buttons.
+Reads remote controls whose USB dongle appears as a keyboard (`/dev/input/event*`). Without `"device"` it picks the input device carrying most of the mapped keys, together with its sibling nodes (a 2.4 GHz dongle often has a keyboard and a consumer-control node), and waits for it if it is not plugged in yet or goes away. Keys are grabbed by default so that they do not reach the console. A held up/down/volume button repeats; other buttons act once per press. Unmapped keys are logged with their code.
 ```json
 "input": [
   {
     "plugin": "evdev",
-    "device": "/dev/input/event0",
+    "name": "remote",
+    "grab": true,
     "map": {
-      "KEY_UP": "UP",
-      "KEY_DOWN": "DOWN",
-      "KEY_ENTER": "ENTER",
-      "KEY_VOLUMEUP": "VOLUME_UP",
-      "KEY_VOLUMEDOWN": "VOLUME_DOWN",
-      "KEY_MUTE": "MUTE"
+      "KEY_UP": "up",
+      "KEY_DOWN": "down",
+      "KEY_ENTER": "enter",
+      "KEY_VOLUMEUP": "volume_up",
+      "KEY_VOLUMEDOWN": "volume_down",
+      "KEY_MUTE": "mute",
+      "KEY_F19": "none"
     }
   }
 ]
 ```
+`"device"` (`/dev/input/eventN`) fixes the device, `"name"` limits the search to devices whose name contains it (case-insensitive). `"map"` keys are `KEY_*` names or decimal codes (as printed by `evtest`), merged over the defaults; actions are `up`, `down`, `left`, `right`, `enter`, `menu`, `quit`, `volume_up`, `volume_down`, `mute`, `home`, `none`.
 
 ### 2. `fb` (OLED / Framebuffer Display)
-Renders an 8×8 font to Linux framebuffers (`/dev/fb0`, `/dev/fb1`) supporting RGB565 and XRGB8888 with reverse-video highlighting.
+Renders an 8×8 font to Linux framebuffers (`/dev/fb0` by default) at 16 or 32 bpp, with reverse-video highlighting.
 ```json
 "display": [
   {
@@ -104,12 +107,11 @@ Renders an 8×8 font to Linux framebuffers (`/dev/fb0`, `/dev/fb1`) supporting R
 ```
 
 ### 3. `lcd` (HD44780 Character Display)
-Drives HD44780 displays connected through the Linux kernel `charlcd` driver (`/dev/lcd`) with automatic UTF-8 to HD44780 code page translation.
+Drives HD44780 displays through the Linux kernel `charlcd` driver (`/dev/lcd`) with UTF-8 to HD44780 character mapping. The size comes from the device tree (`display-width-chars`, `display-height-chars`).
 ```json
 "display": [
   {
-    "plugin": "lcd",
-    "device": "/dev/lcd"
+    "plugin": "lcd"
   }
 ]
 ```

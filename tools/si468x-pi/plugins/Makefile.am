@@ -8,11 +8,10 @@ AM_LDFLAGS = -module -avoid-version -shared
 
 plugindir = $(libdir)/si468x-pi
 plugin_LTLIBRARIES =
-EXTRA_DIST = plugin_util.h
 
 if ENABLE_PLUGIN_EVDEV
 plugin_LTLIBRARIES += si468x-pi-evdev.la
-si468x_pi_evdev_la_SOURCES = evdev/evdev.cpp
+si468x_pi_evdev_la_SOURCES = evdev/evdev.cpp evdev/remote_config.cpp evdev/remote_config.hpp
 endif
 
 if ENABLE_PLUGIN_FB
