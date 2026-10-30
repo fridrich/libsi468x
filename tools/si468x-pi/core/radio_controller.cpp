@@ -5,8 +5,9 @@
 #include "utils.hpp"
 
 #include <algorithm>
-#include <fstream>
-#include <iostream>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace si468x_pi {
 
@@ -62,7 +63,9 @@ int RadioController::initHardware()
     } else if (m_settings.device.audio == "both") {
         audio_mode = SI468X_AUDIO_SIMUL;
     }
-    si468x_set_audio_output(audio_mode);
+    if (si468x_set_audio_output(audio_mode) != SI468X_SUCCESS) {
+        notifyError("audio route '" + m_settings.device.audio + "' not applied: chip already running");
+    }
 
     const int boot_mode = (m_settings.device.mode == "fmhd") ? SI468X_BOOT_FMHD : SI468X_BOOT_DAB;
     const int rc = si468x_init(m_settings.device.spi.c_str(), m_settings.device.reset_gpio, boot_mode);
@@ -81,11 +84,9 @@ int RadioController::initHardware()
     return SI468X_SUCCESS;
 }
 
-bool RadioController::loadCache(const std::string& path)
+bool RadioController::applyCache(const Cache& c)
 {
-    Cache c;
-    std::vector<std::string> warnings;
-    if (!si468x_pi::load_cache(path, c, &warnings) || c.stations.empty()) {
+    if (c.stations.empty()) {
         return false;
     }
     std::vector<Station> st;
@@ -109,7 +110,7 @@ bool RadioController::saveCache(const std::string& path) const
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         c.stations = m_stations;
-        c.volume = m_current_volume;
+        c.volume = unmutedVolume();
         if (!m_current_station.channel.empty() || m_current_station.service_id != 0) {
             c.last_played.channel = m_current_station.channel;
             c.last_played.service_id = m_current_station.service_id;
@@ -119,7 +120,7 @@ bool RadioController::saveCache(const std::string& path) const
     return si468x_pi::save_cache(path, c);
 }
 
-const std::vector<Station>& RadioController::stations() const
+std::vector<Station> RadioController::stations() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_stations;
@@ -216,7 +217,7 @@ uint32_t RadioController::currentFrequency() const
     return m_current_frequency;
 }
 
-const Station& RadioController::currentStation() const
+Station RadioController::currentStation() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_current_station;
@@ -289,14 +290,18 @@ void RadioController::executeCommand(const Command& cmd)
     case CommandType::Seek:
         executeSeek(cmd.bool_arg);
         break;
-    case CommandType::VolumeUp:
+    case CommandType::VolumeUp: {
+        const int base = unmutedVolume();
         m_muted = false;
-        applyVolume(std::min(63, m_current_volume + step));
+        applyVolume(std::min(63, base + step));
         break;
-    case CommandType::VolumeDown:
+    }
+    case CommandType::VolumeDown: {
+        const int base = unmutedVolume();
         m_muted = false;
-        applyVolume(std::max(0, m_current_volume - step));
+        applyVolume(std::max(0, base - step));
         break;
+    }
     case CommandType::SetVolume:
         m_muted = false;
         applyVolume(std::clamp(cmd.int_arg, 0, 63));
@@ -537,7 +542,7 @@ void RadioController::executeScan(bool auto_play)
         Cache c;
         c.complete = !aborted;
         c.stations = found;
-        c.volume = m_current_volume;
+        c.volume = unmutedVolume();
         const Station& last = to_play.channel.empty() ? m_current_station : to_play;
         if (!last.channel.empty()) {
             c.last_played = { last.channel, last.service_id, fm ? "fm" : "dab" };
@@ -599,9 +604,15 @@ void RadioController::pollTelemetry(uint64_t now_ms_override)
                 char ps[9] = {};
                 if (si468x_get_rds_station_name(ps, sizeof(ps)) > 0) {
                     const std::string ps_str = rtrim(ps);
-                    if (!ps_str.empty()) {
-                        m_current_station.program = ps_str;
-                        m_current_station.short_program = ps_str;
+                    if (!ps_str.empty() && ps_str != m_current_station.program) {
+                        Station st;
+                        {
+                            std::lock_guard<std::mutex> lock(m_mutex);
+                            m_current_station.program = ps_str;
+                            m_current_station.short_program = ps_str;
+                            st = m_current_station;
+                        }
+                        notifyStation(st);
                     }
                 }
                 char rt[65] = {};
@@ -703,11 +714,15 @@ void RadioController::pollTelemetry(uint64_t now_ms_override)
                 ext = "jpg";
             }
             const std::string path = "/tmp/si468x-pi-mot-" + std::to_string(m_current_station.service_id) + "." + ext;
-            std::ofstream out(path, std::ios::binary);
-            if (out) {
-                out.write(reinterpret_cast<const char*>(slide.image_data), slide.image_size);
+            // shared /tmp, possibly as root: never follow a planted symlink
+            const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+            if (fd >= 0) {
+                const bool ok = ::write(fd, slide.image_data, slide.image_size) == static_cast<ssize_t>(slide.image_size);
+                ::close(fd);
+                if (ok) {
+                    notifyMot(path, slide);
+                }
             }
-            notifyMot(path, slide);
         }
     }
 }

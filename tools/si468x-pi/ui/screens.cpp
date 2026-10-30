@@ -158,8 +158,12 @@ void RadioScreen::setProgramName(const std::string& program_name,
 void RadioScreen::setDLS(const std::string& dls)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_dlsQueue.empty() || m_dlsQueue.back() != dls) {
+    // stations alternate a few texts faster than one marquee pass: queue each once, keep the newest
+    if (dls != m_dls && std::find(m_dlsQueue.begin(), m_dlsQueue.end(), dls) == m_dlsQueue.end()) {
         m_dlsQueue.push_back(dls);
+        if (m_dlsQueue.size() > DLS_QUEUE_MAX) {
+            m_dlsQueue.pop_front();
+        }
     }
 }
 

@@ -52,6 +52,7 @@ public:
     static constexpr uint64_t DLS_LINE_MS = 1000;
     static constexpr uint64_t DLS_REST_MS = 1000;
     static constexpr const char* DLS_GAP = "     ";
+    static constexpr size_t DLS_QUEUE_MAX = 4;
     static constexpr const char* NO_SIGNAL_TEXT = "-- no signal --";
 
 private:

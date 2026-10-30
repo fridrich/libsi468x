@@ -60,10 +60,12 @@ public:
 
     int initHardware();
 
-    bool loadCache(const std::string& path);
+    // Stations and volume of a cache read by load_cache(); false when it has no stations.
+    bool applyCache(const Cache& cache);
     bool saveCache(const std::string& path) const;
 
-    const std::vector<Station>& stations() const;
+    // copies: the worker thread replaces both at any time
+    std::vector<Station> stations() const;
     void setStations(const std::vector<Station>& stations);
 
     // Thread-safe command posting
@@ -85,7 +87,7 @@ public:
     int volume() const;
     bool isMuted() const;
     uint32_t currentFrequency() const;
-    const Station& currentStation() const;
+    Station currentStation() const;
     bool isSignalLost() const;
 
     // Single step or timed execution of background telemetry polling
@@ -105,6 +107,7 @@ private:
     void executeSeek(bool seek_up);
     void executeShutdown();
     void applyVolume(int chip_volume);
+    int unmutedVolume() const { return m_muted ? m_saved_volume : m_current_volume; }
     void resetPolls(); // caller holds m_mutex
     void notifyState(ControllerState s);
 

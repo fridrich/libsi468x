@@ -492,7 +492,8 @@ void test_warm_start_does_not_scan()
 
     Settings s;
     RadioController ctrl(s, &sink, cache_file);
-    check(ctrl.loadCache(cache_file), "load existing cache succeeds");
+    Cache loaded;
+    check(load_cache(cache_file, loaded) && ctrl.applyCache(loaded), "load existing cache succeeds");
     check(ctrl.stations().size() == 2, "stations loaded from cache");
 
     ctrl.start();

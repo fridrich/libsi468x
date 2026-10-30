@@ -225,7 +225,7 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
     AppSink sink(radio, station_list, scanning, info, &ui);
 
     si468x_pi::RadioController controller(settings, &sink, cache_path);
-    controller.loadCache(cache_path);
+    controller.applyCache(cache);
 
     if (int rc = controller.initHardware()) {
         std::fprintf(stderr, "si468x-pi: hardware init failed: %s\n",
@@ -235,11 +235,11 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
     controller.start();
 
     auto play_next_station = [&](int delta) {
-        const auto& stations = controller.stations();
+        const auto stations = controller.stations();
         if (stations.empty()) {
             return;
         }
-        const auto& cur = controller.currentStation();
+        const auto cur = controller.currentStation();
         size_t idx = 0;
         for (size_t i = 0; i < stations.size(); ++i) {
             if (stations[i].service_id == cur.service_id &&
@@ -294,7 +294,7 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
     auto input_threads = si468x_pi::startInputSources(
         settings, input_queue, [&]() { return g_stop_requested.load(); }, isatty(STDIN_FILENO));
 
-    const auto& st_list = controller.stations();
+    const auto st_list = controller.stations();
     if (rescan || (st_list.empty() && !no_scan)) {
         ui.pushScreen(scanning);
         controller.postScan(true);
