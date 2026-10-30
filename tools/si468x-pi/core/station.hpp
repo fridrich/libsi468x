@@ -34,14 +34,12 @@ const std::vector<Channel>& band3_channels();
 /// Look up a label ("12A", "10N", ...).  Returns nullptr for unknown labels.
 const Channel* find_channel(const std::string& label);
 
-/// Look up a frequency.  Returns 0 when the label is unknown.
-uint32_t channel_frequency(const std::string& label);
-
 /// Canonical 38-channel DAB scan list (no N channels).
 const std::vector<std::string>& default_scan_channels();
 
-/// Identity and ordering helpers.
-bool same_station(const Station& a, const Station& b);
+/// FM stations: service_id, else the channel parsed as MHz; 0 if neither.
+uint32_t fm_frequency_hz(const Station& s);
+
 void sort_stations(std::vector<Station>& stations);
 
 /// Remove duplicates by (channel, service_id), drop entries with an empty

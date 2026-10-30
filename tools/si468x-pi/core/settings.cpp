@@ -8,12 +8,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <unistd.h>
 
 namespace si468x_pi {
@@ -97,20 +95,40 @@ std::string read_enum(const json& obj, const char* key, const std::string& fallb
     return fallback;
 }
 
-bool parse_json_text(const std::string& text, json& out, const std::string& path,
+json parse_json_text(const std::string& text, const std::string& path,
                      std::vector<std::string>* warnings)
 {
-    out = json::parse(text, nullptr, false);
+    json out = json::parse(text, nullptr, false);
     if (out.is_discarded()) {
         add_warning(warnings, path + ": malformed JSON, using defaults");
-        out = json::object();
-        return true;
+        return json::object();
     }
     if (!out.is_object()) {
         add_warning(warnings, path + ": top level is not an object, using defaults");
-        out = json::object();
+        return json::object();
     }
-    return true;
+    return out;
+}
+
+// Accepts unsigned or positive signed numbers; 0 otherwise.
+uint32_t read_sid(const json& obj)
+{
+    auto it = obj.find("service_id");
+    if (it == obj.end() || !it->is_number_integer()) {
+        return 0;
+    }
+    if (it->is_number_unsigned()) {
+        return it->get<uint32_t>();
+    }
+    const long long v = it->get<long long>();
+    return v > 0 ? static_cast<uint32_t>(v) : 0;
+}
+
+// "channel", or "ensemble" as written by older caches.
+std::string read_channel(const json& obj, const std::string& where, std::vector<std::string>* warnings)
+{
+    std::string channel = read_string(obj, "channel", "", where, warnings);
+    return channel.empty() ? read_string(obj, "ensemble", "", where, warnings) : channel;
 }
 
 void parse_inputs(const json& root, Settings& out, std::vector<std::string>* warnings)
@@ -137,7 +155,6 @@ void parse_inputs(const json& root, Settings& out, std::vector<std::string>* war
         InputConfig cfg;
         cfg.type = read_string(entry, "type", "", where, warnings);
         cfg.plugin = read_string(entry, "plugin", "", where, warnings);
-        cfg.device = read_string(entry, "device", "", where, warnings);
         cfg.config_json = entry.dump();
 
         if (cfg.type.empty() && cfg.plugin.empty()) {
@@ -160,7 +177,6 @@ void parse_displays(const json& root, Settings& out, std::vector<std::string>* w
         out.display.push_back(DisplayConfig{});
         return;
     }
-    out.display_configured = true;
     out.display.clear();
 
     if (!it->is_array()) {
@@ -178,7 +194,6 @@ void parse_displays(const json& root, Settings& out, std::vector<std::string>* w
         DisplayConfig cfg;
         cfg.type = read_string(entry, "type", "", where, warnings);
         cfg.plugin = read_string(entry, "plugin", "", where, warnings);
-        cfg.device = read_string(entry, "device", "", where, warnings);
         cfg.cols = read_int(entry, "cols", cfg.cols, 1, 1000, where, warnings);
         cfg.rows = read_int(entry, "rows", cfg.rows, 1, 1000, where, warnings);
         cfg.config_json = entry.dump();
@@ -307,7 +322,7 @@ ojson defaults_to_json(const Settings& s)
     };
     root["input"] = ojson::array({ ojson{ { "type", "stdin" } } });
     root["display"] = ojson::array({
-        ojson{ { "type", "tty" }, { "cols", 78 }, { "rows", 22 } },
+        ojson{ { "type", "tty" }, { "cols", DisplayConfig{}.cols }, { "rows", DisplayConfig{}.rows } },
     });
     root["scan"] = {
         { "channels", s.scan.channels },
@@ -328,22 +343,6 @@ ojson defaults_to_json(const Settings& s)
         { "info_ms", s.poll.info_ms },
     };
     return root;
-}
-
-bool write_all(int fd, const std::string& data)
-{
-    size_t off = 0;
-    while (off < data.size()) {
-        ssize_t n = ::write(fd, data.data() + off, data.size() - off);
-        if (n < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            return false;
-        }
-        off += static_cast<size_t>(n);
-    }
-    return true;
 }
 
 } // namespace
@@ -380,11 +379,7 @@ std::string default_cache_path(const std::string& mode)
 bool parse_settings(const std::string& text, Settings& out, std::vector<std::string>* warnings)
 {
     out = Settings{};
-    json root;
-    if (!parse_json_text(text, root, "settings", warnings)) {
-        return false;
-    }
-    parse_settings_object(root, out, warnings);
+    parse_settings_object(parse_json_text(text, "settings", warnings), out, warnings);
     return true;
 }
 
@@ -408,47 +403,13 @@ bool load_settings(const std::string& path, Settings& out, std::vector<std::stri
 
     std::ostringstream buf;
     buf << in.rdbuf();
-    json root;
-    if (!parse_json_text(buf.str(), root, path, warnings)) {
-        return false;
-    }
-    out = Settings{};
-    parse_settings_object(root, out, warnings);
+    parse_settings_object(parse_json_text(buf.str(), path, warnings), out, warnings);
     return true;
 }
 
 std::string example_settings_json()
 {
     return defaults_to_json(Settings{}).dump(2) + "\n";
-}
-
-bool make_parent_dirs(const std::string& path, std::string* error)
-{
-    size_t slash = path.rfind('/');
-    if (slash == std::string::npos || slash == 0) {
-        return true;
-    }
-    const std::string dir = path.substr(0, slash);
-
-    std::string current;
-    size_t pos = 0;
-    while (pos < dir.size()) {
-        size_t next = dir.find('/', pos);
-        if (next == std::string::npos) {
-            next = dir.size();
-        }
-        current = dir.substr(0, next);
-        if (!current.empty()) {
-            if (::mkdir(current.c_str(), 0755) != 0 && errno != EEXIST) {
-                if (error) {
-                    *error = current + ": " + std::strerror(errno);
-                }
-                return false;
-            }
-        }
-        pos = next + 1;
-    }
-    return true;
 }
 
 bool load_cache(const std::string& path, Cache& out, std::vector<std::string>* warnings)
@@ -487,23 +448,12 @@ bool load_cache(const std::string& path, Cache& out, std::vector<std::string>* w
         return true;
     }
 
-    out.version = 1;
     out.complete = read_bool(root, "complete", true, "cache", warnings);
 
     auto lp = root.find("last_played");
     if (lp != root.end() && lp->is_object()) {
-        std::string channel = read_string(*lp, "ensemble", "", "last_played", warnings);
-        if (channel.empty()) {
-            channel = read_string(*lp, "channel", "", "last_played", warnings);
-        }
-        uint32_t sid = 0;
-        auto sid_it = lp->find("service_id");
-        if (sid_it != lp->end() && sid_it->is_number_unsigned()) {
-            sid = sid_it->get<uint32_t>();
-        } else if (sid_it != lp->end() && sid_it->is_number_integer()) {
-            long long v = sid_it->get<long long>();
-            sid = v > 0 ? static_cast<uint32_t>(v) : 0;
-        }
+        const std::string channel = read_channel(*lp, "last_played", warnings);
+        const uint32_t sid = read_sid(*lp);
         std::string band = read_string(*lp, "band", "", "last_played", warnings);
         if (band.empty()) {
             band = (find_channel(channel) != nullptr) ? "dab" : "fm";
@@ -538,19 +488,10 @@ bool load_cache(const std::string& path, Cache& out, std::vector<std::string>* w
                     continue;
                 }
                 Station s;
-                s.channel = read_string(entry, "ensemble", "", where, warnings);
-                if (s.channel.empty()) {
-                    s.channel = read_string(entry, "channel", "", where, warnings);
-                }
+                s.channel = read_channel(entry, where, warnings);
                 s.program = read_string(entry, "program", "", where, warnings);
                 s.short_program = read_string(entry, "short_program", "", where, warnings);
-                auto sid = entry.find("service_id");
-                if (sid != entry.end() && sid->is_number_unsigned()) {
-                    s.service_id = sid->get<uint32_t>();
-                } else if (sid != entry.end() && sid->is_number_integer()) {
-                    long long v = sid->get<long long>();
-                    s.service_id = v > 0 ? static_cast<uint32_t>(v) : 0;
-                }
+                s.service_id = read_sid(entry);
                 auto comp = entry.find("component_id");
                 if (comp != entry.end() && comp->is_number_integer()) {
                     long long v = comp->get<long long>();
@@ -584,7 +525,12 @@ bool save_cache(const std::string& path, const Cache& cache, std::string* error)
         }
         return false;
     }
-    if (!make_parent_dirs(path, error)) {
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+    if (ec) {
+        if (error) {
+            *error = path + ": " + ec.message();
+        }
         return false;
     }
 
@@ -595,7 +541,6 @@ bool save_cache(const std::string& path, const Cache& cache, std::string* error)
     root["version"] = 1;
     if (copy.last_played.valid()) {
         root["last_played"] = {
-            { "ensemble", copy.last_played.channel },
             { "channel", copy.last_played.channel },
             { "service_id", copy.last_played.service_id },
             { "band", copy.last_played.band },
@@ -608,7 +553,6 @@ bool save_cache(const std::string& path, const Cache& cache, std::string* error)
     ojson stations = ojson::array();
     for (const Station& s : copy.stations) {
         stations.push_back(ojson{
-            { "ensemble", s.channel },
             { "channel", s.channel },
             { "program", s.program },
             { "short_program", s.short_program },
@@ -623,34 +567,18 @@ bool save_cache(const std::string& path, const Cache& cache, std::string* error)
     const std::string text = root.dump(2) + "\n";
     const std::string tmp = path + ".tmp." + std::to_string(static_cast<long long>(::getpid()));
 
-    int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (fd < 0) {
-        if (error) {
-            *error = tmp + ": " + std::strerror(errno);
-        }
-        return false;
+    // fsync before rename: a crash leaves the old or the new file, never a torn one
+    FILE* f = std::fopen(tmp.c_str(), "w");
+    bool ok = f && std::fwrite(text.data(), 1, text.size(), f) == text.size() && std::fflush(f) == 0 &&
+              ::fsync(fileno(f)) == 0;
+    if (f && std::fclose(f) != 0) {
+        ok = false;
     }
-
-    bool ok = write_all(fd, text);
-    if (ok) {
-        ok = ::fsync(fd) == 0;
-    }
-    int saved_errno = errno;
-    ::close(fd);
-
-    if (!ok) {
-        ::unlink(tmp.c_str());
+    if (!ok || std::rename(tmp.c_str(), path.c_str()) != 0) {
         if (error) {
-            *error = tmp + ": " + std::strerror(saved_errno);
+            *error = (ok ? path : tmp) + ": " + std::strerror(errno);
         }
-        return false;
-    }
-    if (::rename(tmp.c_str(), path.c_str()) != 0) {
-        int rename_errno = errno;
-        ::unlink(tmp.c_str());
-        if (error) {
-            *error = path + ": " + std::strerror(rename_errno);
-        }
+        std::remove(tmp.c_str());
         return false;
     }
     return true;

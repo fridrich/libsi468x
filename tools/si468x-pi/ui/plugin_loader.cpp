@@ -53,7 +53,6 @@ void* loadPlugin(const std::string& kind, const std::string& name, int abi)
         const std::string file = "si468x-pi-" + name + ".so";
         const std::string exe = exeDir();
         paths.push_back(exe + "/si468x-pi-plugins/" + file);
-        paths.push_back(exe + "/.libs/si468x-pi-plugins/" + file);
         paths.push_back(std::string(SI468X_PI_PLUGIN_DIR) + "/" + file);
     }
 

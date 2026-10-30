@@ -2,7 +2,8 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "font8x8_basic.h"
 #include "font8x8_ext_latin.h"
-#include "si468x-pi/display_plugin.h"
+#include "../plugin_util.h"
+#include "si468x-pi/plugin.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -39,28 +40,15 @@ static const uint8_t glyph_full_block[8] = {
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
 };
 
-/* Next code point of UTF-8 s; '?' outside the font (U+0000-007F, U+00A0-00FF
- * and the block above) */
-static const uint8_t* glyph(const char* s, const char** next)
+/* Glyph of the next code point of *s; '?' outside the font (U+0020-007F,
+ * U+00A0-00FF and the block above) */
+static const uint8_t* glyph(const char** s)
 {
-    unsigned char c = (unsigned char)s[0];
-    unsigned cp = '?';
-    *next = s + 1;
-    if (c < 0x80) {
-        cp = c;
-    } else if ((c & 0xe0) == 0xc0 && s[1]) {
-        cp = ((c & 0x1fu) << 6) | (s[1] & 0x3fu);
-        *next = s + 2;
-    } else if ((c & 0xf0) == 0xe0 && s[1] && s[2]) {
-        cp = ((c & 0x0fu) << 12) | ((s[1] & 0x3fu) << 6) | (s[2] & 0x3fu);
-        *next = s + 3;
-    } else {
-        while ((**next & 0xc0) == 0x80) (*next)++;
-    }
-    if (cp >= 0x20 && cp < 0x80) return font8x8_basic[cp];
+    unsigned cp = utf8_next(s);
+    if (cp >= 0x20 && cp < 0x80) return font8x8_basic[cp - 0x20];
     if (cp >= 0xa0 && cp <= 0xff) return font8x8_ext_latin[cp - 0xa0];
     if (cp == 0x2588) return glyph_full_block;
-    return font8x8_basic['?'];
+    return font8x8_basic['?' - 0x20];
 }
 
 static void put_pixel(struct fb_ctx* fb, unsigned x, unsigned y, int on)
@@ -79,25 +67,8 @@ void* si468x_pi_display_open(const char* config, int* cols, int* rows, unsigned*
 
     char file_path[1024] = {};
     char dev_path[1024] = "/dev/fb0";
-
-    if (config) {
-        const char* f = strstr(config, "\"file\":\"");
-        if (f) {
-            f += 8;
-            const char* end = strchr(f, '"');
-            if (end) {
-                snprintf(file_path, sizeof(file_path), "%.*s", (int)(end - f), f);
-            }
-        }
-        const char* d = strstr(config, "\"device\":\"");
-        if (d) {
-            d += 10;
-            const char* end = strchr(d, '"');
-            if (end) {
-                snprintf(dev_path, sizeof(dev_path), "%.*s", (int)(end - d), d);
-            }
-        }
-    }
+    cfg_str(config, "file", file_path, sizeof file_path);   /* tests: frames to a file */
+    cfg_str(config, "device", dev_path, sizeof dev_path);
 
     if (file_path[0]) {
         ctx->out_file = fopen(file_path, "wb");
@@ -184,7 +155,7 @@ void si468x_pi_display_present(void* handle, const char* const* lines, int cols,
         }
         const char* s = lines[row];
         for (int col = 0; col < cols && col < fb->cols && *s; col++) {
-            const uint8_t* g = glyph(s, &s);
+            const uint8_t* g = glyph(&s);
             for (unsigned y = 0; y < 8; y++) {
                 for (unsigned x = 0; x < 8; x++) {
                     put_pixel(fb, col * 8 + x, row * 8 + y, (((g[y] >> x) & 1) ^ inverse));

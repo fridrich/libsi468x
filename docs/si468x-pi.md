@@ -23,7 +23,7 @@ The Si468x chip provides both an internal stereo DAC (routed to the on-board 3.5
 - **`i2s`**: Master digital I2S stream (48 kHz / 16-bit) routed to external I2S DACs (e.g. PCM5102A).
 - **`both`**: Simultaneous analog DAC and digital I2S output.
 
-Audio output can be switched at runtime from the interactive menu or via `--audio analog|i2s|both` without requiring a chip reboot.
+The chip takes the route only when it boots: set `device.audio` or `--audio analog|i2s|both` before starting; changing it means restarting `si468x-pi`.
 
 ## Running Unprivileged (Non-Root)
 
@@ -50,49 +50,10 @@ sudo usermod -aG dialout $USER
 
 ## Configuration
 
-The default configuration file is searched in:
-1. `--config <path>` (command-line override)
-2. `$XDG_CONFIG_HOME/si468x-pi/si468x-pi.json` (or `~/.config/si468x-pi/si468x-pi.json`)
-3. `/etc/si468x-pi/si468x-pi.json`
-
-Generate a template configuration:
+Options, keys, settings keys and file locations: `man si468x-pi`. Start from the defaults:
 ```bash
 si468x-pi --config-example > ~/.config/si468x-pi/si468x-pi.json
 ```
-
-### Key Settings
-
-```json
-{
-  "device": {
-    "spi": "/dev/spidev0.0",
-    "reset_gpio": 23,
-    "mode": "dab",
-    "audio": "analog"
-  },
-  "volume": {
-    "start": 50,
-    "step": 4
-  },
-  "scan": {
-    "rssi_min": 8,
-    "include_data": false
-  }
-}
-```
-
-## Interactive Keyboard Controls
-
-| Key | Action | Description |
-|---|---|---|
-| `Up` / `Down`, `u` / `d` | `UP` / `DOWN` | Navigate station lists and menus |
-| `Enter`, `e` | `ENTER` | Select station or menu option |
-| `Menu`, `m`, `Esc`, `Left` | `MENU` / `LEFT` | Open main menu or back |
-| `Home`, `h` | `HOME` | Return directly to radio screen |
-| `+`, `=` | `VOLUME_UP` | Increase volume (step size configurable) |
-| `-` | `VOLUME_DOWN` | Decrease volume |
-| `0` | `MUTE` | Toggle audio mute |
-| `q`, `x` | `QUIT` | Exit application cleanly |
 
 ## Systemd Daemon Deployment
 

@@ -19,26 +19,6 @@ enum class ControllerState {
     Error,
 };
 
-inline const char* toString(ControllerState state)
-{
-    switch (state) {
-    case ControllerState::Idle:
-        return "Idle";
-    case ControllerState::Tuning:
-        return "Tuning";
-    case ControllerState::Playing:
-        return "Playing";
-    case ControllerState::Stopped:
-        return "Stopped";
-    case ControllerState::Scanning:
-        return "Scanning";
-    case ControllerState::Error:
-        return "Error";
-    default:
-        return "Unknown";
-    }
-}
-
 class IControllerEvents {
 public:
     virtual ~IControllerEvents() = default;

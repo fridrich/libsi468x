@@ -1,6 +1,6 @@
 /* SPDX-FileCopyrightText: 2026 Fridrich Strba */
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "si468x-pi/input_plugin.h"
+#include "si468x-pi/plugin.h"
 
 const char si468x_pi_plugin_name[] = "badabi";
 const char si468x_pi_plugin_description[] = "plugin with mismatched ABI";

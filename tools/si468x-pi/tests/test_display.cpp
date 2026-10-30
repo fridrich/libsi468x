@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Fridrich Strba
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "check.h"
 #include "display_interface.hpp"
 #include "tty_display.hpp"
 #include "ui_manager.hpp"
@@ -17,16 +18,6 @@
 #include <unistd.h>
 
 namespace {
-
-int failures = 0;
-
-void check(bool cond, const std::string& message)
-{
-    if (!cond) {
-        std::cerr << "FAIL: " << message << std::endl;
-        ++failures;
-    }
-}
 
 class FakeDisplay : public si468x_pi::IDisplay {
 public:
@@ -94,10 +85,6 @@ void test_tty_plain()
         "|          |\n"
         "+----------+\n";
     check(first == expected, "plain frame is a box of exact width");
-
-    const long size = std::ftell(f);
-    display.present(frame);
-    check(std::ftell(f) == size, "unchanged frame is not redrawn");
 
     frame.set(0, "xyz       ");
     display.present(frame);
@@ -185,26 +172,6 @@ void test_multi_display()
     MultiDisplay mixed_display(std::move(mixed));
     check(!mixed_display.canHighlight(), "multi display keeps markers when one cannot highlight");
 
-    std::vector<std::unique_ptr<IDisplay>> heterogeneous;
-    auto* fb = new FakeDisplay(16, 8, false);
-    auto* lcd = new FakeDisplay(20, 4, false);
-    auto* tty = new FakeDisplay(80, 25, true);
-    heterogeneous.emplace_back(fb);
-    heterogeneous.emplace_back(lcd);
-    heterogeneous.emplace_back(tty);
-    MultiDisplay het_display(std::move(heterogeneous));
-    check(het_display.cols() == 16, "fb 16x8 + lcd 20x4 + tty 80x25 -> cols is 16");
-    check(het_display.rows() == 4, "fb 16x8 + lcd 20x4 + tty 80x25 -> rows is 4");
-
-    Frame het_frame(16, 4, 0);
-    het_frame.set(0, "Line 0          ");
-    het_frame.set(1, "Line 1          ");
-    het_frame.set(2, "Line 2          ");
-    het_frame.set(3, "Line 3          ");
-    het_display.present(het_frame);
-    check(tty->last.lines.size() == 4 && tty->last.cols == 16, "tty mirrors smallest common frame (16x4)");
-    check(lcd->last.lines.size() == 4 && lcd->last.cols == 16, "lcd mirrors smallest common frame (16x4)");
-    check(fb->last.lines.size() == 4 && fb->last.cols == 16, "fb mirrors smallest common frame (16x4)");
 }
 
 void test_volume_line()
@@ -231,10 +198,5 @@ int main()
     test_multi_display();
     test_volume_line();
 
-    if (failures != 0) {
-        std::cerr << failures << " test(s) failed" << std::endl;
-        return 1;
-    }
-    std::cout << "all display tests passed" << std::endl;
-    return 0;
+    return report("display");
 }

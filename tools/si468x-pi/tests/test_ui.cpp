@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Fridrich Strba
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "check.h"
 #include "display_interface.hpp"
 #include "input_queue.hpp"
 #include "screens.hpp"
@@ -14,19 +15,10 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
-
-int failures = 0;
-
-void check(bool cond, const std::string& message)
-{
-    if (!cond) {
-        std::cerr << "FAIL: " << message << std::endl;
-        ++failures;
-    }
-}
 
 bool has(const std::string& text, const std::string& part)
 {
@@ -189,9 +181,6 @@ void test_station_list()
     });
     list.handleInput(InputAction::ENTER);
     check(called && selected.program == "Data", "enter selects the focused station");
-    check(list.isSelected(), "selection state");
-    list.resetSelected();
-    check(!list.isSelected(), "selection reset");
 
     StationListScreen highlighted(stations, nullptr);
     Frame hframe(30, 5, 0);
@@ -221,16 +210,12 @@ void test_menu()
     using namespace si468x_pi;
 
     MenuScreen menu(nullptr);
-    check(menu.optionCount() == 5, "menu option count");
-    check(menu.option(0) == "Rescan" && menu.option(1) == "Stations"
-              && menu.option(2) == "Info" && menu.option(3) == "Back to radio"
-              && menu.option(4) == "Exit",
-          "menu options");
-
     Frame frame(20, 8, 0);
     menu.render(frame);
     check(frame.lines[0] == "Menu", "menu header");
-    check(has(frame.lines[2], "Rescan"), "menu starts on Rescan");
+    check(has(frame.lines[2], "Rescan") && has(frame.lines[3], "Stations") && has(frame.lines[4], "Info")
+              && has(frame.lines[5], "Back to radio") && has(frame.lines[6], "Exit"),
+          "menu options, centred, starting on Rescan");
 
     int selected = -1;
     menu.setSelectCallback([&](int index) { selected = index; });
@@ -255,7 +240,6 @@ void test_info_screen()
     using namespace si468x_pi;
 
     InfoScreen info(nullptr);
-    check(info.page() == 0, "initial page 0");
 
     si468x_signal_status_t sig = {};
     sig.rssi = 45;
@@ -279,7 +263,6 @@ void test_info_screen()
     check(has(p0.lines[3], "Time: 2026-10-30 14:25"), "info page 1 Time");
 
     info.handleInput(InputAction::DOWN);
-    check(info.page() == 1, "toggled to page 1");
 
     si468x_audio_info_t audio = {};
     audio.bitrate = 128;
@@ -301,7 +284,9 @@ void test_info_screen()
     check(has(p1.lines[3], "SRG SSR D01"), "info page 2 ensemble label");
 
     info.handleInput(InputAction::UP);
-    check(info.page() == 0, "toggled back to page 0");
+    Frame back(30, 4, 0);
+    info.render(back);
+    check(back.lines[0] == "Info: Signal (1/2)", "toggled back to page 1");
 }
 
 class RecordingDisplay : public si468x_pi::IDisplay {
@@ -316,6 +301,12 @@ public:
         m_last = frame;
         ++m_presents;
         m_cond.notify_all();
+    }
+
+    int presents()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_presents;
     }
 
     bool waitFor(const std::function<bool(const si468x_pi::Frame&)>& predicate, int timeout_ms)
@@ -369,9 +360,13 @@ void test_ui_manager()
 
         auto root = std::make_shared<TestScreen>("root");
         auto child = std::make_shared<TestScreen>("child");
-        ui.setScreen(root);
+        ui.pushScreen(root);
         check(display->waitFor([&](const Frame& f) { return starts(f, 0, "root"); }, 2000),
               "root screen renders");
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        const int presents = display->presents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 5 ticks
+        check(display->presents() == presents, "unchanged frame is not presented again");
 
         ui.pushScreen(child);
         check(display->waitFor([&](const Frame& f) { return starts(f, 0, "child"); }, 2000),
@@ -419,10 +414,5 @@ int main()
     test_info_screen();
     test_ui_manager();
 
-    if (failures != 0) {
-        std::cerr << failures << " test(s) failed" << std::endl;
-        return 1;
-    }
-    std::cout << "all UI tests passed" << std::endl;
-    return 0;
+    return report("UI");
 }

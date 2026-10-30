@@ -38,22 +38,6 @@ std::vector<Station> demo_stations()
     };
 }
 
-int display_cols(const Settings& settings)
-{
-    if (!settings.display.empty() && settings.display[0].type == "tty" && settings.display[0].cols > 0) {
-        return settings.display[0].cols;
-    }
-    return 80;
-}
-
-int display_rows(const Settings& settings)
-{
-    if (!settings.display.empty() && settings.display[0].type == "tty" && settings.display[0].rows > 0) {
-        return settings.display[0].rows;
-    }
-    return 25;
-}
-
 } // namespace
 
 int run_demo_ui(const Settings& settings, const Cache& cache)
@@ -70,9 +54,9 @@ int run_demo_ui(const Settings& settings, const Cache& cache)
     radio->setChannelName("DAB+ no hardware");
     radio->setDLS("Terminal demo: arrows navigate, Enter selects, m menu, +/- volume, 0 mute, x quits.");
 
-    auto display = std::make_unique<TtyDisplay>(display_cols(settings), display_rows(settings), stdout);
-    UIManager ui(std::move(display), settings.ui.tick_ms);
-    ui.setScreen(radio);
+    const auto [cols, rows] = ttySize(settings);
+    UIManager ui(std::make_unique<TtyDisplay>(cols, rows), settings.ui.tick_ms);
+    ui.pushScreen(radio);
 
     bool scanning = false;
     size_t scan_step = 0;

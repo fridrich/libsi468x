@@ -21,14 +21,12 @@ struct DeviceSettings {
 struct InputConfig {
     std::string type;          // "stdin" for the built-in source
     std::string plugin;        // plugin name when type is empty
-    std::string device;        // optional shortcut, also present in config_json
     std::string config_json;   // serialized object handed to the plugin
 };
 
 struct DisplayConfig {
     std::string type = "tty"; // "tty" for the built-in display
     std::string plugin;       // plugin name when type is empty
-    std::string device;
     int cols = 80;
     int rows = 25;
     std::string config_json;
@@ -61,7 +59,6 @@ struct Settings {
     std::vector<InputConfig> input;
     std::vector<DisplayConfig> display = { DisplayConfig{} };
     bool input_configured = false;  // "input" key present (may be an empty array)
-    bool display_configured = false;
     ScanSettings scan;
     VolumeSettings volume;
     UiSettings ui;
@@ -76,7 +73,6 @@ struct LastPlayed {
 };
 
 struct Cache {
-    int version = 1;
     LastPlayed last_played;
     int volume = -1; // chip units 0..63; -1 = not stored
     bool complete = true;
@@ -111,8 +107,5 @@ bool load_cache(const std::string& path, Cache& out,
 /// Write the cache atomically (temp file in the same directory + rename).
 bool save_cache(const std::string& path, const Cache& cache,
                 std::string* error = nullptr);
-
-/// Cache/settings directory helpers, exposed for tests.
-bool make_parent_dirs(const std::string& path, std::string* error = nullptr);
 
 } // namespace si468x_pi

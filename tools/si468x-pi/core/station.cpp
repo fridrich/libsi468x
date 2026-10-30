@@ -3,6 +3,8 @@
 #include "station.hpp"
 
 #include <algorithm>
+#include <functional>
+#include <tuple>
 
 namespace si468x_pi {
 
@@ -35,26 +37,30 @@ const Channel* find_channel(const std::string& label)
     return nullptr;
 }
 
-uint32_t channel_frequency(const std::string& label)
-{
-    const Channel* c = find_channel(label);
-    return c ? c->frequency_hz : 0;
-}
-
 const std::vector<std::string>& default_scan_channels()
 {
-    static const std::vector<std::string> list = {
-        "5A",  "5B",  "5C",  "5D",  "6A",  "6B",  "6C",  "6D",  "7A",  "7B",
-        "7C",  "7D",  "8A",  "8B",  "8C",  "8D",  "9A",  "9B",  "9C",  "9D",
-        "10A", "10B", "10C", "10D", "11A", "11B", "11C", "11D", "12A", "12B",
-        "12C", "12D", "13A", "13B", "13C", "13D", "13E", "13F",
-    };
+    static const std::vector<std::string> list = [] {
+        std::vector<std::string> l;
+        for (const Channel& c : band3_channels()) {
+            if (std::string(c.label).back() != 'N') {
+                l.push_back(c.label);
+            }
+        }
+        return l;
+    }();
     return list;
 }
 
-bool same_station(const Station& a, const Station& b)
+uint32_t fm_frequency_hz(const Station& s)
 {
-    return a.channel == b.channel && a.service_id == b.service_id;
+    if (s.service_id != 0 || s.channel.empty()) {
+        return s.service_id;
+    }
+    try {
+        return static_cast<uint32_t>(std::stod(s.channel) * 1000000.0 + 0.5);
+    } catch (...) {
+        return 0;
+    }
 }
 
 void sort_stations(std::vector<Station>& stations)
@@ -64,33 +70,10 @@ void sort_stations(std::vector<Station>& stations)
             return a.band < b.band;
         }
         if (a.band == "fm") {
-            uint32_t fa = a.service_id;
-            uint32_t fb = b.service_id;
-            if (fa == 0 && !a.channel.empty()) {
-                try {
-                    fa = static_cast<uint32_t>(std::stod(a.channel) * 1000000.0 + 0.5);
-                } catch (...) {}
-            }
-            if (fb == 0 && !b.channel.empty()) {
-                try {
-                    fb = static_cast<uint32_t>(std::stod(b.channel) * 1000000.0 + 0.5);
-                } catch (...) {}
-            }
-            if (fa != fb) {
-                return fa < fb;
-            }
-            if (a.component_id != b.component_id) {
-                return a.component_id < b.component_id;
-            }
-            if (a.program != b.program) {
-                return a.program < b.program;
-            }
-            return a.channel < b.channel;
+            return std::make_tuple(fm_frequency_hz(a), a.component_id, std::cref(a.program), std::cref(a.channel)) <
+                   std::make_tuple(fm_frequency_hz(b), b.component_id, std::cref(b.program), std::cref(b.channel));
         }
-        if (a.program != b.program) {
-            return a.program < b.program;
-        }
-        return a.channel < b.channel;
+        return std::tie(a.program, a.channel) < std::tie(b.program, b.channel);
     });
 }
 
@@ -109,13 +92,9 @@ void normalize_stations(std::vector<Station>& stations)
         if (s.band != "fm" && s.service_id > 0xFFFF) {
             continue;
         }
-        bool duplicate = false;
-        for (const Station& kept : out) {
-            if (same_station(kept, s)) {
-                duplicate = true;
-                break;
-            }
-        }
+        const bool duplicate = std::any_of(out.begin(), out.end(), [&](const Station& kept) {
+            return kept.channel == s.channel && kept.service_id == s.service_id;
+        });
         if (!duplicate) {
             out.push_back(s);
         }

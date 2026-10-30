@@ -17,6 +17,12 @@ inline uint64_t now_ms()
 // How long a lost signal stays hidden before the radio screen says so.
 static const uint64_t SIGNAL_LOST_MS = 5000;
 
+inline std::string rtrim(std::string s)
+{
+    s.erase(s.find_last_not_of(' ') + 1);
+    return s;
+}
+
 // UTF-8 helpers count code points, not bytes: DAB labels arrive as UTF-8 and
 // must fit the display's columns.
 inline size_t utf8Length(const std::string& s)

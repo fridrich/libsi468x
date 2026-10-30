@@ -1,16 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Fridrich Strba
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "remote_config.hpp"
-#include "si468x-pi/input_plugin.h"
+#include "si468x-pi/plugin.h"
+
+#include <nlohmann/json.hpp>
 
 #include <cstdint>
 #include <fcntl.h>
 #include <iostream>
 #include <linux/input.h>
+#include <map>
 #include <poll.h>
+#include <string>
 #include <sys/ioctl.h>
 #include <unistd.h>
-#include <vector>
 
 extern "C" {
 const char si468x_pi_plugin_name[] = "evdev";
@@ -22,7 +24,104 @@ int si468x_pi_input_run(const struct si468x_pi_input_host* host, const char* con
 
 namespace {
 
-int find_best_device(const std::map<int, enum si468x_pi_action>& key_map)
+using KeyMap = std::map<int, enum si468x_pi_action>;
+
+const std::map<std::string, int> s_key_names = {
+    { "KEY_UP", KEY_UP },
+    { "KEY_DOWN", KEY_DOWN },
+    { "KEY_LEFT", KEY_LEFT },
+    { "KEY_RIGHT", KEY_RIGHT },
+    { "KEY_ENTER", KEY_ENTER },
+    { "KEY_OK", KEY_OK },
+    { "KEY_MENU", KEY_MENU },
+    { "KEY_ESC", KEY_ESC },
+    { "KEY_BACK", KEY_BACK },
+    { "KEY_POWER", KEY_POWER },
+    { "KEY_VOLUMEUP", KEY_VOLUMEUP },
+    { "KEY_VOLUMEDOWN", KEY_VOLUMEDOWN },
+    { "KEY_MUTE", KEY_MUTE },
+    { "KEY_HOMEPAGE", KEY_HOMEPAGE },
+    { "KEY_HOME", KEY_HOME },
+};
+
+const std::map<std::string, enum si468x_pi_action> s_action_names = {
+    { "UP", SI468X_PI_UP },
+    { "DOWN", SI468X_PI_DOWN },
+    { "LEFT", SI468X_PI_LEFT },
+    { "RIGHT", SI468X_PI_RIGHT },
+    { "ENTER", SI468X_PI_ENTER },
+    { "MENU", SI468X_PI_MENU },
+    { "QUIT", SI468X_PI_QUIT },
+    { "VOLUME_UP", SI468X_PI_VOLUME_UP },
+    { "VOLUME_DOWN", SI468X_PI_VOLUME_DOWN },
+    { "MUTE", SI468X_PI_MUTE },
+    { "HOME", SI468X_PI_HOME },
+};
+
+const KeyMap s_default_map = {
+    { KEY_UP, SI468X_PI_UP },
+    { KEY_DOWN, SI468X_PI_DOWN },
+    { KEY_LEFT, SI468X_PI_LEFT },
+    { KEY_RIGHT, SI468X_PI_RIGHT },
+    { KEY_ENTER, SI468X_PI_ENTER },
+    { KEY_OK, SI468X_PI_ENTER },
+    { KEY_MENU, SI468X_PI_MENU },
+    { KEY_ESC, SI468X_PI_QUIT },
+    { KEY_BACK, SI468X_PI_MENU },
+    { KEY_POWER, SI468X_PI_QUIT },
+    { KEY_VOLUMEUP, SI468X_PI_VOLUME_UP },
+    { KEY_VOLUMEDOWN, SI468X_PI_VOLUME_DOWN },
+    { KEY_MUTE, SI468X_PI_MUTE },
+    { KEY_HOMEPAGE, SI468X_PI_HOME },
+    { KEY_HOME, SI468X_PI_HOME },
+};
+
+struct EvdevConfig {
+    std::string device;
+    bool grab = false;
+    KeyMap key_map = s_default_map;
+};
+
+// {"device": "...", "grab": true, "map": {"KEY_UP": "UP", "115": "VOLUME_UP"}};
+// keys by name or code, merged over the defaults; anything malformed is ignored
+EvdevConfig parse_config(const char* json_str)
+{
+    EvdevConfig cfg;
+    const nlohmann::json j = nlohmann::json::parse(json_str ? json_str : "", nullptr, false);
+    if (!j.is_object()) {
+        return cfg;
+    }
+    try {
+        cfg.device = j.value("device", "");
+        cfg.grab = j.value("grab", false);
+    } catch (const nlohmann::json::exception&) { // wrong value types
+        return EvdevConfig{};
+    }
+    const auto map = j.find("map");
+    if (map == j.end() || !map->is_object()) {
+        return cfg;
+    }
+    for (const auto& item : map->items()) {
+        const auto name = s_key_names.find(item.key());
+        int code = -1;
+        if (name != s_key_names.end()) {
+            code = name->second;
+        } else {
+            try {
+                code = std::stoi(item.key());
+            } catch (...) {
+            }
+        }
+        const auto act = item.value().is_string() ? s_action_names.find(item.value().get<std::string>())
+                                                  : s_action_names.end();
+        if (code >= 0 && act != s_action_names.end()) {
+            cfg.key_map[code] = act->second;
+        }
+    }
+    return cfg;
+}
+
+int find_best_device(const KeyMap& key_map)
 {
     int best_fd = -1;
     int best_matches = 0;
@@ -72,7 +171,7 @@ int si468x_pi_input_run(const struct si468x_pi_input_host* host, const char* con
         return -1;
     }
 
-    const si468x_pi::EvdevConfig cfg = si468x_pi::parse_evdev_config(config);
+    const EvdevConfig cfg = parse_config(config);
 
     int fd = -1;
     if (!cfg.device.empty()) {

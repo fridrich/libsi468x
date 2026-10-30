@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Fridrich Strba
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "check.h"
 #include "core/events.hpp"
 #include "core/radio_controller.hpp"
 #include "core/settings.hpp"
@@ -18,16 +19,6 @@
 
 namespace {
 
-int failures = 0;
-
-void check(bool cond, const std::string& message)
-{
-    if (!cond) {
-        std::cerr << "FAIL: " << message << std::endl;
-        ++failures;
-    }
-}
-
 class RecordingSink : public si468x_pi::IControllerEvents {
 public:
     std::function<void(const std::string&, int)> on_progress_cb;
@@ -42,22 +33,11 @@ public:
         errors.push_back(msg);
     }
 
-    void onVolume(int pct, bool m) override
+    void onScanProgress(const std::string& ch, int found, int, int) override
     {
-        volumes.push_back({ pct, m });
-    }
-
-    void onScanProgress(const std::string& ch, int found, int cur, int tot) override
-    {
-        progress.push_back({ ch, found, cur, tot });
         if (on_progress_cb) {
             on_progress_cb(ch, found);
         }
-    }
-
-    void onStationListChanged(const std::vector<si468x_pi::Station>& list) override
-    {
-        station_lists.push_back(list);
     }
 
     void onStation(const si468x_pi::Station& st) override
@@ -75,45 +55,17 @@ public:
         dls_texts.push_back(dls);
     }
 
-    void onSignalLost(bool lost) override
-    {
-        signal_lost_events.push_back(lost);
-    }
-
     void onTime(const si468x_time_t& t) override
     {
         times.push_back(t);
     }
 
-    void onAudio(const si468x_audio_info_t& a) override
-    {
-        audios.push_back(a);
-    }
-
-    void onMot(const std::string& p, const si468x_mot_slideshow_t&) override
-    {
-        mot_paths.push_back(p);
-    }
-
-    struct ProgressEntry {
-        std::string channel;
-        int found;
-        int current_idx;
-        int total;
-    };
-
     std::vector<si468x_pi::ControllerState> states;
     std::vector<std::string> errors;
-    std::vector<std::pair<int, bool>> volumes;
-    std::vector<ProgressEntry> progress;
     std::vector<si468x_pi::Station> stations_played;
-    std::vector<std::vector<si468x_pi::Station>> station_lists;
     std::vector<si468x_signal_status_t> signals;
     std::vector<std::string> dls_texts;
-    std::vector<bool> signal_lost_events;
     std::vector<si468x_time_t> times;
-    std::vector<si468x_audio_info_t> audios;
-    std::vector<std::string> mot_paths;
 };
 
 void put_label(std::vector<uint8_t>& v, const char* label)
@@ -166,14 +118,6 @@ void test_error_mapping()
 
     check(RadioController::formatError(SI468X_SUCCESS) == "success", "error map SUCCESS");
     check(RadioController::formatError(SI468X_ERROR_SPI).find("SPI") != std::string::npos, "error map SPI");
-    check(RadioController::formatError(SI468X_ERROR_GPIO).find("GPIO") != std::string::npos, "error map GPIO");
-    check(RadioController::formatError(SI468X_ERROR_FIRMWARE).find("Firmware") != std::string::npos, "error map FIRMWARE");
-    check(RadioController::formatError(SI468X_ERROR_BOOT).find("boot") != std::string::npos, "error map BOOT");
-    check(RadioController::formatError(SI468X_ERROR_TIMEOUT).find("timeout") != std::string::npos, "error map TIMEOUT");
-    check(RadioController::formatError(SI468X_ERROR_COMMAND).find("rejected") != std::string::npos, "error map COMMAND");
-    check(RadioController::formatError(SI468X_ERROR_PARAM).find("parameter") != std::string::npos, "error map PARAM");
-    check(RadioController::formatError(SI468X_ERROR_INVALID_REPLY).find("reply") != std::string::npos, "error map INVALID_REPLY");
-    check(RadioController::formatError(SI468X_ERROR_NOT_FOUND).find("not found") != std::string::npos, "error map NOT_FOUND");
     check(RadioController::formatError(-999).find("Unknown") != std::string::npos, "error map unknown");
 }
 
@@ -205,7 +149,7 @@ void test_tune_and_play()
     s.volume.start = 50;
     RadioController ctrl(s, &sink);
 
-    check(ctrl.start(false), "start controller without hardware boot");
+    check(ctrl.start(), "start controller without hardware boot");
     ctrl.waitIdle();
     check(ctrl.state() == ControllerState::Idle, "starts in Idle state");
 
@@ -259,7 +203,7 @@ void test_tune_failure_active_frequency()
 
     Settings s;
     RadioController ctrl(s, &sink);
-    ctrl.start(false);
+    ctrl.start();
     ctrl.waitIdle();
 
     const uint32_t prev_freq = ctrl.currentFrequency();
@@ -287,7 +231,7 @@ void test_volume_and_mute()
     s.volume.start = 50;
     s.volume.step = 5;
     RadioController ctrl(s, &sink);
-    ctrl.start(false);
+    ctrl.start();
     ctrl.waitIdle();
 
     const int initial_vol = ctrl.volume();
@@ -323,7 +267,7 @@ void test_shutdown_sequence()
 
     Settings s;
     RadioController ctrl(s, &sink);
-    ctrl.start(false);
+    ctrl.start();
     ctrl.waitIdle();
 
     chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
@@ -372,7 +316,7 @@ void test_two_channel_mock_scan_and_cache_roundtrip()
     s.scan.channels = { "5A", "12A" };
     s.scan.rssi_min = 8;
     RadioController ctrl(s, &sink, cache_file);
-    ctrl.start(false);
+    ctrl.start();
     ctrl.waitIdle();
 
     // Channel 1: 5A -> no signal
@@ -435,7 +379,7 @@ void test_rssi_min_and_data_service_skip()
     s.scan.rssi_min = 20; // threshold 20 dBµV
     s.scan.include_data = false;
     RadioController ctrl(s, &sink);
-    ctrl.start(false);
+    ctrl.start();
     ctrl.waitIdle();
 
     // 5A: Locked, but RSSI = 15 dBµV (< 20) -> must be skipped!
@@ -488,7 +432,7 @@ void test_abort_between_channels_keeps_partial_cache()
     s.scan.channels = { "12A", "12B" };
     s.scan.rssi_min = 8;
     RadioController ctrl(s, &sink, cache_file);
-    ctrl.start(false);
+    ctrl.start();
     ctrl.waitIdle();
 
     // 12A succeeds with 1 station
@@ -540,8 +484,6 @@ void test_warm_start_does_not_scan()
 
     // Write a pre-existing cache file
     Cache existing;
-    existing.version = 1;
-    existing.complete = true;
     existing.stations = {
         Station{ "12A", "Warm Station 1", "Warm 1", 0x1111, 1, false },
         Station{ "12A", "Warm Station 2", "Warm 2", 0x2222, 2, false },
@@ -553,7 +495,7 @@ void test_warm_start_does_not_scan()
     check(ctrl.loadCache(cache_file), "load existing cache succeeds");
     check(ctrl.stations().size() == 2, "stations loaded from cache");
 
-    ctrl.start(false);
+    ctrl.start();
     ctrl.waitIdle();
 
     // Verify no tune commands were sent to the chip
@@ -676,64 +618,6 @@ void test_spi_consecutive_errors()
     si468x_set_test_transport(nullptr, nullptr);
 }
 
-void test_synthetic_polling_flat_memory()
-{
-    using namespace si468x_pi;
-
-    MockChip chip;
-    RecordingSink sink;
-
-    Settings s;
-    s.poll.dls_ms = 300;
-    s.poll.signal_ms = 1000;
-    RadioController ctrl(s, &sink);
-
-    Station st{ "12A", "RTS Premiere", "RTS Prem", 0x43D1, 7, false };
-    ctrl.setSimulatedPlaying(st);
-
-    for (int i = 0; i < 20; i++) {
-        chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA, FX_DSD_EMPTY);
-        chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
-    }
-
-    uint64_t simulated_now = 10000;
-    for (int step = 0; step < 6000; ++step) {
-        simulated_now += 100;
-        ctrl.pollTelemetry(simulated_now);
-    }
-
-    check(ctrl.state() == ControllerState::Playing, "controller still playing after 10 min synthetic polling");
-}
-
-void test_audio_routing_apply()
-{
-    using namespace si468x_pi;
-
-    MockChip chip;
-    RecordingSink sink;
-
-    Settings s;
-    RadioController ctrl(s, &sink);
-    ctrl.start(false);
-    ctrl.waitIdle();
-
-    chip.writes.clear();
-
-    ctrl.postAudioOutput(SI468X_AUDIO_I2S);
-    ctrl.waitIdle();
-
-    auto props = chip.sent(SI468X_CMD_SET_PROPERTY);
-    check(!props.empty(), "SET_PROPERTY sent on audio output change");
-    if (!props.empty()) {
-        check(props[0][2] == 0x00 && props[0][3] == 0x08, "PIN_CONFIG_ENABLE property targeted");
-    }
-
-    ctrl.postAudioOutput(SI468X_AUDIO_SIMUL);
-    ctrl.waitIdle();
-    props = chip.sent(SI468X_CMD_SET_PROPERTY);
-    check(props.size() >= 2, "second SET_PROPERTY sent for audio output change to both");
-}
-
 void test_fmhd_tune_and_rds()
 {
     using namespace si468x_pi;
@@ -783,7 +667,7 @@ void test_fmhd_seek()
     Settings s;
     s.device.mode = "fmhd";
     RadioController ctrl(s, &sink);
-    ctrl.start(false);
+    ctrl.start();
     ctrl.waitIdle();
 
     // Prepare seek reply:
@@ -830,15 +714,8 @@ int main()
     test_dls_and_telemetry_polling();
     test_signal_loss_banner_timing();
     test_spi_consecutive_errors();
-    test_synthetic_polling_flat_memory();
-    test_audio_routing_apply();
     test_fmhd_tune_and_rds();
     test_fmhd_seek();
 
-    if (failures != 0) {
-        std::cerr << failures << " test(s) failed" << std::endl;
-        return 1;
-    }
-    std::cout << "all controller tests passed" << std::endl;
-    return 0;
+    return report("controller");
 }

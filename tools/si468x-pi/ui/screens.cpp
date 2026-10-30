@@ -73,36 +73,22 @@ void renderList(
     const int list_lines = std::max(frame.rows - 1, 1);
     const int count = static_cast<int>(itemsCount);
 
-    // Everything fits: show each item once, the block centred and the focus on
-    // the selected item.
-    if (count <= list_lines) {
-        const int first_row = (list_lines - count) / 2;
-        for (int i = 0; i < count; ++i) {
-            const bool is_focused = static_cast<size_t>(i) == selectedIndex;
-            std::string option = getItemString(static_cast<size_t>(i), is_focused, width);
-            if (is_focused && !frame.mark(1 + first_row + i)) {
-                option = width < 16 ? ">" + option
-                                    : ">" + utf8Fit(option, width - 2) + "<";
-            }
-            frame.set(1 + first_row + i, option);
-        }
-        return;
-    }
-
-    // More items than lines: a centred window that wraps around.
-    const int focused_line = list_lines / 2;
-    for (int line = 0; line < list_lines; ++line) {
-        const int offset = line - focused_line;
-        const size_t item_index =
-            ((static_cast<int>(selectedIndex) + offset) % count + count) % count;
-
-        std::string option = getItemString(item_index, offset == 0, width);
+    // Everything fits: each item once, the block centred. Else a window
+    // centred on the focus that wraps around.
+    const bool fits = count <= list_lines;
+    const int lines = fits ? count : list_lines;
+    const int first_row = 1 + (fits ? (list_lines - count) / 2 : 0);
+    for (int line = 0; line < lines; ++line) {
+        const int wrapped = ((static_cast<int>(selectedIndex) + line - list_lines / 2) % count + count) % count;
+        const size_t item_index = static_cast<size_t>(fits ? line : wrapped);
+        const bool is_focused = item_index == selectedIndex;
+        std::string option = getItemString(item_index, is_focused, width);
         // displays that draw the row inverted get the whole width, the others
         // need the two markers
-        if (offset == 0 && !frame.mark(1 + line)) {
+        if (is_focused && !frame.mark(first_row + line)) {
             option = width < 16 ? ">" + option : ">" + utf8Fit(option, width - 2) + "<";
         }
-        frame.set(1 + line, option);
+        frame.set(first_row + line, option);
     }
 }
 
@@ -277,15 +263,9 @@ void RadioScreen::setInputCallback(std::function<void(InputAction)> cb)
 }
 
 StationListScreen::StationListScreen(const std::vector<Station>& stations, UIManager* uiManager)
-    : m_stations(stations), m_uiManager(uiManager), m_index(0), m_selected(false)
+    : m_uiManager(uiManager), m_index(0)
 {
-    std::map<std::string, int> count;
-    for (const auto& s : m_stations) {
-        ++count[s.program];
-    }
-    for (const auto& s : m_stations) {
-        m_showChannel.push_back(count[s.program] > 1);
-    }
+    setStations(stations);
 }
 
 void StationListScreen::render(Frame& frame)
@@ -341,7 +321,6 @@ void StationListScreen::handleInput(InputAction action)
     } else if (action == InputAction::DOWN) {
         m_index = m_index == m_stations.size() - 1 ? 0 : m_index + 1;
     } else if (action == InputAction::ENTER) {
-        m_selected = true;
         if (m_selectCallback) {
             m_selectCallback(m_stations[m_index]);
         }
@@ -378,16 +357,6 @@ void StationListScreen::setStations(const std::vector<Station>& stations)
     for (const auto& s : m_stations) {
         m_showChannel.push_back(count[s.program] > 1);
     }
-}
-
-bool StationListScreen::isSelected() const
-{
-    return m_selected;
-}
-
-void StationListScreen::resetSelected()
-{
-    m_selected = false;
 }
 
 MenuScreen::MenuScreen(UIManager* uiManager) : m_uiManager(uiManager), m_index(0)
@@ -427,11 +396,6 @@ void MenuScreen::handleInput(InputAction action)
 void MenuScreen::setSelectCallback(std::function<void(int)> cb)
 {
     m_selectCallback = std::move(cb);
-}
-
-std::string MenuScreen::option(size_t index) const
-{
-    return index < m_options.size() ? m_options[index] : std::string();
 }
 
 InfoScreen::InfoScreen(UIManager* uiManager) : m_uiManager(uiManager)

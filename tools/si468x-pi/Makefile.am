@@ -1,19 +1,12 @@
 ## SPDX-FileCopyrightText: 2026 si468x-pi authors
 ## SPDX-License-Identifier: GPL-2.0-or-later
 
-AM_CPPFLAGS = -I$(srcdir) -I$(srcdir)/core -I$(srcdir)/ui -I$(srcdir)/include -I$(top_srcdir)/include -DSI468X_PI_PLUGIN_DIR=\"$(libdir)/si468x-pi\"
+AM_CPPFLAGS = -I$(srcdir) -I$(srcdir)/core -I$(srcdir)/ui -I$(srcdir)/include -I$(top_srcdir)/include $(JSON_CFLAGS) -DSI468X_PI_PLUGIN_DIR=\"$(libdir)/si468x-pi\"
 AM_CXXFLAGS = -std=c++17 -Wall -Wextra -Wshadow -O2 -pthread
 AM_LDFLAGS = -pthread
 
-if SI468X_PI_VENDORED_JSON
-AM_CPPFLAGS += -I$(srcdir)/third_party
-endif
-
 si468x_pi_includedir = $(includedir)/si468x-pi
-si468x_pi_include_HEADERS = \
-	include/si468x-pi/plugin.h \
-	include/si468x-pi/input_plugin.h \
-	include/si468x-pi/display_plugin.h
+si468x_pi_include_HEADERS = include/si468x-pi/plugin.h
 
 bin_PROGRAMS = si468x-pi
 noinst_LTLIBRARIES = libsi468x-pi-core.la
@@ -60,4 +53,4 @@ dist_examples_DATA = examples/si468x-pi.json examples/si468x-pi.service
 
 SUBDIRS = . plugins tests
 
-EXTRA_DIST = README.md third_party/nlohmann/LICENSE.MIT third_party/nlohmann/json.hpp doc/si468x-pi.1
+EXTRA_DIST = README.md doc/si468x-pi.1

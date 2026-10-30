@@ -32,8 +32,6 @@ private:
     int m_cols;
     int m_rows;
     bool m_highlights;
-    int m_highlight = -1;
-    std::vector<std::string> m_shown;
 };
 
 } // namespace si468x_pi

@@ -3,15 +3,15 @@
 #pragma once
 
 #include "display_interface.hpp"
+#include "settings.hpp"
 
 #include <cstdio>
-#include <string>
-#include <vector>
+#include <utility>
 
 namespace si468x_pi {
 
 // Draws each changed frame in a box. On a terminal it clears the screen first,
-// so diagnostics should go to stderr (2>log). A null out discards everything.
+// so diagnostics should go to stderr (2>log).
 class TtyDisplay : public IDisplay {
 public:
     TtyDisplay(int cols, int rows, std::FILE* out = stdout);
@@ -26,8 +26,9 @@ private:
     int m_rows;
     std::FILE* m_out;
     bool m_ansi;
-    int m_highlight = -1;
-    std::vector<std::string> m_shown;
 };
+
+// cols x rows of the first "tty" display entry, else 80 x 25.
+std::pair<int, int> ttySize(const Settings& settings);
 
 } // namespace si468x_pi

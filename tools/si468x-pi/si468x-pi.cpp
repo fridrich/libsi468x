@@ -24,7 +24,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -190,19 +192,7 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
 {
     install_signal_handlers();
 
-    int tty_cols = 80;
-    int tty_rows = 25;
-    for (const auto& dcfg : settings.display) {
-        if (dcfg.type == "tty") {
-            if (dcfg.cols > 0) {
-                tty_cols = dcfg.cols;
-            }
-            if (dcfg.rows > 0) {
-                tty_rows = dcfg.rows;
-            }
-            break;
-        }
-    }
+    const auto [tty_cols, tty_rows] = si468x_pi::ttySize(settings);
 
     std::vector<std::unique_ptr<si468x_pi::IDisplay>> displays;
     if (isatty(STDOUT_FILENO)) {
@@ -220,7 +210,7 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
         }
     }
     if (displays.empty()) {
-        displays.push_back(std::make_unique<si468x_pi::TtyDisplay>(tty_cols, tty_rows, stdout));
+        displays.push_back(std::make_unique<si468x_pi::TtyDisplay>(tty_cols, tty_rows));
     }
 
     auto multi_display = std::make_unique<si468x_pi::MultiDisplay>(std::move(displays));
@@ -242,7 +232,7 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
                      si468x_pi::RadioController::formatError(rc).c_str());
         return 1;
     }
-    controller.start(false);
+    controller.start();
 
     auto play_next_station = [&](int delta) {
         const auto& stations = controller.stations();
@@ -327,37 +317,25 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
                 }
             }
         } else if (cache.last_played.valid()) {
-            bool found_target = false;
-            if (settings.device.mode == "fmhd" || cache.last_played.band == "fm") {
-                for (size_t i = 0; i < st_list.size(); ++i) {
-                    if ((cache.last_played.service_id != 0 && st_list[i].service_id == cache.last_played.service_id) ||
-                        (!cache.last_played.channel.empty() && st_list[i].channel == cache.last_played.channel)) {
-                        target = st_list[i];
-                        station_list->setIndex(i);
-                        found_target = true;
-                        break;
-                    }
+            const auto& lp = cache.last_played;
+            const bool fm = settings.device.mode == "fmhd" || lp.band == "fm";
+            // FM: frequency or label; DAB: service id, on the same channel if known
+            const auto it = std::find_if(st_list.begin(), st_list.end(), [&](const si468x_pi::Station& st) {
+                if (fm) {
+                    return (lp.service_id != 0 && st.service_id == lp.service_id) ||
+                           (!lp.channel.empty() && st.channel == lp.channel);
                 }
-                if (!found_target) {
-                    target.channel = cache.last_played.channel;
-                    target.service_id = cache.last_played.service_id;
-                    target.band = "fm";
-                    target.program = target.channel.empty() ? "" : target.channel + " MHz";
-                }
-            } else {
-                // DAB mode: strictly match the (ensemble/channel, service_id) pair
-                if (cache.last_played.service_id != 0) {
-                    for (size_t i = 0; i < st_list.size(); ++i) {
-                        if (st_list[i].service_id == cache.last_played.service_id) {
-                            if (cache.last_played.channel.empty() || st_list[i].channel == cache.last_played.channel) {
-                                target = st_list[i];
-                                station_list->setIndex(i);
-                                found_target = true;
-                                break;
-                            }
-                        }
-                    }
-                }
+                return lp.service_id != 0 && st.service_id == lp.service_id &&
+                       (lp.channel.empty() || st.channel == lp.channel);
+            });
+            if (it != st_list.end()) {
+                target = *it;
+                station_list->setIndex(it - st_list.begin());
+            } else if (fm) {
+                target.channel = lp.channel;
+                target.service_id = lp.service_id;
+                target.band = "fm";
+                target.program = lp.channel.empty() ? "" : lp.channel + " MHz";
             }
         }
         controller.postPlay(target);
@@ -414,14 +392,10 @@ int main(int argc, char** argv)
     bool demo_ui = false;
     bool log_enabled = false;
 
-    bool have_spi = false;
-    bool have_gpio = false;
-    bool have_mode = false;
-    bool have_audio = false;
-    std::string spi;
-    std::string mode;
-    std::string audio;
-    int gpio = 0;
+    std::optional<std::string> spi;
+    std::optional<std::string> mode;
+    std::optional<std::string> audio;
+    std::optional<int> gpio;
 
     enum {
         OPT_RESCAN = 1000,
@@ -458,30 +432,29 @@ int main(int argc, char** argv)
             break;
         case 's':
             spi = optarg;
-            have_spi = true;
             break;
-        case 'g':
-            if (!parse_int(optarg, gpio) || gpio < 0 || gpio > 53) {
+        case 'g': {
+            int value = 0;
+            if (!parse_int(optarg, value) || value < 0 || value > 53) {
                 std::fprintf(stderr, "si468x-pi: invalid --reset-gpio value '%s'\n", optarg);
                 return 2;
             }
-            have_gpio = true;
+            gpio = value;
             break;
+        }
         case 'm':
             mode = optarg;
-            if (mode != "dab" && mode != "fmhd") {
+            if (*mode != "dab" && *mode != "fmhd") {
                 std::fprintf(stderr, "si468x-pi: invalid --mode value '%s'\n", optarg);
                 return 2;
             }
-            have_mode = true;
             break;
         case 'a':
             audio = optarg;
-            if (audio != "analog" && audio != "i2s" && audio != "both") {
+            if (*audio != "analog" && *audio != "i2s" && *audio != "both") {
                 std::fprintf(stderr, "si468x-pi: invalid --audio value '%s'\n", optarg);
                 return 2;
             }
-            have_audio = true;
             break;
         case 'S': {
             int value = 0;
@@ -546,18 +519,10 @@ int main(int argc, char** argv)
     }
     print_warnings(warnings);
 
-    if (have_spi) {
-        settings.device.spi = spi;
-    }
-    if (have_gpio) {
-        settings.device.reset_gpio = gpio;
-    }
-    if (have_mode) {
-        settings.device.mode = mode;
-    }
-    if (have_audio) {
-        settings.device.audio = audio;
-    }
+    settings.device.spi = spi.value_or(settings.device.spi);
+    settings.device.reset_gpio = gpio.value_or(settings.device.reset_gpio);
+    settings.device.mode = mode.value_or(settings.device.mode);
+    settings.device.audio = audio.value_or(settings.device.audio);
 
     si468x_pi::Cache cache;
     warnings.clear();
@@ -572,18 +537,6 @@ int main(int argc, char** argv)
     if (verbose) {
         std::fprintf(stderr, "si468x-pi: settings '%s', cache '%s'\n", settings_path.c_str(),
                      cache_path.c_str());
-        if (no_scan) {
-            std::fprintf(stderr, "si468x-pi: --no-scan selected\n");
-        }
-        if (rescan) {
-            std::fprintf(stderr, "si468x-pi: --rescan selected\n");
-        }
-        if (service_id) {
-            std::fprintf(stderr, "si468x-pi: service id %d\n", service_id);
-        }
-        if (!programme.empty()) {
-            std::fprintf(stderr, "si468x-pi: programme '%s'\n", programme.c_str());
-        }
     }
 
     return run_application(settings, cache, cache_path, rescan, no_scan, service_id, programme);

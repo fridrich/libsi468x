@@ -78,8 +78,6 @@ public:
     void setSelectCallback(std::function<void(const Station&)> cb);
     void setStations(const std::vector<Station>& stations);
     void setIndex(size_t index);
-    bool isSelected() const;
-    void resetSelected();
 
     // focused name longer than the line: start and end take turns
     static constexpr uint64_t NAME_SWITCH_MS = 1000;
@@ -89,7 +87,6 @@ private:
     std::vector<bool> m_showChannel;
     UIManager* m_uiManager;
     std::atomic<size_t> m_index;
-    bool m_selected;
     std::function<void(const Station&)> m_selectCallback;
 };
 
@@ -100,9 +97,6 @@ public:
     void render(Frame& frame) override;
     void handleInput(InputAction action) override;
     void setSelectCallback(std::function<void(int)> cb);
-
-    size_t optionCount() const { return m_options.size(); }
-    std::string option(size_t index) const;
 
 private:
     std::vector<std::string> m_options;
@@ -122,8 +116,6 @@ public:
 
     void render(Frame& frame) override;
     void handleInput(InputAction action) override;
-
-    int page() const { return m_page; }
 
 private:
     UIManager* m_uiManager;

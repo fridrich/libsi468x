@@ -1,7 +1,8 @@
 /* SPDX-FileCopyrightText: 2026 Fridrich Strba */
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "si468x-pi/display_plugin.h"
+#include "si468x-pi/plugin.h"
 
+#include "../plugin_util.h"
 #include "hd44780_charset.h"
 
 #include <errno.h>
@@ -48,15 +49,12 @@ static size_t to_hd44780(const char* s, char* out, size_t size)
 {
     size_t n = 0;
     while (*s && n + 2 < size) {
-        unsigned char c = (unsigned char)*s++;
-        if (c < 0x80) {
-            out[n++] = c == '\\' ? '|' : c == '~' ? '-' : (char)c;   /* not in ROM A00 */
+        unsigned cp = utf8_next(&s);
+        if (cp < 0x80) {
+            out[n++] = cp == '\\' ? '|' : cp == '~' ? '-' : (char)cp;   /* not in ROM A00 */
             continue;
         }
-        int more = c >= 0xf0 ? 3 : c >= 0xe0 ? 2 : c >= 0xc0 ? 1 : 0;
-        unsigned cp = c & (0x3f >> more);
-        for (; more && (*s & 0xc0) == 0x80; --more) cp = cp << 6 | (*s++ & 0x3f);
-        const struct hd44780_char* m = more ? NULL :
+        const struct hd44780_char* m =
             (const struct hd44780_char*)bsearch(&cp, hd44780_charset, sizeof hd44780_charset / sizeof *hd44780_charset,
                                                 sizeof *hd44780_charset, by_cp);
         /* U+2588, the block of the volume bar, is in no ROM: it is CGRAM
@@ -101,23 +99,9 @@ void* si468x_pi_display_open(const char* config, int* cols, int* rows, unsigned*
     bool has_cols = false;
     bool has_rows = false;
 
+    cfg_str(config, "file", file_path, sizeof file_path);   /* tests: frames to a file */
+    cfg_str(config, "device", dev_path, sizeof dev_path);
     if (config) {
-        const char* f = strstr(config, "\"file\":\"");
-        if (f) {
-            f += 8;
-            const char* end = strchr(f, '"');
-            if (end) {
-                snprintf(file_path, sizeof(file_path), "%.*s", (int)(end - f), f);
-            }
-        }
-        const char* d = strstr(config, "\"device\":\"");
-        if (d) {
-            d += 10;
-            const char* end = strchr(d, '"');
-            if (end) {
-                snprintf(dev_path, sizeof(dev_path), "%.*s", (int)(end - d), d);
-            }
-        }
         const char* c = strstr(config, "\"cols\":");
         if (c) {
             ctx->cols = atoi(c + 7);

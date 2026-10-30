@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "plugin_display.hpp"
 #include "plugin_loader.hpp"
-#include "si468x-pi/display_plugin.h"
+#include "si468x-pi/plugin.h"
 
 #include <dlfcn.h>
 #include <iostream>
@@ -57,11 +57,6 @@ std::unique_ptr<PluginDisplay> PluginDisplay::open(const std::string& name, cons
 
 void PluginDisplay::present(const Frame& frame)
 {
-    if (frame.lines == m_shown && frame.highlight == m_highlight) {
-        return;
-    }
-    m_shown = frame.lines;
-    m_highlight = frame.highlight;
     std::vector<const char*> lines;
     lines.reserve(frame.lines.size());
     for (const auto& line : frame.lines) {

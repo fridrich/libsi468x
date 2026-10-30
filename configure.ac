@@ -25,45 +25,17 @@ AC_ARG_ENABLE([si468x-pi],
     [], [enable_si468x_pi=yes])
 AM_CONDITIONAL([ENABLE_SI468X_PI], [test "x$enable_si468x_pi" = xyes])
 
-AC_ARG_WITH([json],
-    [AS_HELP_STRING([--with-json=system|vendored], [JSON header source for si468x-pi (default: vendored)])],
-    [], [with_json=vendored])
-AM_CONDITIONAL([SI468X_PI_VENDORED_JSON], [test "x$with_json" = "xvendored"])
-
 LIBDL=""
 AC_SUBST([LIBDL])
 
 if test "x$enable_si468x_pi" = xyes; then
-    case "$with_json" in
-        system|vendored) ;;
-        *) AC_MSG_ERROR([--with-json must be 'system' or 'vendored']) ;;
-    esac
-
-    save_CXXFLAGS="$CXXFLAGS"
-    CXXFLAGS="$CXXFLAGS -std=c++17"
-    AC_LANG_PUSH([C++])
-    AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
-#if __cplusplus < 201703L
-#error "C++17 is required by si468x-pi"
-#endif
-        ]], [[]])],
-        [],
-        [AC_MSG_ERROR([si468x-pi needs a C++17 compiler (try --disable-si468x-pi)])])
-    AC_LANG_POP([C++])
-    CXXFLAGS="$save_CXXFLAGS"
-
-    if test "x$with_json" = "xsystem"; then
-        AC_CHECK_HEADER([nlohmann/json.hpp], [],
-            [AC_MSG_ERROR([nlohmann/json.hpp not found; install nlohmann-json3-dev or use --with-json=vendored])])
-    fi
+    # 3.9: ordered_json
+    PKG_CHECK_MODULES([JSON], [nlohmann_json >= 3.9.0], [],
+        [AC_MSG_ERROR([nlohmann_json >= 3.9.0 not found (nlohmann-json3-dev / nlohmann_json-devel), or use --disable-si468x-pi])])
 
     AC_CHECK_LIB([dl], [dlopen], [LIBDL="-ldl"], [LIBDL=""])
 
     AC_CHECK_HEADERS([linux/input.h linux/fb.h])
-
-    AC_ARG_ENABLE([si468x-pi-plugins],
-        [AS_HELP_STRING([--disable-si468x-pi-plugins], [do not build optional plugins (evdev, fb, lcd)])],
-        [], [enable_si468x_pi_plugins=yes])
 
     AC_ARG_ENABLE([si468x-pi-evdev],
         [AS_HELP_STRING([--disable-si468x-pi-evdev], [do not build evdev input plugin])],
@@ -76,12 +48,6 @@ if test "x$enable_si468x_pi" = xyes; then
     AC_ARG_ENABLE([si468x-pi-lcd],
         [AS_HELP_STRING([--disable-si468x-pi-lcd], [do not build lcd display plugin])],
         [], [enable_si468x_pi_lcd=yes])
-
-    if test "x$enable_si468x_pi_plugins" != "xyes"; then
-        enable_si468x_pi_evdev=no
-        enable_si468x_pi_fb=no
-        enable_si468x_pi_lcd=no
-    fi
 
     if test "x$ac_cv_header_linux_input_h" != "xyes"; then
         enable_si468x_pi_evdev=no

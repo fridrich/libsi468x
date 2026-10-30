@@ -7,18 +7,22 @@
 namespace si468x_pi {
 
 TtyDisplay::TtyDisplay(int cols, int rows, std::FILE* out)
-    : m_cols(cols), m_rows(rows), m_out(out), m_ansi(out && isatty(fileno(out)))
+    : m_cols(cols), m_rows(rows), m_out(out), m_ansi(isatty(fileno(out)))
 {
+}
+
+std::pair<int, int> ttySize(const Settings& settings)
+{
+    for (const auto& d : settings.display) {
+        if (d.type == "tty") {
+            return { d.cols > 0 ? d.cols : 80, d.rows > 0 ? d.rows : 25 };
+        }
+    }
+    return { 80, 25 };
 }
 
 void TtyDisplay::present(const Frame& frame)
 {
-    if (!m_out || (frame.lines == m_shown && frame.highlight == m_highlight)) {
-        return;
-    }
-    m_shown = frame.lines;
-    m_highlight = frame.highlight;
-
     // frame size, not ours: mirrored next to a smaller display
     const std::string border = "+" + std::string(frame.cols, '-') + "+\n";
     std::string out = m_ansi ? "\033[H\033[2J" : "";

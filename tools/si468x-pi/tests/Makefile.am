@@ -1,54 +1,28 @@
 ## SPDX-FileCopyrightText: 2026 Fridrich Strba
 ## SPDX-License-Identifier: GPL-2.0-or-later
 
+pi = $(top_srcdir)/tools/si468x-pi
+AM_CPPFLAGS = -I$(pi) -I$(pi)/core -I$(pi)/ui -I$(pi)/include $(JSON_CFLAGS) \
+	-I$(top_srcdir)/tests -I$(top_srcdir)/src -I$(top_srcdir)/include \
+	-DPLUGIN_DIR=\"$(abs_top_builddir)/tools/si468x-pi/plugins/.libs\" \
+	-DTEST_PLUGIN_DIR=\"$(abs_builddir)/.libs\" \
+	-DEXAMPLE_JSON=\"$(abs_top_srcdir)/tools/si468x-pi/examples/si468x-pi.json\"
+AM_CFLAGS = -Wall -Wextra
 AM_CXXFLAGS = -std=c++17 -Wall -Wextra -Wshadow -pthread
 AM_LDFLAGS = -pthread
+LDADD = $(top_builddir)/tools/si468x-pi/libsi468x-pi-core.la @LIBDL@
 
-noinst_PROGRAMS = test_settings test_ui test_display test_plugins test_controller
-check_LTLIBRARIES = si468x-pi-example.la si468x-pi-badabi.la si468x-pi-badsym.la
-
-AM_CPPFLAGS = \
-	-I$(top_srcdir)/tools/si468x-pi \
-	-I$(top_srcdir)/tools/si468x-pi/core \
-	-I$(top_srcdir)/tools/si468x-pi/ui \
-	-I$(top_srcdir)/tools/si468x-pi/include \
-	-I$(top_srcdir)/tools/si468x-pi/third_party \
-	-I$(top_srcdir)/tests \
-	-I$(top_srcdir)/src \
-	-I$(top_srcdir)/include
-
-si468x_pi_example_la_SOURCES = example.c
-si468x_pi_example_la_CFLAGS = -Wall -Wextra -I$(top_srcdir)/tools/si468x-pi/include
-si468x_pi_example_la_LDFLAGS = -module -avoid-version -rpath $(abs_builddir)/.libs
-
+# loader rejection cases
+check_LTLIBRARIES = si468x-pi-badabi.la si468x-pi-badsym.la
+plugin_ldflags = -module -avoid-version -rpath $(abs_builddir)/.libs
 si468x_pi_badabi_la_SOURCES = bad_abi.c
-si468x_pi_badabi_la_CFLAGS = -Wall -Wextra -I$(top_srcdir)/tools/si468x-pi/include
-si468x_pi_badabi_la_LDFLAGS = -module -avoid-version -rpath $(abs_builddir)/.libs
-
+si468x_pi_badabi_la_LDFLAGS = $(plugin_ldflags)
 si468x_pi_badsym_la_SOURCES = bad_sym.c
-si468x_pi_badsym_la_CFLAGS = -Wall -Wextra -I$(top_srcdir)/tools/si468x-pi/include
-si468x_pi_badsym_la_LDFLAGS = -module -avoid-version -rpath $(abs_builddir)/.libs
-
-test_settings_SOURCES = test_settings.cpp
-test_settings_LDADD = $(top_builddir)/tools/si468x-pi/libsi468x-pi-core.la
-
-test_ui_SOURCES = test_ui.cpp
-test_ui_LDADD = $(top_builddir)/tools/si468x-pi/libsi468x-pi-core.la
-
-test_display_SOURCES = test_display.cpp
-test_display_LDADD = $(top_builddir)/tools/si468x-pi/libsi468x-pi-core.la
-
-test_plugins_SOURCES = test_plugins.cpp
-test_plugins_LDADD = $(top_builddir)/tools/si468x-pi/libsi468x-pi-core.la @LIBDL@
-
-test_controller_SOURCES = test_controller.cpp
-test_controller_LDADD = $(top_builddir)/tools/si468x-pi/libsi468x-pi-core.la $(top_builddir)/src/libsi468x.la @LIBDL@
+si468x_pi_badsym_la_LDFLAGS = $(plugin_ldflags)
 
 TESTS = test_settings test_ui test_display test_plugins test_controller
+check_PROGRAMS = $(TESTS)
+AM_DEFAULT_SOURCE_EXT = .cpp
+EXTRA_DIST = check.h
 
-all-local: $(check_LTLIBRARIES)
-	@mkdir -p si468x-pi-plugins
-	@cp -f .libs/si468x-pi-example.so si468x-pi-plugins/ 2>/dev/null || :
-
-clean-local:
-	rm -rf si468x-pi-plugins
+test_controller_LDADD = $(LDADD) $(top_builddir)/src/libsi468x.la

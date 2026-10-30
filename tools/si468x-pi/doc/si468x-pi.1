@@ -10,14 +10,14 @@ si468x-pi \- terminal radio application for the Silicon Labs Si468x receiver on 
 \fBsi468x-pi\fR is an interactive terminal and headless daemon application for controlling
 the uGreen DAB Board and other Silicon Labs Si468x receiver boards on the Raspberry Pi.
 It provides automatic Band III scanning, station caching, real-time DLS text display with
-marquee scrolling, audio routing control (analog, I2S, or both), and hardware plugin
+marquee scrolling, audio routing (analog, I2S, or both), and hardware plugin
 support (Linux evdev remotes, framebuffer displays, and HD44780 character LCDs).
 
 .SH OPTIONS
 .TP
 .BR \-c ", " \-\-config " \fIFILE\fR"
 Load settings from the specified JSON \fIFILE\fR. If omitted, the standard XDG configuration
-search paths are consulted (\fI$XDG_CONFIG_HOME/si468x-pi/si468x-pi.json\fR, then \fI/etc/si468x-pi/si468x-pi.json\fR).
+search path is used (\fI$XDG_CONFIG_HOME/si468x-pi/si468x-pi.json\fR, else \fI~/.config/si468x-pi/si468x-pi.json\fR).
 .TP
 .BR \-s ", " \-\-spi " \fIDEV\fR"
 Override the SPI character device (default: \fI/dev/spidev0.0\fR).
@@ -29,7 +29,8 @@ Override the BCM GPIO pin used for hardware reset (default: \fI23\fR).
 Set tuner boot mode. Default is \fIdab\fR.
 .TP
 .BR \-a ", " \-\-audio " \fIanalog\fR|\fIi2s\fR|\fIboth\fR"
-Select audio output routing. Default is \fIanalog\fR.
+Select audio output routing. Default is \fIanalog\fR. The chip takes the route only when it
+boots; changing it means restarting \fBsi468x-pi\fR.
 .TP
 .BR \-S ", " \-\-service\-id " \fIN\fR"
 Tune and immediately start playing the 32-bit Service ID \fIN\fR.
@@ -118,14 +119,12 @@ Drives HD44780 character LCD displays through \fI/dev/lcd\fR with automatic char
 
 .SH FILES
 .TP
-.I /etc/si468x-pi/si468x-pi.json
-System-wide configuration file.
-.TP
 .I $HOME/.config/si468x-pi/si468x-pi.json
-User configuration file.
+User configuration file (\fI$XDG_CONFIG_HOME\fR if set). Use \fB\-\-config\fR for others,
+e.g. \fI/etc/si468x-pi/si468x-pi.json\fR.
 .TP
-.I $HOME/.cache/si468x-pi/cache.json
-Cached station table and last played station.
+.I $HOME/.cache/si468x-pi/stations.json\fR, \fIstations-fmhd.json
+Cached station table, volume and last played station, per mode (\fI$XDG_CACHE_HOME\fR if set).
 
 .SH AUTHORS
 Written by Fridrich Strba and si468x-pi contributors.

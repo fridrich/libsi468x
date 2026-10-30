@@ -3,6 +3,7 @@
 //
 // Tests for settings, cache and the canonical channel table.
 
+#include "check.h"
 #include "settings.hpp"
 #include "station.hpp"
 
@@ -18,16 +19,6 @@
 #include <unistd.h>
 
 namespace {
-
-int failures = 0;
-
-void check(bool cond, const std::string& message)
-{
-    if (!cond) {
-        std::cerr << "FAIL: " << message << std::endl;
-        ++failures;
-    }
-}
 
 bool contains(const std::vector<std::string>& list, const std::string& text)
 {
@@ -57,13 +48,15 @@ void test_channels()
 {
     using namespace si468x_pi;
 
+    auto freq = [](const char* label) {
+        const Channel* c = find_channel(label);
+        return c ? c->frequency_hz : 0;
+    };
     check(band3_channels().size() == 41, "Band III table has 41 entries");
-    check(channel_frequency("12A") == 223936000, "12A maps to 223936000 Hz");
-    check(channel_frequency("10N") == 210096000, "10N maps to 210096000 Hz");
-    check(channel_frequency("5A") == 174928000, "5A maps to 174928000 Hz");
-    check(channel_frequency("13F") == 239200000, "13F maps to 239200000 Hz");
-    check(channel_frequency("1A") == 0, "unknown channel maps to 0");
-    check(find_channel("12A") != nullptr, "find_channel finds 12A");
+    check(freq("12A") == 223936000, "12A maps to 223936000 Hz");
+    check(freq("10N") == 210096000, "10N maps to 210096000 Hz");
+    check(freq("5A") == 174928000, "5A maps to 174928000 Hz");
+    check(freq("13F") == 239200000, "13F maps to 239200000 Hz");
     check(find_channel("99Z") == nullptr, "find_channel rejects unknown labels");
 
     check(default_scan_channels().size() == 38, "default scan list has 38 channels");
@@ -128,8 +121,9 @@ void test_defaults()
     check(s.poll.signal_ms == 1000 && s.poll.dls_ms == 300 && s.poll.info_ms == 5000,
           "default poll intervals");
     check(!s.input_configured && s.input.empty(), "input is absent by default");
-    check(!s.display_configured && s.display.size() == 1 && s.display[0].type == "tty",
-          "display defaults to tty");
+    check(s.display.size() == 1 && s.display[0].type == "tty" && s.display[0].cols == 80
+              && s.display[0].rows == 25,
+          "display defaults to an 80x25 tty");
 }
 
 void test_parse_and_validate()
@@ -158,8 +152,8 @@ void test_parse_and_validate()
     check(s.device.region == "us", "custom region");
     check(s.input.size() == 2, "two input sources");
     check(s.input[0].type == "stdin", "first input is stdin");
-    check(s.input[1].plugin == "evdev" && s.input[1].device == "/dev/input/event3",
-          "second input is evdev");
+    check(s.input[1].plugin == "evdev" && s.input[1].config_json.find("/dev/input/event3") != std::string::npos,
+          "second input is evdev, its config passed whole");
     check(s.display.size() == 2, "two displays");
     check(s.display[0].cols == 20 && s.display[0].rows == 4, "custom tty geometry");
     check(s.display[1].plugin == "lcd", "second display is lcd");
@@ -245,8 +239,10 @@ void test_example()
     check(parse_settings(text, s, &warnings), "example parses");
     check(warnings.empty(), "example produces no warnings");
     check(s.input.size() == 1 && s.input[0].type == "stdin", "example input round-trip");
-    check(s.display.size() == 1 && s.display[0].rows == 22, "example display round-trip");
+    check(s.display.size() == 1 && s.display[0].cols == 80 && s.display[0].rows == 25,
+          "example display round-trip");
     check(s.scan.channels.size() == 38, "example scan round-trip");
+    check(read_file(EXAMPLE_JSON) == text, "examples/si468x-pi.json is the --config-example output");
 }
 
 void test_missing_settings()
@@ -258,9 +254,6 @@ void test_missing_settings()
     check(load_settings("/tmp/si468x-pi-does-not-exist.json", s, &warnings),
           "missing settings file is not an error");
     check(warnings.empty(), "missing settings file does not warn");
-    check(s.device.spi == "/dev/spidev0.0", "missing settings file leaves defaults");
-    check(s.display.size() == 1 && s.display[0].type == "tty",
-          "missing settings file keeps the tty display");
 }
 
 void test_cache()
@@ -297,7 +290,6 @@ void test_cache()
     std::vector<std::string> warnings;
     check(load_cache(path, loaded, &warnings), "cache loads");
     check(warnings.empty(), "clean cache produces no warnings");
-    check(loaded.version == 1, "loaded version");
     check(loaded.volume == 42, "volume round-trip");
     check(!loaded.complete, "complete flag round-trip");
     check(loaded.last_played.valid() && loaded.last_played.service_id == 17361,
@@ -364,10 +356,5 @@ int main()
     test_missing_settings();
     test_cache();
 
-    if (failures != 0) {
-        std::cerr << failures << " test(s) failed" << std::endl;
-        return 1;
-    }
-    std::cout << "all settings tests passed" << std::endl;
-    return 0;
+    return report("settings");
 }

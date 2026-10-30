@@ -24,17 +24,12 @@ public:
     UIManager(const UIManager&) = delete;
     UIManager& operator=(const UIManager&) = delete;
 
-    void setScreen(std::shared_ptr<UIScreen> newScreen);
-
-    // Pushes a new screen onto the stack, pausing the previous top.
     void pushScreen(std::shared_ptr<UIScreen> screen);
 
-    // Pops the top screen, resuming the screen below it. False when the stack
-    // would become empty.
+    // Pops the top screen. False when the stack would become empty.
     bool popScreen();
 
-    // Clears the history stack and resets back to the root.
-    void resetToRoot(std::shared_ptr<UIScreen> rootScreen);
+    // Pops back to the first screen pushed.
     void resetToRoot();
 
     void processInput(InputAction action);

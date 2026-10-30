@@ -51,13 +51,11 @@ public:
     virtual ~IDisplay() = default;
     virtual int cols() const = 0;
     virtual int rows() const = 0;
-    // Called every UI tick, mostly with the same frame: skip what is unchanged.
+    // Called when the frame text or highlight changed.
     virtual void present(const Frame& frame) = 0;
     // Whether present() draws Frame::highlight inverted instead of the screens
     // wrapping the focused item in > and <.
     virtual bool canHighlight() const { return false; }
-    virtual void backlightOn() {}
-    virtual void backlightOff() {}
 };
 
 // The same frame on several displays (LCD + terminal), at the smallest size.
@@ -102,20 +100,6 @@ public:
             all = all && d->canHighlight();
         }
         return all;
-    }
-
-    void backlightOn() override
-    {
-        for (auto& d : m_displays) {
-            d->backlightOn();
-        }
-    }
-
-    void backlightOff() override
-    {
-        for (auto& d : m_displays) {
-            d->backlightOff();
-        }
     }
 
 private:
