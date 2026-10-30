@@ -364,6 +364,14 @@ void StationListScreen::setIndex(size_t index)
     }
 }
 
+void StationListScreen::setStations(const std::vector<Station>& stations)
+{
+    m_stations = stations;
+    if (m_index >= m_stations.size()) {
+        m_index = 0;
+    }
+}
+
 bool StationListScreen::isSelected() const
 {
     return m_selected;
@@ -413,9 +421,104 @@ void MenuScreen::setSelectCallback(std::function<void(int)> cb)
     m_selectCallback = std::move(cb);
 }
 
+void MenuScreen::setAudioOutputOption(const std::string& name)
+{
+    if (m_options.size() > 2) {
+        m_options[2] = "Audio: " + name;
+    }
+}
+
+std::string MenuScreen::audioOutputOption() const
+{
+    return m_options.size() > 2 ? m_options[2] : "";
+}
+
 std::string MenuScreen::option(size_t index) const
 {
     return index < m_options.size() ? m_options[index] : std::string();
+}
+
+InfoScreen::InfoScreen(UIManager* uiManager) : m_uiManager(uiManager)
+{
+}
+
+void InfoScreen::setSignal(const si468x_signal_status_t& sig)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_sig = sig;
+}
+
+void InfoScreen::setAudio(const si468x_audio_info_t& audio)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_audio = audio;
+}
+
+void InfoScreen::setTime(const si468x_time_t& time)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_time = time;
+}
+
+void InfoScreen::setEnsemble(const si468x_ensemble_info_t& ens)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_ens = ens;
+}
+
+void InfoScreen::render(Frame& frame)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    frame.set(0, m_page == 0 ? "Info: Signal (1/2)" : "Info: Service (2/2)");
+
+    if (m_page == 0) {
+        if (frame.rows > 1) {
+            frame.set(1, "RSSI: " + std::to_string(m_sig.rssi) + " dBuV  SNR: " + std::to_string(m_sig.snr) + " dB");
+        }
+        if (frame.rows > 2) {
+            frame.set(2, "CNR: " + std::to_string(m_sig.cnr) + " dB  FIB: " + std::to_string(m_sig.fib_errors));
+        }
+        if (frame.rows > 3) {
+            if (m_time.year > 0) {
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "%04u-%02u-%02u %02u:%02u",
+                              m_time.year, m_time.month, m_time.day, m_time.hours, m_time.minutes);
+                frame.set(3, "Time: " + std::string(buf));
+            } else {
+                frame.set(3, "Time: --:--");
+            }
+        }
+    } else {
+        if (frame.rows > 1) {
+            std::string mode_str = "Mono";
+            if (m_audio.audio_mode == 2) {
+                mode_str = "Stereo";
+            } else if (m_audio.audio_mode == 3) {
+                mode_str = "J-Stereo";
+            }
+            frame.set(1, std::to_string(m_audio.bitrate) + " kbps " + mode_str + " " + std::to_string(m_audio.sample_rate) + "Hz");
+        }
+        if (frame.rows > 2) {
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "0x%04X (ECC 0x%02X)", m_ens.eid, m_ens.ecc);
+            frame.set(2, "Ens: " + std::string(buf));
+        }
+        if (frame.rows > 3) {
+            frame.set(3, m_ens.label[0] ? std::string(m_ens.label) : "Ensemble info");
+        }
+    }
+}
+
+void InfoScreen::handleInput(InputAction action)
+{
+    if (action == InputAction::UP || action == InputAction::DOWN) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_page = 1 - m_page;
+    } else if (action == InputAction::MENU || action == InputAction::LEFT || action == InputAction::ENTER) {
+        if (m_uiManager) {
+            m_uiManager->popScreen();
+        }
+    }
 }
 
 } // namespace si468x_pi

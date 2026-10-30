@@ -4,20 +4,52 @@
 // si468x-pi - terminal control application for the uGreen DAB Board.
 // CLI, settings, cache and station table; RF handling lives in radio_controller.
 
+#include "core/events.hpp"
+#include "core/radio_controller.hpp"
 #include "core/settings.hpp"
 #include "core/station.hpp"
 #include "core/version.hpp"
+#include "si468x.h"
 #include "ui/demo_ui.hpp"
+#include "ui/display_interface.hpp"
+#include "ui/input_queue.hpp"
+#include "ui/input_sources.hpp"
+#include "ui/plugin_display.hpp"
+#include "ui/screens.hpp"
+#include "ui/tty_display.hpp"
+#include "ui/ui_manager.hpp"
 
+#include <atomic>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include <getopt.h>
 
 namespace {
+
+std::atomic<bool> g_stop_requested{ false };
+
+void handle_signal(int sig)
+{
+    (void)sig;
+    g_stop_requested = true;
+}
+
+void install_signal_handlers()
+{
+    struct sigaction sa = {};
+    sa.sa_handler = handle_signal;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+    sigaction(SIGHUP, &sa, nullptr);
+}
 
 void print_usage(FILE* out)
 {
@@ -34,6 +66,7 @@ void print_usage(FILE* out)
                  "  -p, --programme NAME    play the first station whose label contains NAME\n"
                  "  -n, --no-scan           use the cache; do not scan if it is empty\n"
                  "      --rescan            scan even if the cache is non-empty\n"
+                 "      --log               enable libsi468x diagnostic logging\n"
                  "      --config-example    print the example JSON and exit\n"
                  "  -v, --verbose           enable diagnostics\n"
                  "  -h, --help              show this help\n"
@@ -66,24 +99,243 @@ void print_warnings(const std::vector<std::string>& warnings)
     }
 }
 
-void print_summary(const si468x_pi::Settings& s, const si468x_pi::Cache& cache, bool verbose)
-{
-    std::printf("device: %s reset_gpio=%d mode=%s audio=%s region=%s\n", s.device.spi.c_str(),
-                s.device.reset_gpio, s.device.mode.c_str(), s.device.audio.c_str(),
-                s.device.region.c_str());
-    std::printf("scan: %zu channels, rssi_min=%d, include_data=%s\n", s.scan.channels.size(),
-                s.scan.rssi_min, s.scan.include_data ? "true" : "false");
-    std::printf("cache: %zu stations, complete=%s\n", cache.stations.size(),
-                cache.complete ? "true" : "false");
-    if (verbose) {
-        std::printf("input: %zu configured\n", s.input.size());
-        std::printf("display: %zu configured\n", s.display.size());
-        for (const si468x_pi::Station& st : cache.stations) {
-            std::printf("  %-4s %-32s sid=%u comp=0x%04x%s\n", st.channel.c_str(),
-                        st.program.c_str(), st.service_id, st.component_id,
-                        st.data ? " [data]" : "");
+class AppSink : public si468x_pi::IControllerEvents {
+public:
+    AppSink(std::shared_ptr<si468x_pi::RadioScreen> r,
+            std::shared_ptr<si468x_pi::StationListScreen> sl,
+            std::shared_ptr<si468x_pi::ScanningScreen> sc,
+            std::shared_ptr<si468x_pi::InfoScreen> inf,
+            si468x_pi::UIManager* u)
+        : m_radio(r), m_station_list(sl), m_scanning(sc), m_info(inf), m_ui(u)
+    {
+    }
+
+    void onState(si468x_pi::ControllerState s) override
+    {
+        if (s == si468x_pi::ControllerState::Playing && m_ui) {
+            m_ui->resetToRoot();
         }
     }
+
+    void onScanProgress(const std::string& ch, int found, int cur, int tot) override
+    {
+        (void)cur;
+        (void)tot;
+        m_scanning->setScanningStatus(ch, found);
+    }
+
+    void onStationListChanged(const std::vector<si468x_pi::Station>& stations) override
+    {
+        m_station_list->setStations(stations);
+    }
+
+    void onSignal(const si468x_signal_status_t& sig) override
+    {
+        m_info->setSignal(sig);
+        m_radio->setSignalPresent(sig.sync_status != 0);
+    }
+
+    void onDls(const std::string& dls) override
+    {
+        m_radio->setDLS(dls);
+    }
+
+    void onTime(const si468x_time_t& t) override
+    {
+        m_info->setTime(t);
+    }
+
+    void onAudio(const si468x_audio_info_t& a) override
+    {
+        m_info->setAudio(a);
+    }
+
+    void onEnsemble(const si468x_ensemble_info_t& ens) override
+    {
+        m_info->setEnsemble(ens);
+    }
+
+    void onVolume(int pct, bool muted) override
+    {
+        m_ui->showVolume(pct, muted);
+    }
+
+    void onError(const std::string& msg) override
+    {
+        std::fprintf(stderr, "si468x-pi: error: %s\n", msg.c_str());
+    }
+
+    void onSignalLost(bool lost) override
+    {
+        m_radio->setSignalPresent(!lost);
+    }
+
+private:
+    std::shared_ptr<si468x_pi::RadioScreen> m_radio;
+    std::shared_ptr<si468x_pi::StationListScreen> m_station_list;
+    std::shared_ptr<si468x_pi::ScanningScreen> m_scanning;
+    std::shared_ptr<si468x_pi::InfoScreen> m_info;
+    si468x_pi::UIManager* m_ui;
+};
+
+int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache& cache,
+                    const std::string& cache_path, bool rescan, bool no_scan,
+                    int service_id, const std::string& programme)
+{
+    install_signal_handlers();
+
+    std::vector<std::unique_ptr<si468x_pi::IDisplay>> displays;
+    if (isatty(STDOUT_FILENO)) {
+        displays.push_back(std::make_unique<si468x_pi::TtyDisplay>(20, 4));
+    }
+    for (const auto& dcfg : settings.display) {
+        if (!dcfg.plugin.empty()) {
+            auto pdisp = si468x_pi::PluginDisplay::open(dcfg.plugin, dcfg.config_json);
+            if (pdisp) {
+                displays.push_back(std::move(pdisp));
+            }
+        }
+    }
+    if (displays.empty()) {
+        displays.push_back(std::make_unique<si468x_pi::TtyDisplay>(20, 4, stdout));
+    }
+
+    auto multi_display = std::make_unique<si468x_pi::MultiDisplay>(std::move(displays));
+    si468x_pi::UIManager ui(std::move(multi_display), 20);
+
+    auto radio = std::make_shared<si468x_pi::RadioScreen>();
+    auto station_list = std::make_shared<si468x_pi::StationListScreen>(cache.stations, &ui);
+    auto menu = std::make_shared<si468x_pi::MenuScreen>(&ui);
+    auto scanning = std::make_shared<si468x_pi::ScanningScreen>();
+    auto info = std::make_shared<si468x_pi::InfoScreen>(&ui);
+
+    menu->setAudioOutputOption(settings.device.audio);
+
+    AppSink sink(radio, station_list, scanning, info, &ui);
+
+    si468x_pi::RadioController controller(settings, &sink, cache_path);
+    controller.loadCache(cache_path);
+
+    if (int rc = controller.initHardware()) {
+        std::fprintf(stderr, "si468x-pi: hardware init failed: %s\n",
+                     si468x_pi::RadioController::formatError(rc).c_str());
+        return 1;
+    }
+    controller.start(false);
+
+    std::string current_audio_mode = settings.device.audio;
+
+    radio->setInputCallback([&](si468x_pi::InputAction action) {
+        if (action == si468x_pi::InputAction::MENU) {
+            ui.pushScreen(menu);
+        }
+    });
+
+    station_list->setSelectCallback([&](const si468x_pi::Station& st) {
+        radio->setChannelName(st.channel);
+        radio->setProgramName(st.program, st.short_program);
+        controller.postPlay(st);
+        ui.resetToRoot();
+    });
+
+    scanning->setAbortCallback([&]() {
+        controller.abortScan();
+        ui.resetToRoot();
+    });
+
+    menu->setSelectCallback([&](int index) {
+        if (index == 0) {
+            ui.pushScreen(scanning);
+            controller.postScan(true);
+        } else if (index == 1) {
+            ui.pushScreen(station_list);
+        } else if (index == 2) {
+            if (current_audio_mode == "analog") {
+                current_audio_mode = "i2s";
+                controller.postAudioOutput(SI468X_AUDIO_I2S);
+            } else if (current_audio_mode == "i2s") {
+                current_audio_mode = "both";
+                controller.postAudioOutput(SI468X_AUDIO_SIMUL);
+            } else {
+                current_audio_mode = "analog";
+                controller.postAudioOutput(SI468X_AUDIO_ANALOG);
+            }
+            menu->setAudioOutputOption(current_audio_mode);
+        } else if (index == 3) {
+            ui.pushScreen(info);
+        } else if (index == 5) {
+            g_stop_requested = true;
+        }
+    });
+
+    ui.pushScreen(radio);
+
+    si468x_pi::InputQueue input_queue;
+    auto input_threads = si468x_pi::startInputSources(
+        settings, input_queue, [&]() { return g_stop_requested.load(); }, isatty(STDIN_FILENO));
+
+    const auto& st_list = controller.stations();
+    if (rescan || (st_list.empty() && !no_scan)) {
+        ui.pushScreen(scanning);
+        controller.postScan(true);
+    } else if (!st_list.empty()) {
+        si468x_pi::Station target = st_list.front();
+        if (service_id != 0) {
+            for (const auto& s : st_list) {
+                if (s.service_id == static_cast<uint32_t>(service_id)) {
+                    target = s;
+                    break;
+                }
+            }
+        } else if (!programme.empty()) {
+            for (const auto& s : st_list) {
+                if (s.program.find(programme) != std::string::npos) {
+                    target = s;
+                    break;
+                }
+            }
+        }
+        radio->setChannelName(target.channel);
+        radio->setProgramName(target.program, target.short_program);
+        controller.postPlay(target);
+    }
+
+    while (!g_stop_requested.load()) {
+        si468x_pi::InputAction action = input_queue.pop(100);
+        if (g_stop_requested.load()) {
+            break;
+        }
+        if (action == si468x_pi::InputAction::NONE) {
+            continue;
+        }
+        if (action == si468x_pi::InputAction::QUIT) {
+            break;
+        }
+        if (action == si468x_pi::InputAction::VOLUME_UP) {
+            controller.postVolumeUp();
+            continue;
+        }
+        if (action == si468x_pi::InputAction::VOLUME_DOWN) {
+            controller.postVolumeDown();
+            continue;
+        }
+        if (action == si468x_pi::InputAction::MUTE) {
+            controller.postMute();
+            continue;
+        }
+        ui.processInput(action);
+    }
+
+    g_stop_requested = true;
+    input_queue.push(si468x_pi::InputAction::QUIT);
+    for (auto& t : input_threads) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+    controller.saveCache(cache_path);
+    controller.stop();
+    return 0;
 }
 
 } // namespace
@@ -97,6 +349,7 @@ int main(int argc, char** argv)
     bool rescan = false;
     bool verbose = false;
     bool demo_ui = false;
+    bool log_enabled = false;
 
     bool have_spi = false;
     bool have_gpio = false;
@@ -112,6 +365,7 @@ int main(int argc, char** argv)
         OPT_CONFIG_EXAMPLE,
         OPT_VERSION,
         OPT_DEMO_UI,
+        OPT_LOG,
     };
 
     static const struct option long_options[] = {
@@ -124,6 +378,7 @@ int main(int argc, char** argv)
         { "programme", required_argument, nullptr, 'p' },
         { "no-scan", no_argument, nullptr, 'n' },
         { "rescan", no_argument, nullptr, OPT_RESCAN },
+        { "log", no_argument, nullptr, OPT_LOG },
         { "config-example", no_argument, nullptr, OPT_CONFIG_EXAMPLE },
         { "verbose", no_argument, nullptr, 'v' },
         { "help", no_argument, nullptr, 'h' },
@@ -189,6 +444,9 @@ int main(int argc, char** argv)
         case OPT_RESCAN:
             rescan = true;
             break;
+        case OPT_LOG:
+            log_enabled = true;
+            break;
         case OPT_CONFIG_EXAMPLE:
             std::fputs(si468x_pi::example_settings_json().c_str(), stdout);
             return 0;
@@ -207,6 +465,10 @@ int main(int argc, char** argv)
     if (optind < argc) {
         std::fprintf(stderr, "si468x-pi: unexpected argument '%s'\n", argv[optind]);
         return 2;
+    }
+
+    if (log_enabled) {
+        si468x_enable_debug(1);
     }
 
     si468x_pi::Settings settings;
@@ -261,7 +523,5 @@ int main(int argc, char** argv)
         }
     }
 
-    print_summary(settings, cache, verbose);
-    std::fprintf(stderr, "si468x-pi: radio controller is not available in this build\n");
-    return 0;
+    return run_application(settings, cache, cache_path, rescan, no_scan, service_id, programme);
 }

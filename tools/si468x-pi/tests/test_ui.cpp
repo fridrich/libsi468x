@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -243,6 +244,63 @@ void test_menu()
     menu.handleInput(InputAction::DOWN);
     menu.handleInput(InputAction::ENTER); // Back to radio with no manager
     check(selected == 1, "back to radio does not call the option callback");
+
+    menu.setAudioOutputOption("i2s");
+    check(menu.audioOutputOption() == "Audio: i2s", "audio output option updated");
+}
+
+void test_info_screen()
+{
+    using namespace si468x_pi;
+
+    InfoScreen info(nullptr);
+    check(info.page() == 0, "initial page 0");
+
+    si468x_signal_status_t sig = {};
+    sig.rssi = 45;
+    sig.snr = 18;
+    sig.cnr = 14;
+    sig.fib_errors = 0;
+    info.setSignal(sig);
+
+    si468x_time_t t = {};
+    t.year = 2026;
+    t.month = 10;
+    t.day = 30;
+    t.hours = 14;
+    t.minutes = 25;
+    info.setTime(t);
+
+    Frame p0(30, 4, 0);
+    info.render(p0);
+    check(p0.lines[0] == "Info: Signal (1/2)", "info page 1 header");
+    check(has(p0.lines[1], "RSSI: 45 dBuV"), "info page 1 RSSI");
+    check(has(p0.lines[3], "Time: 2026-10-30 14:25"), "info page 1 Time");
+
+    info.handleInput(InputAction::DOWN);
+    check(info.page() == 1, "toggled to page 1");
+
+    si468x_audio_info_t audio = {};
+    audio.bitrate = 128;
+    audio.sample_rate = 48000;
+    audio.audio_mode = 2; // Stereo
+    info.setAudio(audio);
+
+    si468x_ensemble_info_t ens = {};
+    ens.eid = 0x4301;
+    ens.ecc = 0xE1;
+    std::strcpy(ens.label, "SRG SSR D01");
+    info.setEnsemble(ens);
+
+    Frame p1(30, 4, 0);
+    info.render(p1);
+    check(p1.lines[0] == "Info: Service (2/2)", "info page 2 header");
+    check(has(p1.lines[1], "128 kbps Stereo 48000Hz"), "info page 2 audio");
+    check(has(p1.lines[2], "Ens: 0x4301 (ECC 0xE1)"), "info page 2 ensemble ID");
+    check(has(p1.lines[3], "SRG SSR D01"), "info page 2 ensemble label");
+
+    info.handleInput(InputAction::UP);
+    check(info.page() == 0, "toggled back to page 0");
 }
 
 class RecordingDisplay : public si468x_pi::IDisplay {
@@ -357,6 +415,7 @@ int main()
     test_radio_screen();
     test_station_list();
     test_menu();
+    test_info_screen();
     test_ui_manager();
 
     if (failures != 0) {

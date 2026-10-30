@@ -690,6 +690,35 @@ void test_synthetic_polling_flat_memory()
     check(ctrl.state() == ControllerState::Playing, "controller still playing after 10 min synthetic polling");
 }
 
+void test_audio_routing_apply()
+{
+    using namespace si468x_pi;
+
+    MockChip chip;
+    RecordingSink sink;
+
+    Settings s;
+    RadioController ctrl(s, &sink);
+    ctrl.start(false);
+    ctrl.waitIdle();
+
+    chip.writes.clear();
+
+    ctrl.postAudioOutput(SI468X_AUDIO_I2S);
+    ctrl.waitIdle();
+
+    auto props = chip.sent(SI468X_CMD_SET_PROPERTY);
+    check(!props.empty(), "SET_PROPERTY sent on audio output change");
+    if (!props.empty()) {
+        check(props[0][2] == 0x00 && props[0][3] == 0x08, "PIN_CONFIG_ENABLE property targeted");
+    }
+
+    ctrl.postAudioOutput(SI468X_AUDIO_SIMUL);
+    ctrl.waitIdle();
+    props = chip.sent(SI468X_CMD_SET_PROPERTY);
+    check(props.size() >= 2, "second SET_PROPERTY sent for audio output change to both");
+}
+
 } // namespace
 
 int main()
@@ -711,6 +740,7 @@ int main()
     test_signal_loss_banner_timing();
     test_spi_consecutive_errors();
     test_synthetic_polling_flat_memory();
+    test_audio_routing_apply();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed" << std::endl;

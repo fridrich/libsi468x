@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include "si468x.h"
 #include "station.hpp"
 #include "ui_screen.hpp"
 #include "utils.hpp"
@@ -75,6 +76,7 @@ public:
     void render(Frame& frame) override;
     void handleInput(InputAction action) override;
     void setSelectCallback(std::function<void(const Station&)> cb);
+    void setStations(const std::vector<Station>& stations);
     void setIndex(size_t index);
     bool isSelected() const;
     void resetSelected();
@@ -98,6 +100,8 @@ public:
     void render(Frame& frame) override;
     void handleInput(InputAction action) override;
     void setSelectCallback(std::function<void(int)> cb);
+    void setAudioOutputOption(const std::string& name);
+    std::string audioOutputOption() const;
 
     size_t optionCount() const { return m_options.size(); }
     std::string option(size_t index) const;
@@ -107,6 +111,30 @@ private:
     UIManager* m_uiManager;
     std::atomic<size_t> m_index;
     std::function<void(int)> m_selectCallback;
+};
+
+class InfoScreen : public UIScreen {
+public:
+    explicit InfoScreen(UIManager* uiManager);
+
+    void setSignal(const si468x_signal_status_t& sig);
+    void setAudio(const si468x_audio_info_t& audio);
+    void setTime(const si468x_time_t& time);
+    void setEnsemble(const si468x_ensemble_info_t& ens);
+
+    void render(Frame& frame) override;
+    void handleInput(InputAction action) override;
+
+    int page() const { return m_page; }
+
+private:
+    UIManager* m_uiManager;
+    std::mutex m_mutex;
+    int m_page = 0;
+    si468x_signal_status_t m_sig = {};
+    si468x_audio_info_t m_audio = {};
+    si468x_time_t m_time = {};
+    si468x_ensemble_info_t m_ens = {};
 };
 
 } // namespace si468x_pi
