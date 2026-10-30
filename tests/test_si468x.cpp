@@ -207,6 +207,9 @@ static bool test_audio_output_modes()
     int ret_simul = si468x_set_audio_output(SI468X_AUDIO_SIMUL);
     ASSERT_TRUE(ret_simul == SI468X_SUCCESS, "Setting Simultaneous output mode must return SI468X_SUCCESS when uninitialized");
 
+    ASSERT_TRUE(si468x_set_audio_output(7) == SI468X_ERROR_PARAM, "Unknown route is rejected");
+    si468x_set_audio_output(SI468X_AUDIO_ANALOG); // restore default for later tests
+
     std::cout << "PASS: test_audio_output_modes" << std::endl;
     return true;
 }
@@ -816,20 +819,21 @@ static bool test_property_values()
     ASSERT_TRUE(si468x_set_rds_region(SI468X_REGION_US) == SI468X_SUCCESS, "region US");
     ASSERT_TRUE(chip.writes.back() == prop_frame(0x3900, 0), "75 us = 0");
 
+    ASSERT_TRUE(si468x_set_audio_output(SI468X_AUDIO_I2S) == SI468X_ERROR_PARAM, "route rejected while running");
+
     chip.writes.clear();
-    ASSERT_TRUE(si468x_set_audio_output(SI468X_AUDIO_ANALOG) == SI468X_SUCCESS, "analog");
+    ASSERT_TRUE(apply_audio_output(SI468X_AUDIO_ANALOG) == SI468X_SUCCESS, "analog");
     ASSERT_TRUE(chip.writes.size() == 1 && chip.writes[0] == prop_frame(0x0800, 0x8001), "analog: one frame, INTBOUTEN kept");
 
     chip.writes.clear();
-    ASSERT_TRUE(si468x_set_audio_output(SI468X_AUDIO_I2S) == SI468X_SUCCESS, "i2s");
+    ASSERT_TRUE(apply_audio_output(SI468X_AUDIO_I2S) == SI468X_SUCCESS, "i2s");
     ASSERT_TRUE(chip.writes.size() == 3 && chip.writes[0] == prop_frame(0x0800, 0x8002)
                 && chip.writes[1] == prop_frame(0x0200, 0x8000) && chip.writes[2] == prop_frame(0x0202, 0x1000), "i2s frames");
 
     chip.writes.clear();
-    ASSERT_TRUE(si468x_set_audio_output(SI468X_AUDIO_SIMUL) == SI468X_SUCCESS, "simul");
+    ASSERT_TRUE(apply_audio_output(SI468X_AUDIO_SIMUL) == SI468X_SUCCESS, "simul");
     ASSERT_TRUE(chip.writes.size() == 3 && chip.writes[0] == prop_frame(0x0800, 0x8003), "simul pins");
 
-    si468x_set_audio_output(SI468X_AUDIO_ANALOG); // restore default for later tests
     std::cout << "PASS: test_property_values" << std::endl;
     return true;
 }

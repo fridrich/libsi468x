@@ -135,6 +135,7 @@ void si468x_decode_short_label(const uint8_t* raw_label, int raw_len, uint16_t c
 typedef int (*si468x_transport_fn)(const uint8_t* tx, uint8_t* rx, size_t len, void* ctx);
 void si468x_set_test_transport(si468x_transport_fn fn, void* ctx);
 #define SC_ERR_OK 1 /* ERR is an expected outcome; caller inspects resp[1] */
+int apply_audio_output(int mode); // si468x_init() only
 int send_command(const uint8_t* cmd, size_t cmd_len, uint8_t* resp, size_t resp_len, int timeout_ms = 1000, unsigned flags = 0);
 int read_reply(uint8_t* resp, size_t len);
 int wait_stc(int timeout_ms);

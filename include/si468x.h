@@ -337,9 +337,12 @@ int si468x_get_service_info(uint32_t service_id, si468x_service_info_t* info);
 int si468x_get_signal_status(si468x_signal_status_t* status);
 
 /**
- * @brief Configure the master audio hardware output path routing.
- * @param enable_i2s Pass 1 to enable I2S digital output, or 0 to route to the analog headphone jack.
- * @return SI468X_SUCCESS on success, or a negative error code on failure.
+ * @brief Select the audio output route applied by the next si468x_init().
+ *
+ * The chip takes the route only at boot: call this before si468x_init(). Changing it
+ * afterwards needs si468x_shutdown() and a new si468x_init().
+ * @param enable_i2s SI468X_AUDIO_ANALOG, SI468X_AUDIO_I2S or SI468X_AUDIO_SIMUL.
+ * @return SI468X_SUCCESS, or SI468X_ERROR_PARAM for an unknown route or while the chip is running.
  */
 int si468x_set_audio_output(int enable_i2s);
 

@@ -621,12 +621,7 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     // Wait for the on-chip application operating system to boot and stabilize
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
 
-    // Configure default digital audio format before tuning
-    si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_SELECT, 0x8000);
-    si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_FORMAT, 0x1000);
-
-    // Enable default audio output upon system init
-    if (si468x_set_audio_output(active_audio_mode) != SI468X_SUCCESS) {
+    if (apply_audio_output(active_audio_mode) != SI468X_SUCCESS) {
         SI468X_ERR << "libsi468x: Warning: Failed to configure default audio output." << std::endl;
     }
 
@@ -1293,18 +1288,21 @@ int si468x_get_signal_status(si468x_signal_status_t* status)
     return SI468X_SUCCESS;
 }
 
+// The chip takes the output route only at boot: record it for si468x_init().
 int si468x_set_audio_output(int enable_i2s)
 {
-    active_audio_mode = enable_i2s;
-
-    if (!bus_open()) {
-        // Applied by si468x_init()
-        return SI468X_SUCCESS;
+    if (bus_open() || enable_i2s < SI468X_AUDIO_ANALOG || enable_i2s > SI468X_AUDIO_SIMUL) {
+        return SI468X_ERROR_PARAM;
     }
+    active_audio_mode = enable_i2s;
+    return SI468X_SUCCESS;
+}
 
+int apply_audio_output(int mode)
+{
     // PIN_CONFIG_ENABLE: INTBOUTEN 0x8000 (default on), I2SOUTEN 0x0002, DACOUTEN 0x0001
-    bool i2s = (enable_i2s == SI468X_AUDIO_I2S || enable_i2s == SI468X_AUDIO_SIMUL);
-    uint16_t pins = 0x8000 | (i2s ? 0x0002 : 0) | (enable_i2s != SI468X_AUDIO_I2S ? 0x0001 : 0);
+    bool i2s = (mode == SI468X_AUDIO_I2S || mode == SI468X_AUDIO_SIMUL);
+    uint16_t pins = 0x8000 | (i2s ? 0x0002 : 0) | (mode != SI468X_AUDIO_I2S ? 0x0001 : 0);
     int ret = si468x_set_property(SI468X_PROP_PIN_CONFIG_ENABLE, pins);
     if (ret != SI468X_SUCCESS || !i2s) {
         return ret;
