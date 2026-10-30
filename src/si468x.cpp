@@ -1,5 +1,6 @@
 /*
- *    Copyright (C) 2026
+ * SPDX-FileCopyrightText: 2026 Fridrich Strba
+ * SPDX-License-Identifier: MPL-2.0
  *    si468x.cpp - Hardware Driver Core Implementation for libsi468x
  *    resp[] indexing: resp[0] is clocked in with the RD_REPLY opcode (garbage), status byte 0 is resp[1]
  */

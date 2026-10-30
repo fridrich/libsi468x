@@ -1,5 +1,6 @@
 /*
- *    Copyright (C) 2026
+ * SPDX-FileCopyrightText: 2026 Fridrich Strba
+ * SPDX-License-Identifier: MPL-2.0
  *    mock_chip.h - Fake Si468x behind the test transport seam
  *
  *    Models the real reply buffer: re-readable, every RD_REPLY restarts at resp[0].

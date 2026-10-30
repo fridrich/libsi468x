@@ -1,3 +1,5 @@
+/* SPDX-FileCopyrightText: 2026 Fridrich Strba */
+/* SPDX-License-Identifier: MPL-2.0 */
 /**
  * @file si468x.h
  * @brief Reusable C-API Driver for Silicon Labs Si468x Receivers.

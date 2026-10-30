@@ -1,5 +1,6 @@
 /*
- *    Copyright (C) 2026
+ * SPDX-FileCopyrightText: 2026 Fridrich Strba
+ * SPDX-License-Identifier: MPL-2.0
  *    si468x_internal.h - Internal Opcodes and Declarations for libsi468x
  */
 

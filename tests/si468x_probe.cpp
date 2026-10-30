@@ -1,5 +1,6 @@
 /*
- *    Copyright (C) 2026
+ * SPDX-FileCopyrightText: 2026 Fridrich Strba
+ * SPDX-License-Identifier: MPL-2.0
  *    si468x_probe.cpp - Raw command access for hardware verification
  *
  *    sudo si468x_probe [--fmhd] [--tune <ch>] [--play <SId> <CompId>] [--fm <kHz>]

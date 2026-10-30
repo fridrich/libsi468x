@@ -1,5 +1,6 @@
 /*
- *    Copyright (C) 2026
+ * SPDX-FileCopyrightText: 2026 Fridrich Strba
+ * SPDX-License-Identifier: MPL-2.0
  *    si468x_scan.cpp - Diagnostic DAB Frequency Scanner Utility with Active Playback Test
  */
 

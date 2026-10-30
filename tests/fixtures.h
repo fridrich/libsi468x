@@ -1,5 +1,6 @@
 /*
- *    Copyright (C) 2026
+ * SPDX-FileCopyrightText: 2026 Fridrich Strba
+ * SPDX-License-Identifier: MPL-2.0
  *    fixtures.h - Captured and synthetic Si468x replies, lib indexing (resp[0] = dummy byte)
  */
 

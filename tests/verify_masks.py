@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Fridrich Strba
+# SPDX-License-Identifier: MPL-2.0
 import json
 import sys
 

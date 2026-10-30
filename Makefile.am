@@ -7,7 +7,7 @@ pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = libsi468x.pc
 
 # Distribute formatting configurations inside the release tarball
-EXTRA_DIST = astyle.options Doxyfile.in docs/si468x-pi.md
+EXTRA_DIST = LICENSE astyle.options Doxyfile.in docs/si468x-pi.md
 
 # Support generating Doxygen documentation automatically during the build process
 if HAVE_DOXYGEN
