@@ -19,6 +19,9 @@ bin_PROGRAMS = si468x-pi
 noinst_LTLIBRARIES = libsi468x-pi-core.la
 
 libsi468x_pi_core_la_SOURCES = \
+	core/events.hpp \
+	core/radio_controller.cpp \
+	core/radio_controller.hpp \
 	core/settings.cpp \
 	core/settings.hpp \
 	core/station.cpp \

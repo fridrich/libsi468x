@@ -4,7 +4,7 @@
 AM_CXXFLAGS = -std=c++17 -Wall -Wextra -Wshadow -pthread
 AM_LDFLAGS = -pthread
 
-noinst_PROGRAMS = test_settings test_ui test_display test_plugins
+noinst_PROGRAMS = test_settings test_ui test_display test_plugins test_controller
 check_LTLIBRARIES = si468x-pi-example.la si468x-pi-badabi.la si468x-pi-badsym.la
 
 AM_CPPFLAGS = \
@@ -12,7 +12,10 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir)/tools/si468x-pi/core \
 	-I$(top_srcdir)/tools/si468x-pi/ui \
 	-I$(top_srcdir)/tools/si468x-pi/include \
-	-I$(top_srcdir)/tools/si468x-pi/third_party
+	-I$(top_srcdir)/tools/si468x-pi/third_party \
+	-I$(top_srcdir)/tests \
+	-I$(top_srcdir)/src \
+	-I$(top_srcdir)/include
 
 si468x_pi_example_la_SOURCES = example.c
 si468x_pi_example_la_CFLAGS = -Wall -Wextra -I$(top_srcdir)/tools/si468x-pi/include
@@ -38,7 +41,10 @@ test_display_LDADD = $(top_builddir)/tools/si468x-pi/libsi468x-pi-core.la
 test_plugins_SOURCES = test_plugins.cpp
 test_plugins_LDADD = $(top_builddir)/tools/si468x-pi/libsi468x-pi-core.la @LIBDL@
 
-TESTS = test_settings test_ui test_display test_plugins
+test_controller_SOURCES = test_controller.cpp
+test_controller_LDADD = $(top_builddir)/tools/si468x-pi/libsi468x-pi-core.la $(top_builddir)/src/libsi468x.la @LIBDL@
+
+TESTS = test_settings test_ui test_display test_plugins test_controller
 
 all-local: $(check_LTLIBRARIES)
 	@mkdir -p si468x-pi-plugins
