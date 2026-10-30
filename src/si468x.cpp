@@ -1309,9 +1309,8 @@ int apply_audio_output(int mode)
     }
 
     // DIGITAL_IO_OUTPUT_SELECT: MASTER 0x8000. OUTPUT_FORMAT: 16-bit sample (0x1000), slot = sample size, I2S framing
-    si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_SELECT, 0x8000);
-    si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_FORMAT, 0x1000);
-    return ret;
+    ret = si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_SELECT, 0x8000);
+    return ret != SI468X_SUCCESS ? ret : si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_FORMAT, 0x1000);
 }
 
 /*
