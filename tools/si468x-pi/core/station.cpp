@@ -60,6 +60,9 @@ bool same_station(const Station& a, const Station& b)
 void sort_stations(std::vector<Station>& stations)
 {
     std::stable_sort(stations.begin(), stations.end(), [](const Station& a, const Station& b) {
+        if (a.band != b.band) {
+            return a.band < b.band;
+        }
         if (a.program != b.program) {
             return a.program < b.program;
         }
@@ -76,7 +79,7 @@ void normalize_stations(std::vector<Station>& stations)
         if (s.program.empty()) {
             continue;
         }
-        if (!find_channel(s.channel)) {
+        if (s.band != "fm" && !find_channel(s.channel)) {
             continue;
         }
         bool duplicate = false;

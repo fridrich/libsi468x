@@ -86,8 +86,8 @@ struct Cache {
 /// ~/.config/..., else empty when neither variable is set.
 std::string default_settings_path();
 
-/// XDG cache path: $XDG_CACHE_HOME/si468x-pi/stations.json, else ~/.cache/...
-std::string default_cache_path();
+/// XDG cache path: $XDG_CACHE_HOME/si468x-pi/stations[-fmhd].json, else ~/.cache/...
+std::string default_cache_path(const std::string& mode = "dab");
 
 /// Parse a settings file.  A missing file is not an error and leaves defaults.
 /// Malformed JSON or bad values are reported through `warnings` and fall back

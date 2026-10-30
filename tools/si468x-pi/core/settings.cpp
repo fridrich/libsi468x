@@ -361,7 +361,7 @@ std::string default_settings_path()
     return base + "/si468x-pi/si468x-pi.json";
 }
 
-std::string default_cache_path()
+std::string default_cache_path(const std::string& mode)
 {
     std::string base = env_or_empty("XDG_CACHE_HOME");
     if (base.empty()) {
@@ -370,6 +370,9 @@ std::string default_cache_path()
             return std::string();
         }
         base = home + "/.cache";
+    }
+    if (mode == "fmhd") {
+        return base + "/si468x-pi/stations-fmhd.json";
     }
     return base + "/si468x-pi/stations.json";
 }
@@ -498,7 +501,8 @@ bool load_cache(const std::string& path, Cache& out, std::vector<std::string>* w
             long long v = sid_it->get<long long>();
             sid = v > 0 ? static_cast<uint32_t>(v) : 0;
         }
-        if (!channel.empty() && sid != 0 && find_channel(channel)) {
+        std::string band = read_string(*lp, "band", "dab", "last_played", warnings);
+        if (!channel.empty() && sid != 0 && (band == "fm" || find_channel(channel))) {
             out.last_played.channel = channel;
             out.last_played.service_id = sid;
         }
@@ -545,6 +549,7 @@ bool load_cache(const std::string& path, Cache& out, std::vector<std::string>* w
                     }
                 }
                 s.data = read_bool(entry, "data", false, where, warnings);
+                s.band = read_string(entry, "band", "dab", where, warnings);
                 if (s.program.empty() || s.service_id == 0) {
                     add_warning(warnings, where + ": missing program or service_id, skipped");
                     continue;
@@ -594,6 +599,7 @@ bool save_cache(const std::string& path, const Cache& cache, std::string* error)
             { "service_id", s.service_id },
             { "component_id", s.component_id },
             { "data", s.data },
+            { "band", s.band },
         });
     }
     root["stations"] = std::move(stations);

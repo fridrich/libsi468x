@@ -30,6 +30,7 @@ public:
         Play,
         Stop,
         Scan,
+        Seek,
         VolumeUp,
         VolumeDown,
         SetVolume,
@@ -75,6 +76,7 @@ public:
     void postPlay(const Station& station);
     void postStop();
     void postScan(bool auto_play = true);
+    void postSeek(bool seek_up = true);
     void abortScan();
     bool isScanning() const;
     void postVolumeUp();
@@ -110,6 +112,7 @@ private:
     void executePlay(const Station& station);
     void executeStop();
     void executeScan(bool auto_play);
+    void executeSeek(bool seek_up);
     void executeShutdown();
     void applyVolume(int chip_volume);
     void notifyState(ControllerState s);

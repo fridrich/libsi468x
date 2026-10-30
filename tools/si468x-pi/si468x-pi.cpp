@@ -498,7 +498,7 @@ int main(int argc, char** argv)
 
     si468x_pi::Cache cache;
     warnings.clear();
-    const std::string cache_path = si468x_pi::default_cache_path();
+    const std::string cache_path = si468x_pi::default_cache_path(settings.device.mode);
     si468x_pi::load_cache(cache_path, cache, &warnings);
     print_warnings(warnings);
 

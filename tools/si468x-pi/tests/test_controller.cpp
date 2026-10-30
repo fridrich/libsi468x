@@ -147,6 +147,13 @@ std::vector<uint8_t> make_two_service_payload()
     return p;
 }
 
+std::vector<uint8_t> rds_group(uint8_t fifo_used, uint16_t a, uint16_t b, uint16_t c, uint16_t d, uint8_t ble = 0)
+{
+    return reply({ 0x80, 0x80, 0x00, 0xC0, 0x02, 0x02, 0x00, 0x00, (uint8_t)a, (uint8_t)(a >> 8), fifo_used, ble,
+                   (uint8_t)a, (uint8_t)(a >> 8), (uint8_t)b, (uint8_t)(b >> 8),
+                   (uint8_t)c, (uint8_t)(c >> 8), (uint8_t)d, (uint8_t)(d >> 8) });
+}
+
 void test_error_mapping()
 {
     using namespace si468x_pi;
@@ -719,6 +726,82 @@ void test_audio_routing_apply()
     check(props.size() >= 2, "second SET_PROPERTY sent for audio output change to both");
 }
 
+void test_fmhd_tune_and_rds()
+{
+    using namespace si468x_pi;
+
+    MockChip chip;
+    RecordingSink sink;
+
+    Settings s;
+    s.device.mode = "fmhd";
+    s.poll.signal_ms = 500;
+    RadioController ctrl(s, &sink);
+
+    Station st{ "89.6", "89.6 MHz", "89.6", 89600000, 0, false, "fm" };
+    ctrl.setSimulatedPlaying(st);
+
+    // 8960 = 0x2300 in LE: 0x00, 0x23
+    std::vector<uint8_t> rsq = reply({ 0x80, 0x80, 0x00, 0xC0, 0x1F, 0x81, 0x00, 0x23, 0x00, 42, 28, 3 });
+    rsq.resize(SI468X_REP_FM_RSQ_STATUS, 0x00);
+    chip.expect(SI468X_CMD_FM_RSQ_STATUS, rsq);
+
+    // RT 2A segment 0 "fran" + segment 1 "ce\r "
+    chip.expect(SI468X_CMD_FM_RDS_STATUS, rds_group(2, 0x4321, 0x2000, 0x6672, 0x616E));
+    chip.expect(SI468X_CMD_FM_RDS_STATUS, rds_group(1, 0x4321, 0x2001, 0x6365, 0x0D20));
+
+    ctrl.pollTelemetry(1000);
+
+    check(!sink.signals.empty(), "FM signal status received");
+    if (!sink.signals.empty()) {
+        check(sink.signals.back().rssi == 42, "FM RSSI is 42 dBuV");
+        check(sink.signals.back().snr == 28, "FM SNR is 28 dB");
+        check(sink.signals.back().sync_status == 1, "FM channel is valid");
+    }
+
+    check(!sink.dls_texts.empty(), "RDS RadioText received via DLS event");
+    if (!sink.dls_texts.empty()) {
+        check(sink.dls_texts.back() == "france", "RDS RadioText matches");
+    }
+}
+
+void test_fmhd_seek()
+{
+    using namespace si468x_pi;
+
+    MockChip chip;
+    RecordingSink sink;
+
+    Settings s;
+    s.device.mode = "fmhd";
+    RadioController ctrl(s, &sink);
+    ctrl.start(false);
+    ctrl.waitIdle();
+
+    // Prepare seek reply:
+    // 1. SEEK_START
+    chip.expect(SI468X_CMD_FM_SEEK_START, reply({ 0x81, 0x80, 0x00, 0xC0 }));
+
+    // 2. Status read in executeSeek: 91.2 MHz (9120 = 0x23A0 -> LE: 0xA0, 0x23)
+    std::vector<uint8_t> rsq = reply({ 0x80, 0x80, 0x00, 0xC0, 0x1F, 0x81, 0xA0, 0x23, 0x00, 40, 25, 3 });
+    rsq.resize(SI468X_REP_FM_RSQ_STATUS, 0x00);
+    chip.expect(SI468X_CMD_FM_RSQ_STATUS, rsq);
+    chip.expect(SI468X_CMD_FM_RDS_STATUS, rds_group(0, 0, 0, 0, 0));
+
+    ctrl.postSeek(true);
+    ctrl.waitIdle();
+
+    check(ctrl.state() == ControllerState::Playing, "playing after seek");
+    check(ctrl.currentFrequency() == 91200000, "current frequency is 91.2 MHz (91200000 Hz)");
+    check(ctrl.currentStation().channel == "91.2", "station channel is 91.2");
+
+    auto seeks = chip.sent(SI468X_CMD_FM_SEEK_START);
+    check(!seeks.empty(), "FM_SEEK_START command was sent");
+    if (!seeks.empty()) {
+        check(seeks[0][1] == 0x00, "seek command parameters");
+    }
+}
+
 } // namespace
 
 int main()
@@ -741,6 +824,8 @@ int main()
     test_spi_consecutive_errors();
     test_synthetic_polling_flat_memory();
     test_audio_routing_apply();
+    test_fmhd_tune_and_rds();
+    test_fmhd_seek();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed" << std::endl;

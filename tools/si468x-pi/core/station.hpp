@@ -24,6 +24,7 @@ struct Station {
     uint32_t service_id = 0;
     uint16_t component_id = 0;
     bool data = false;
+    std::string band = "dab";
 };
 
 /// Full Band III table, including the 10N/11N/12N entries used by the chip's

@@ -194,6 +194,13 @@ void RadioController::postScan(bool auto_play)
     m_cv.notify_one();
 }
 
+void RadioController::postSeek(bool seek_up)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_queue.push_back({ CommandType::Seek, {}, 0, seek_up });
+    m_cv.notify_one();
+}
+
 void RadioController::abortScan()
 {
     m_abort_scan = true;
@@ -387,6 +394,9 @@ void RadioController::executeCommand(const Command& cmd)
     case CommandType::Scan:
         executeScan(cmd.bool_arg);
         break;
+    case CommandType::Seek:
+        executeSeek(cmd.bool_arg);
+        break;
     case CommandType::VolumeUp:
         if (m_muted) {
             m_muted = false;
@@ -426,6 +436,52 @@ void RadioController::executeCommand(const Command& cmd)
 
 void RadioController::executePlay(const Station& station)
 {
+    if (m_settings.device.mode == "fmhd" || station.band == "fm") {
+        uint32_t freq_hz = station.service_id;
+        if (freq_hz == 0 && !station.channel.empty()) {
+            try {
+                double mhz = std::stod(station.channel);
+                freq_hz = static_cast<uint32_t>(mhz * 1000000.0 + 0.5);
+            } catch (...) {
+                freq_hz = 0;
+            }
+        }
+        if (freq_hz == 0) {
+            notifyError("Invalid FM frequency: " + station.channel);
+            notifyState(ControllerState::Error);
+            return;
+        }
+
+        if (si468x_get_frequency() != freq_hz) {
+            notifyState(ControllerState::Tuning);
+            const int rc = si468x_tune_fm(freq_hz / 1000);
+            if (rc != SI468X_SUCCESS) {
+                notifyError("FM tune failed: " + formatError(rc));
+                notifyState(ControllerState::Error);
+                return;
+            }
+            m_current_frequency = freq_hz;
+        }
+
+        applyVolume(m_current_volume);
+
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_current_station = station;
+            m_current_station.band = "fm";
+            m_last_dls_poll = 0;
+            m_last_sig_poll = 0;
+            m_last_info_poll = 0;
+            m_last_ens_poll = 0;
+            m_last_ev_poll = 0;
+            m_sync_lost_start = 0;
+            m_consecutive_spi_errors = 0;
+            m_signal_lost = false;
+        }
+        notifyState(ControllerState::Playing);
+        return;
+    }
+
     const Channel* chan = find_channel(station.channel);
     if (!chan) {
         notifyError("Unknown channel: " + station.channel);
@@ -501,10 +557,83 @@ void RadioController::executeStop()
     notifyState(ControllerState::Stopped);
 }
 
+void RadioController::executeSeek(bool seek_up)
+{
+    notifyState(ControllerState::Tuning);
+    const int rc = si468x_fm_seek_start(seek_up ? 1 : 0, 1);
+    if (rc != SI468X_SUCCESS) {
+        notifyError("FM seek failed: " + formatError(rc));
+        notifyState(ControllerState::Error);
+        return;
+    }
+    si468x_fm_status_t fm = {};
+    if (si468x_get_fm_status(&fm) == SI468X_SUCCESS) {
+        m_current_frequency = fm.frequency_hz;
+        char ch[32] = {};
+        std::snprintf(ch, sizeof(ch), "%.1f", fm.frequency_hz / 1000000.0);
+        char ps[9] = {};
+        si468x_get_rds_station_name(ps, sizeof(ps));
+        std::string prog = ps[0] ? ps : std::string(ch) + " MHz";
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_current_station = Station{ ch, prog, prog, fm.frequency_hz, 0, false, "fm" };
+        }
+    }
+    notifyState(ControllerState::Playing);
+}
+
 void RadioController::executeScan(bool auto_play)
 {
     notifyState(ControllerState::Scanning);
     m_abort_scan = false;
+
+    if (m_settings.device.mode == "fmhd") {
+        std::vector<Station> found;
+        bool aborted = false;
+        for (uint32_t freq_khz = 87500; freq_khz <= 108000; freq_khz += 100) {
+            if (m_abort_scan.exchange(false) || !m_running.load()) {
+                aborted = true;
+                break;
+            }
+            char ch_buf[16];
+            std::snprintf(ch_buf, sizeof(ch_buf), "%.1f", freq_khz / 1000.0);
+            notifyScanProgress(ch_buf, static_cast<int>(found.size()), (freq_khz - 87500) / 100, 206);
+            if (si468x_tune_fm(freq_khz) != SI468X_SUCCESS) {
+                continue;
+            }
+            si468x_fm_status_t fm = {};
+            if (si468x_get_fm_status(&fm) == SI468X_SUCCESS && fm.valid && fm.rssi >= m_settings.scan.rssi_min) {
+                char ps[9] = {};
+                si468x_get_rds_station_name(ps, sizeof(ps));
+                std::string prog = ps[0] ? ps : std::string(ch_buf) + " MHz";
+                found.push_back(Station{ ch_buf, prog, prog, freq_khz * 1000, 0, false, "fm" });
+            }
+        }
+        normalize_stations(found);
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_stations = found;
+        }
+        notifyStationListChanged(found);
+        if (!m_cache_path.empty()) {
+            Cache c;
+            c.version = 1;
+            c.complete = !aborted;
+            c.stations = found;
+            c.volume = m_current_volume;
+            if (!m_current_station.channel.empty()) {
+                c.last_played.channel = m_current_station.channel;
+                c.last_played.service_id = m_current_station.service_id;
+            }
+            si468x_pi::save_cache(m_cache_path, c);
+        }
+        if (auto_play && !found.empty()) {
+            executePlay(found[0]);
+        } else {
+            notifyState(ControllerState::Idle);
+        }
+        return;
+    }
 
     const auto& channels = m_settings.scan.channels.empty() ? default_scan_channels()
                                                             : m_settings.scan.channels;
@@ -698,6 +827,44 @@ bool RadioController::isSignalLost() const
 void RadioController::pollTelemetry(uint64_t now_ms_override)
 {
     const uint64_t now = (now_ms_override != 0) ? now_ms_override : now_ms();
+
+    if (m_settings.device.mode == "fmhd") {
+        const uint64_t sig_interval = m_settings.poll.signal_ms > 0 ? static_cast<uint64_t>(m_settings.poll.signal_ms) : 500;
+        if (now >= m_last_sig_poll + sig_interval) {
+            m_last_sig_poll = now;
+            si468x_fm_status_t fm = {};
+            if (si468x_get_fm_status(&fm) == SI468X_SUCCESS) {
+                si468x_signal_status_t sig = {};
+                sig.rssi = fm.rssi;
+                sig.snr = fm.snr;
+                sig.sync_status = fm.valid;
+                notifySignal(sig);
+
+                char ps[9] = {};
+                if (si468x_get_rds_station_name(ps, sizeof(ps)) > 0 && ps[0] != '\0') {
+                    std::string ps_str = ps;
+                    while (!ps_str.empty() && ps_str.back() == ' ') {
+                        ps_str.pop_back();
+                    }
+                    if (!ps_str.empty() && m_current_station.program != ps_str) {
+                        m_current_station.program = ps_str;
+                        m_current_station.short_program = ps_str;
+                    }
+                }
+                char rt[65] = {};
+                if (si468x_get_rds_text(rt, sizeof(rt)) > 0 && rt[0] != '\0') {
+                    std::string rt_str = rt;
+                    while (!rt_str.empty() && rt_str.back() == ' ') {
+                        rt_str.pop_back();
+                    }
+                    if (!rt_str.empty()) {
+                        notifyDls(rt_str);
+                    }
+                }
+            }
+        }
+        return;
+    }
 
     // 1. DLS text (poll.dls_ms)
     const uint64_t dls_interval = m_settings.poll.dls_ms > 0 ? static_cast<uint64_t>(m_settings.poll.dls_ms) : 300;
