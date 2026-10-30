@@ -51,10 +51,13 @@ tests/si468x_find_mask
 # si468x-pi build and test outputs
 tools/si468x-pi/si468x-pi
 tools/si468x-pi/tests/test_settings
+tools/si468x-pi/tests/test_ui
+tools/si468x-pi/tests/test_display
 tools/si468x-pi/tests/*.log
 tools/si468x-pi/tests/*.trs
 tools/si468x-pi/.dirstamp
 tools/si468x-pi/core/.dirstamp
+tools/si468x-pi/ui/.dirstamp
 tools/si468x-pi/tests/.dirstamp
 
 # Generated firmware sources

@@ -7,6 +7,7 @@
 #include "core/settings.hpp"
 #include "core/station.hpp"
 #include "core/version.hpp"
+#include "ui/demo_ui.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -240,8 +241,7 @@ int main(int argc, char** argv)
     print_warnings(warnings);
 
     if (demo_ui) {
-        std::fprintf(stderr, "si468x-pi: --demo-ui is not available in this build\n");
-        return 0;
+        return si468x_pi::run_demo_ui(settings, cache);
     }
 
     if (verbose) {
