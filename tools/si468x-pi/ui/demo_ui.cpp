@@ -43,7 +43,7 @@ int display_cols(const Settings& settings)
     if (!settings.display.empty() && settings.display[0].type == "tty" && settings.display[0].cols > 0) {
         return settings.display[0].cols;
     }
-    return 78;
+    return 80;
 }
 
 int display_rows(const Settings& settings)
@@ -51,7 +51,7 @@ int display_rows(const Settings& settings)
     if (!settings.display.empty() && settings.display[0].type == "tty" && settings.display[0].rows > 0) {
         return settings.display[0].rows;
     }
-    return 22;
+    return 25;
 }
 
 } // namespace

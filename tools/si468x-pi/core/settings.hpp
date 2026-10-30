@@ -29,8 +29,8 @@ struct DisplayConfig {
     std::string type = "tty"; // "tty" for the built-in display
     std::string plugin;       // plugin name when type is empty
     std::string device;
-    int cols = 78;
-    int rows = 22;
+    int cols = 80;
+    int rows = 25;
     std::string config_json;
 };
 
@@ -71,7 +71,8 @@ struct Settings {
 struct LastPlayed {
     std::string channel;
     uint32_t service_id = 0;
-    bool valid() const { return !channel.empty() && service_id != 0; }
+    std::string band = "dab";
+    bool valid() const { return !channel.empty() || service_id != 0; }
 };
 
 struct Cache {

@@ -12,6 +12,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 const char si468x_pi_plugin_name[] = "fb";
 const char si468x_pi_plugin_description[] = "Linux framebuffer display (/dev/fb*)";

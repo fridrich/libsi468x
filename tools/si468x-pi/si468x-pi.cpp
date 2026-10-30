@@ -124,6 +124,12 @@ public:
         m_scanning->setScanningStatus(ch, found);
     }
 
+    void onStation(const si468x_pi::Station& st) override
+    {
+        m_radio->setChannelName(st.channel);
+        m_radio->setProgramName(st.program, st.short_program);
+    }
+
     void onStationListChanged(const std::vector<si468x_pi::Station>& stations) override
     {
         m_station_list->setStations(stations);
@@ -184,9 +190,23 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
 {
     install_signal_handlers();
 
+    int tty_cols = 80;
+    int tty_rows = 25;
+    for (const auto& dcfg : settings.display) {
+        if (dcfg.type == "tty") {
+            if (dcfg.cols > 0) {
+                tty_cols = dcfg.cols;
+            }
+            if (dcfg.rows > 0) {
+                tty_rows = dcfg.rows;
+            }
+            break;
+        }
+    }
+
     std::vector<std::unique_ptr<si468x_pi::IDisplay>> displays;
     if (isatty(STDOUT_FILENO)) {
-        displays.push_back(std::make_unique<si468x_pi::TtyDisplay>(20, 4));
+        displays.push_back(std::make_unique<si468x_pi::TtyDisplay>(tty_cols, tty_rows));
     }
     for (const auto& dcfg : settings.display) {
         if (!dcfg.plugin.empty()) {
@@ -197,7 +217,7 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
         }
     }
     if (displays.empty()) {
-        displays.push_back(std::make_unique<si468x_pi::TtyDisplay>(20, 4, stdout));
+        displays.push_back(std::make_unique<si468x_pi::TtyDisplay>(tty_cols, tty_rows, stdout));
     }
 
     auto multi_display = std::make_unique<si468x_pi::MultiDisplay>(std::move(displays));
@@ -225,15 +245,38 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
 
     std::string current_audio_mode = settings.device.audio;
 
+    auto play_next_station = [&](int delta) {
+        const auto& stations = controller.stations();
+        if (stations.empty()) {
+            return;
+        }
+        const auto& cur = controller.currentStation();
+        size_t idx = 0;
+        for (size_t i = 0; i < stations.size(); ++i) {
+            if (stations[i].service_id == cur.service_id &&
+                (cur.channel.empty() || stations[i].channel == cur.channel)) {
+                idx = i;
+                break;
+            }
+        }
+        const size_t next_idx = (idx + delta + stations.size()) % stations.size();
+        station_list->setIndex(next_idx);
+        controller.postPlay(stations[next_idx]);
+    };
+
     radio->setInputCallback([&](si468x_pi::InputAction action) {
         if (action == si468x_pi::InputAction::MENU) {
             ui.pushScreen(menu);
+        } else if (action == si468x_pi::InputAction::ENTER) {
+            ui.pushScreen(station_list);
+        } else if (action == si468x_pi::InputAction::UP || action == si468x_pi::InputAction::LEFT) {
+            play_next_station(-1);
+        } else if (action == si468x_pi::InputAction::DOWN || action == si468x_pi::InputAction::RIGHT) {
+            play_next_station(1);
         }
     });
 
     station_list->setSelectCallback([&](const si468x_pi::Station& st) {
-        radio->setChannelName(st.channel);
-        radio->setProgramName(st.program, st.short_program);
         controller.postPlay(st);
         ui.resetToRoot();
     });
@@ -281,22 +324,55 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
     } else if (!st_list.empty()) {
         si468x_pi::Station target = st_list.front();
         if (service_id != 0) {
-            for (const auto& s : st_list) {
-                if (s.service_id == static_cast<uint32_t>(service_id)) {
-                    target = s;
+            for (size_t i = 0; i < st_list.size(); ++i) {
+                if (st_list[i].service_id == static_cast<uint32_t>(service_id)) {
+                    target = st_list[i];
+                    station_list->setIndex(i);
                     break;
                 }
             }
         } else if (!programme.empty()) {
-            for (const auto& s : st_list) {
-                if (s.program.find(programme) != std::string::npos) {
-                    target = s;
+            for (size_t i = 0; i < st_list.size(); ++i) {
+                if (st_list[i].program.find(programme) != std::string::npos) {
+                    target = st_list[i];
+                    station_list->setIndex(i);
                     break;
                 }
             }
+        } else if (cache.last_played.valid()) {
+            bool found_target = false;
+            if (settings.device.mode == "fmhd" || cache.last_played.band == "fm") {
+                for (size_t i = 0; i < st_list.size(); ++i) {
+                    if ((cache.last_played.service_id != 0 && st_list[i].service_id == cache.last_played.service_id) ||
+                        (!cache.last_played.channel.empty() && st_list[i].channel == cache.last_played.channel)) {
+                        target = st_list[i];
+                        station_list->setIndex(i);
+                        found_target = true;
+                        break;
+                    }
+                }
+                if (!found_target) {
+                    target.channel = cache.last_played.channel;
+                    target.service_id = cache.last_played.service_id;
+                    target.band = "fm";
+                    target.program = target.channel.empty() ? "" : target.channel + " MHz";
+                }
+            } else {
+                // DAB mode: strictly match the (ensemble/channel, service_id) pair
+                if (cache.last_played.service_id != 0) {
+                    for (size_t i = 0; i < st_list.size(); ++i) {
+                        if (st_list[i].service_id == cache.last_played.service_id) {
+                            if (cache.last_played.channel.empty() || st_list[i].channel == cache.last_played.channel) {
+                                target = st_list[i];
+                                station_list->setIndex(i);
+                                found_target = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         }
-        radio->setChannelName(target.channel);
-        radio->setProgramName(target.program, target.short_program);
         controller.postPlay(target);
     }
 

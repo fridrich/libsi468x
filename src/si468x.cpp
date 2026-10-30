@@ -621,6 +621,10 @@ int si468x_init(const char* spi_device, int rst_pin, int boot_mode)
     // Wait for the on-chip application operating system to boot and stabilize
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
 
+    // Configure default digital audio format before tuning
+    si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_SELECT, 0x8000);
+    si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_FORMAT, 0x1000);
+
     // Enable default audio output upon system init
     if (si468x_set_audio_output(active_audio_mode) != SI468X_SUCCESS) {
         SI468X_ERR << "libsi468x: Warning: Failed to configure default audio output." << std::endl;
@@ -1307,11 +1311,9 @@ int si468x_set_audio_output(int enable_i2s)
     }
 
     // DIGITAL_IO_OUTPUT_SELECT: MASTER 0x8000. OUTPUT_FORMAT: 16-bit sample (0x1000), slot = sample size, I2S framing
-    ret = si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_SELECT, 0x8000);
-    if (ret != SI468X_SUCCESS) {
-        return ret;
-    }
-    return si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_FORMAT, 0x1000);
+    si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_SELECT, 0x8000);
+    si468x_set_property(SI468X_PROP_DIGITAL_IO_OUTPUT_FORMAT, 0x1000);
+    return ret;
 }
 
 /*

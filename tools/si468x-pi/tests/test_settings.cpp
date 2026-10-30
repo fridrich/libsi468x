@@ -85,16 +85,27 @@ void test_normalize()
     Station dup = b;
     Station unknown { "99Z", "Ghost", "Ghost", 3, 0, false };
     Station empty { "12A", "", "", 4, 0, false };
+    Station spi { "12A", "SPI Service", "SPI", 0xE1400103, 0, true, "dab" };
     Station other = a;
     other.channel = "12B";
 
-    std::vector<Station> list = { a, b, dup, unknown, empty, other };
+    std::vector<Station> list = { a, b, dup, unknown, empty, spi, other };
     normalize_stations(list);
 
-    check(list.size() == 3, "normalize keeps three stations");
+    check(list.size() == 3, "normalize keeps three stations and drops SPI (>0xFFFF)");
     check(list[0].program == "Alpha", "normalize sorts by program");
     check(list[1].program == "Beta" && list[1].channel == "12A", "same program sorts by channel");
     check(list[2].program == "Beta" && list[2].channel == "12B", "second channel kept");
+
+    Station fm1 { "100.1", "100.1 MHz", "100.1 MHz", 100100000, 0, false, "fm" };
+    Station fm2 { "88.5", "88.5 MHz", "88.5 MHz", 88500000, 0, false, "fm" };
+    Station fm3 { "91.3", "SRF 1", "SRF 1", 91300000, 0, false, "fm" };
+    std::vector<Station> fmlist = { fm1, fm2, fm3 };
+    normalize_stations(fmlist);
+    check(fmlist.size() == 3, "normalize keeps three FM stations");
+    check(fmlist[0].channel == "88.5", "FM sorts 88.5 first");
+    check(fmlist[1].channel == "91.3", "FM sorts 91.3 second");
+    check(fmlist[2].channel == "100.1", "FM sorts 100.1 third");
 }
 
 void test_defaults()
@@ -296,6 +307,22 @@ void test_cache()
           "data service kept and flagged");
     check(loaded.stations[1].program == "RTS Première", "UTF-8 label round-trip");
     check(loaded.stations[1].component_id == 0x1234, "component id round-trip");
+
+    Cache fm_cache;
+    fm_cache.last_played.channel = "88.5";
+    fm_cache.last_played.service_id = 88500000;
+    fm_cache.last_played.band = "fm";
+    fm_cache.stations = {
+        Station { "88.5", "88.5 MHz", "88.5 MHz", 88500000, 0, false, "fm" },
+    };
+    const std::string fm_path = base + "/cache/stations-fmhd.json";
+    check(save_cache(fm_path, fm_cache, &error), "fm cache saves");
+    Cache fm_loaded;
+    warnings.clear();
+    check(load_cache(fm_path, fm_loaded, &warnings), "fm cache loads");
+    check(fm_loaded.last_played.valid() && fm_loaded.last_played.service_id == 88500000 && fm_loaded.last_played.band == "fm",
+          "fm last played round-trip");
+    unlink(fm_path.c_str());
 
     write_file(path, "{\"version\": 2}");
     Cache future;

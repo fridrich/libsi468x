@@ -205,6 +205,11 @@ void test_station_list()
     empty.render(eframe);
     check(has(eframe.lines[1], "Empty"), "empty station list");
 
+    empty.setStations(stations);
+    Frame populated(30, 5, 0);
+    empty.render(populated);
+    check(populated.lines[0] == "Select: 1/4", "dynamically set stations render correctly");
+
     list.setIndex(2);
     Frame indexed(30, 5, 0);
     list.render(indexed);

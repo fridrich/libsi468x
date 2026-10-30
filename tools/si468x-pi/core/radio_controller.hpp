@@ -119,6 +119,7 @@ private:
     void notifyVolume(int percent, bool muted);
     void notifyError(const std::string& msg);
     void notifyScanProgress(const std::string& channel, int found, int current_idx, int total);
+    void notifyStation(const Station& station);
     void notifyStationListChanged(const std::vector<Station>& stations);
     void notifySignal(const si468x_signal_status_t& sig);
     void notifyDls(const std::string& dls);

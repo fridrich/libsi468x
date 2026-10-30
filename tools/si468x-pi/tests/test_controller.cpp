@@ -60,6 +60,11 @@ public:
         station_lists.push_back(list);
     }
 
+    void onStation(const si468x_pi::Station& st) override
+    {
+        stations_played.push_back(st);
+    }
+
     void onSignal(const si468x_signal_status_t& s) override
     {
         signals.push_back(s);
@@ -101,6 +106,7 @@ public:
     std::vector<std::string> errors;
     std::vector<std::pair<int, bool>> volumes;
     std::vector<ProgressEntry> progress;
+    std::vector<si468x_pi::Station> stations_played;
     std::vector<std::vector<si468x_pi::Station>> station_lists;
     std::vector<si468x_signal_status_t> signals;
     std::vector<std::string> dls_texts;
@@ -222,6 +228,8 @@ void test_tune_and_play()
     check(ctrl.state() == ControllerState::Playing, "controller state is Playing");
     check(ctrl.currentFrequency() == 223936000, "current frequency is 12A (223936000 Hz)");
     check(ctrl.currentStation().service_id == 0x43D1, "current station matches");
+    check(!sink.stations_played.empty() && sink.stations_played.back().service_id == 0x43D1,
+          "onStation event published");
 
     auto tunes = chip.sent(SI468X_CMD_DAB_TUNE_FREQ);
     check(tunes.size() == 1, "exactly one DAB_TUNE_FREQ sent");

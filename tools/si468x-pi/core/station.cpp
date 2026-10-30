@@ -63,6 +63,30 @@ void sort_stations(std::vector<Station>& stations)
         if (a.band != b.band) {
             return a.band < b.band;
         }
+        if (a.band == "fm") {
+            uint32_t fa = a.service_id;
+            uint32_t fb = b.service_id;
+            if (fa == 0 && !a.channel.empty()) {
+                try {
+                    fa = static_cast<uint32_t>(std::stod(a.channel) * 1000000.0 + 0.5);
+                } catch (...) {}
+            }
+            if (fb == 0 && !b.channel.empty()) {
+                try {
+                    fb = static_cast<uint32_t>(std::stod(b.channel) * 1000000.0 + 0.5);
+                } catch (...) {}
+            }
+            if (fa != fb) {
+                return fa < fb;
+            }
+            if (a.component_id != b.component_id) {
+                return a.component_id < b.component_id;
+            }
+            if (a.program != b.program) {
+                return a.program < b.program;
+            }
+            return a.channel < b.channel;
+        }
         if (a.program != b.program) {
             return a.program < b.program;
         }
@@ -80,6 +104,9 @@ void normalize_stations(std::vector<Station>& stations)
             continue;
         }
         if (s.band != "fm" && !find_channel(s.channel)) {
+            continue;
+        }
+        if (s.band != "fm" && s.service_id > 0xFFFF) {
             continue;
         }
         bool duplicate = false;

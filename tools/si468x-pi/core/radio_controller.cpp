@@ -111,9 +111,10 @@ bool RadioController::saveCache(const std::string& path) const
         std::lock_guard<std::mutex> lock(m_mutex);
         c.stations = m_stations;
         c.volume = m_current_volume;
-        if (!m_current_station.channel.empty()) {
+        if (!m_current_station.channel.empty() || m_current_station.service_id != 0) {
             c.last_played.channel = m_current_station.channel;
             c.last_played.service_id = m_current_station.service_id;
+            c.last_played.band = m_current_station.band.empty() ? m_settings.device.mode : m_current_station.band;
         }
     }
     return si468x_pi::save_cache(path, c);
@@ -478,7 +479,11 @@ void RadioController::executePlay(const Station& station)
             m_consecutive_spi_errors = 0;
             m_signal_lost = false;
         }
+        notifyStation(station);
         notifyState(ControllerState::Playing);
+        if (!m_cache_path.empty()) {
+            saveCache(m_cache_path);
+        }
         return;
     }
 
@@ -546,7 +551,11 @@ void RadioController::executePlay(const Station& station)
         m_consecutive_spi_errors = 0;
         m_signal_lost = false;
     }
+    notifyStation(station);
     notifyState(ControllerState::Playing);
+    if (!m_cache_path.empty()) {
+        saveCache(m_cache_path);
+    }
 }
 
 void RadioController::executeStop()
@@ -578,8 +587,12 @@ void RadioController::executeSeek(bool seek_up)
             std::lock_guard<std::mutex> lock(m_mutex);
             m_current_station = Station{ ch, prog, prog, fm.frequency_hz, 0, false, "fm" };
         }
+        notifyStation(m_current_station);
     }
     notifyState(ControllerState::Playing);
+    if (!m_cache_path.empty()) {
+        saveCache(m_cache_path);
+    }
 }
 
 void RadioController::executeScan(bool auto_play)
@@ -615,20 +628,29 @@ void RadioController::executeScan(bool auto_play)
             m_stations = found;
         }
         notifyStationListChanged(found);
+        Station to_play;
+        if (!found.empty()) {
+            to_play = found[0];
+        }
         if (!m_cache_path.empty()) {
             Cache c;
             c.version = 1;
             c.complete = !aborted;
             c.stations = found;
             c.volume = m_current_volume;
-            if (!m_current_station.channel.empty()) {
+            if (!to_play.channel.empty()) {
+                c.last_played.channel = to_play.channel;
+                c.last_played.service_id = to_play.service_id;
+                c.last_played.band = "fm";
+            } else if (!m_current_station.channel.empty()) {
                 c.last_played.channel = m_current_station.channel;
                 c.last_played.service_id = m_current_station.service_id;
+                c.last_played.band = "fm";
             }
             si468x_pi::save_cache(m_cache_path, c);
         }
         if (auto_play && !found.empty()) {
-            executePlay(found[0]);
+            executePlay(to_play);
         } else {
             notifyState(ControllerState::Idle);
         }
@@ -676,6 +698,9 @@ void RadioController::executeScan(bool auto_play)
                 if (svcs[i].is_data_service && !m_settings.scan.include_data) {
                     continue;
                 }
+                if (svcs[i].service_id > 0xFFFF) {
+                    continue;
+                }
                 std::string prog_label = svcs[i].label;
                 while (!prog_label.empty() && (prog_label.back() == ' ' || prog_label.back() == '\0')) {
                     prog_label.pop_back();
@@ -713,27 +738,36 @@ void RadioController::executeScan(bool auto_play)
     }
     notifyStationListChanged(found);
 
-    if (!m_cache_path.empty()) {
-        Cache c;
-        c.version = 1;
-        c.complete = !aborted;
-        c.stations = found;
-        c.volume = m_current_volume;
-        if (!m_current_station.channel.empty()) {
-            c.last_played.channel = m_current_station.channel;
-            c.last_played.service_id = m_current_station.service_id;
-        }
-        si468x_pi::save_cache(m_cache_path, c);
-    }
-
-    if (auto_play && !found.empty()) {
-        Station to_play = found[0];
+    Station to_play;
+    if (!found.empty()) {
+        to_play = found[0];
         for (const auto& s : found) {
             if (!s.data) {
                 to_play = s;
                 break;
             }
         }
+    }
+
+    if (!m_cache_path.empty()) {
+        Cache c;
+        c.version = 1;
+        c.complete = !aborted;
+        c.stations = found;
+        c.volume = m_current_volume;
+        if (!to_play.channel.empty()) {
+            c.last_played.channel = to_play.channel;
+            c.last_played.service_id = to_play.service_id;
+            c.last_played.band = "dab";
+        } else if (!m_current_station.channel.empty()) {
+            c.last_played.channel = m_current_station.channel;
+            c.last_played.service_id = m_current_station.service_id;
+            c.last_played.band = "dab";
+        }
+        si468x_pi::save_cache(m_cache_path, c);
+    }
+
+    if (auto_play && !found.empty()) {
         executePlay(to_play);
     } else {
         notifyState(ControllerState::Idle);
@@ -803,6 +837,18 @@ void RadioController::notifyScanProgress(const std::string& channel, int found, 
     }
     if (ev) {
         ev->onScanProgress(channel, found, current_idx, total);
+    }
+}
+
+void RadioController::notifyStation(const Station& station)
+{
+    IControllerEvents* ev = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        ev = m_events;
+    }
+    if (ev) {
+        ev->onStation(station);
     }
 }
 

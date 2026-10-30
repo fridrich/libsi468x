@@ -51,7 +51,7 @@ void runStdinReader(InputQueue& queue, const StopPredicate& stop_requested)
 
         if (c == '\033') {
             char seq[2] = { 0, 0 };
-            if (readByte(seq[0], 50) > 0 && seq[0] == '[' && readByte(seq[1], 50) > 0) {
+            if (readByte(seq[0], 50) > 0 && (seq[0] == '[' || seq[0] == 'O') && readByte(seq[1], 50) > 0) {
                 switch (seq[1]) {
                 case 'A':
                     queue.push(InputAction::UP);
@@ -74,9 +74,9 @@ void runStdinReader(InputQueue& queue, const StopPredicate& stop_requested)
         } else if (c == 'q' || c == 'x' || c == '.') {
             queue.push(InputAction::QUIT);
             break;
-        } else if (c == 'u') {
+        } else if (c == 'u' || c == 'k') {
             queue.push(InputAction::UP);
-        } else if (c == 'd') {
+        } else if (c == 'd' || c == 'j') {
             queue.push(InputAction::DOWN);
         } else if (c == 'l') {
             queue.push(InputAction::LEFT);

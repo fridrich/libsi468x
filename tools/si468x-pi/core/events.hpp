@@ -45,6 +45,7 @@ public:
 
     virtual void onState(ControllerState /*state*/) {}
     virtual void onScanProgress(const std::string& /*channel*/, int /*found*/, int /*current_idx*/, int /*total*/) {}
+    virtual void onStation(const Station& /*station*/) {}
     virtual void onStationListChanged(const std::vector<Station>& /*stations*/) {}
     virtual void onSignal(const si468x_signal_status_t& /*signal*/) {}
     virtual void onEnsemble(const si468x_ensemble_info_t& /*ensemble*/) {}

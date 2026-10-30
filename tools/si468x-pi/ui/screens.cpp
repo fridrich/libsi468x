@@ -370,6 +370,14 @@ void StationListScreen::setStations(const std::vector<Station>& stations)
     if (m_index >= m_stations.size()) {
         m_index = 0;
     }
+    m_showChannel.clear();
+    std::map<std::string, int> count;
+    for (const auto& s : m_stations) {
+        ++count[s.program];
+    }
+    for (const auto& s : m_stations) {
+        m_showChannel.push_back(count[s.program] > 1);
+    }
 }
 
 bool StationListScreen::isSelected() const

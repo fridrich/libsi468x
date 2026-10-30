@@ -492,7 +492,10 @@ bool load_cache(const std::string& path, Cache& out, std::vector<std::string>* w
 
     auto lp = root.find("last_played");
     if (lp != root.end() && lp->is_object()) {
-        std::string channel = read_string(*lp, "channel", "", "last_played", warnings);
+        std::string channel = read_string(*lp, "ensemble", "", "last_played", warnings);
+        if (channel.empty()) {
+            channel = read_string(*lp, "channel", "", "last_played", warnings);
+        }
         uint32_t sid = 0;
         auto sid_it = lp->find("service_id");
         if (sid_it != lp->end() && sid_it->is_number_unsigned()) {
@@ -501,10 +504,14 @@ bool load_cache(const std::string& path, Cache& out, std::vector<std::string>* w
             long long v = sid_it->get<long long>();
             sid = v > 0 ? static_cast<uint32_t>(v) : 0;
         }
-        std::string band = read_string(*lp, "band", "dab", "last_played", warnings);
-        if (!channel.empty() && sid != 0 && (band == "fm" || find_channel(channel))) {
+        std::string band = read_string(*lp, "band", "", "last_played", warnings);
+        if (band.empty()) {
+            band = (find_channel(channel) != nullptr) ? "dab" : "fm";
+        }
+        if (!channel.empty() || sid != 0) {
             out.last_played.channel = channel;
             out.last_played.service_id = sid;
+            out.last_played.band = band;
         }
     }
 
@@ -531,7 +538,10 @@ bool load_cache(const std::string& path, Cache& out, std::vector<std::string>* w
                     continue;
                 }
                 Station s;
-                s.channel = read_string(entry, "channel", "", where, warnings);
+                s.channel = read_string(entry, "ensemble", "", where, warnings);
+                if (s.channel.empty()) {
+                    s.channel = read_string(entry, "channel", "", where, warnings);
+                }
                 s.program = read_string(entry, "program", "", where, warnings);
                 s.short_program = read_string(entry, "short_program", "", where, warnings);
                 auto sid = entry.find("service_id");
@@ -552,6 +562,9 @@ bool load_cache(const std::string& path, Cache& out, std::vector<std::string>* w
                 s.band = read_string(entry, "band", "dab", where, warnings);
                 if (s.program.empty() || s.service_id == 0) {
                     add_warning(warnings, where + ": missing program or service_id, skipped");
+                    continue;
+                }
+                if (s.band != "fm" && s.service_id > 0xFFFF) {
                     continue;
                 }
                 out.stations.push_back(s);
@@ -582,8 +595,10 @@ bool save_cache(const std::string& path, const Cache& cache, std::string* error)
     root["version"] = 1;
     if (copy.last_played.valid()) {
         root["last_played"] = {
+            { "ensemble", copy.last_played.channel },
             { "channel", copy.last_played.channel },
             { "service_id", copy.last_played.service_id },
+            { "band", copy.last_played.band },
         };
     }
     if (copy.volume >= 0) {
@@ -593,6 +608,7 @@ bool save_cache(const std::string& path, const Cache& cache, std::string* error)
     ojson stations = ojson::array();
     for (const Station& s : copy.stations) {
         stations.push_back(ojson{
+            { "ensemble", s.channel },
             { "channel", s.channel },
             { "program", s.program },
             { "short_program", s.short_program },
