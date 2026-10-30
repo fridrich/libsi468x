@@ -1,4 +1,4 @@
-SUBDIRS = src tests
+SUBDIRS = src tests tools
 ACLOCAL_AMFLAGS = -I m4
 AM_DISTCHECK_CONFIGURE_FLAGS = --disable-firmware
 

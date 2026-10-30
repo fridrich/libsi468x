@@ -3,7 +3,7 @@ AC_INIT([libsi468x], [0.0.0])
 AC_CONFIG_SRCDIR([src/si468x.cpp])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIRS([m4])
-AM_INIT_AUTOMAKE([foreign -Wall -Werror dist-bzip2 dist-xz])
+AM_INIT_AUTOMAKE([foreign -Wall -Werror subdir-objects dist-bzip2 dist-xz])
 
 # Setup the archiver tool for shared libraries
 AM_PROG_AR
@@ -17,6 +17,48 @@ AC_PROG_CC
 
 # Check for header files
 AC_CHECK_HEADERS([stdint.h stdlib.h string.h unistd.h fcntl.h sys/ioctl.h])
+
+# Optional si468x-pi application (tools/si468x-pi).  Disabling it keeps a pure
+# library build and must not require a C++17 compiler or JSON headers.
+AC_ARG_ENABLE([si468x-pi],
+    [AS_HELP_STRING([--disable-si468x-pi], [do not build the si468x-pi terminal application])],
+    [], [enable_si468x_pi=yes])
+AM_CONDITIONAL([ENABLE_SI468X_PI], [test "x$enable_si468x_pi" = xyes])
+
+AC_ARG_WITH([json],
+    [AS_HELP_STRING([--with-json=system|vendored], [JSON header source for si468x-pi (default: vendored)])],
+    [], [with_json=vendored])
+AM_CONDITIONAL([SI468X_PI_VENDORED_JSON], [test "x$with_json" = "xvendored"])
+
+LIBDL=""
+AC_SUBST([LIBDL])
+
+if test "x$enable_si468x_pi" = xyes; then
+    case "$with_json" in
+        system|vendored) ;;
+        *) AC_MSG_ERROR([--with-json must be 'system' or 'vendored']) ;;
+    esac
+
+    save_CXXFLAGS="$CXXFLAGS"
+    CXXFLAGS="$CXXFLAGS -std=c++17"
+    AC_LANG_PUSH([C++])
+    AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+#if __cplusplus < 201703L
+#error "C++17 is required by si468x-pi"
+#endif
+        ]], [[]])],
+        [],
+        [AC_MSG_ERROR([si468x-pi needs a C++17 compiler (try --disable-si468x-pi)])])
+    AC_LANG_POP([C++])
+    CXXFLAGS="$save_CXXFLAGS"
+
+    if test "x$with_json" = "xsystem"; then
+        AC_CHECK_HEADER([nlohmann/json.hpp], [],
+            [AC_MSG_ERROR([nlohmann/json.hpp not found; install nlohmann-json3-dev or use --with-json=vendored])])
+    fi
+
+    AC_CHECK_LIB([dl], [dlopen], [LIBDL="-ldl"], [LIBDL=""])
+fi
 
 # Firmware images embedded at build time (never distributed). Missing/empty = configure error.
 AC_ARG_ENABLE([firmware],
@@ -74,6 +116,9 @@ AC_CONFIG_FILES([
     Makefile
     src/Makefile
     tests/Makefile
+    tools/Makefile
+    tools/si468x-pi/Makefile
+    tools/si468x-pi/tests/Makefile
     libsi468x.pc
     Doxyfile
 ])
