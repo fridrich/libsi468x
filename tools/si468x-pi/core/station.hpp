@@ -40,6 +40,7 @@ const std::vector<std::string>& default_scan_channels();
 /// FM stations: service_id, else the channel parsed as MHz; 0 if neither.
 uint32_t fm_frequency_hz(const Station& s);
 
+/// DAB: program name as in a dictionary (case and accents ignored), then channel. FM: frequency.
 void sort_stations(std::vector<Station>& stations);
 
 /// Remove duplicates by (channel, service_id), drop entries with an empty

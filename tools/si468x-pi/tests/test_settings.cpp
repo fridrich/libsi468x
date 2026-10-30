@@ -90,6 +90,27 @@ void test_normalize()
     check(list[1].program == "Beta" && list[1].channel == "12A", "same program sorts by channel");
     check(list[2].program == "Beta" && list[2].channel == "12B", "second channel kept");
 
+    std::vector<Station> mixed = {
+        { "12A", "rts", "rts", 1, 0, false },
+        { "12A", "Beta", "Beta", 2, 0, false },
+        { "12A", "Alpha", "Alpha", 3, 0, false },
+        { "12A", "SRF", "SRF", 4, 0, false },
+        { "12A", "RTS Première", "RTS Prem", 5, 0, false },
+        { "12A", "Rete Uno", "Rete Uno", 6, 0, false },
+        { "12A", "Écho", "Écho", 7, 0, false },
+        { "12A", "Espace 2", "Espace 2", 8, 0, false },
+        { "12A", "Zürich", "Zürich", 9, 0, false },
+        { "12A", "Zug", "Zug", 10, 0, false },
+    };
+    normalize_stations(mixed);
+    std::vector<std::string> order;
+    for (const Station& st : mixed) {
+        order.push_back(st.program);
+    }
+    check(order == std::vector<std::string>{ "Alpha", "Beta", "Écho", "Espace 2", "Rete Uno", "rts",
+                                             "RTS Première", "SRF", "Zug", "Zürich" },
+          "DAB sorts like a dictionary: case and accents ignored");
+
     Station fm1 { "100.1", "100.1 MHz", "100.1 MHz", 100100000, 0, false, "fm" };
     Station fm2 { "88.5", "88.5 MHz", "88.5 MHz", 88500000, 0, false, "fm" };
     Station fm3 { "91.3", "SRF 1", "SRF 1", 91300000, 0, false, "fm" };
