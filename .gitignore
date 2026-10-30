@@ -77,4 +77,4 @@ firmware/*.bin
 
 # Generated Doxygen documentation
 Doxyfile
-doc/
+/doc/

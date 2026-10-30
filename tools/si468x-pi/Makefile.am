@@ -53,6 +53,11 @@ libsi468x_pi_core_la_LIBADD = @LIBDL@
 si468x_pi_SOURCES = si468x-pi.cpp
 si468x_pi_LDADD = libsi468x-pi-core.la $(top_builddir)/src/libsi468x.la @LIBDL@
 
+man1_MANS = doc/si468x-pi.1
+
+examplesdir = $(docdir)/examples
+dist_examples_DATA = examples/si468x-pi.json examples/si468x-pi.service
+
 SUBDIRS = . plugins tests
 
-EXTRA_DIST = README.md third_party/nlohmann/LICENSE.MIT third_party/nlohmann/json.hpp
+EXTRA_DIST = README.md third_party/nlohmann/LICENSE.MIT third_party/nlohmann/json.hpp doc/si468x-pi.1

@@ -1,0 +1,21 @@
+[Unit]
+Description=si468x-pi DAB/FM Radio Daemon
+Documentation=man:si468x-pi(1)
+After=network.target sound.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/si468x-pi --config /etc/si468x-pi/si468x-pi.json
+Restart=on-failure
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+# To run unprivileged without root, install /etc/udev/rules.d/99-si468x.rules:
+#   SUBSYSTEM=="spidev", KERNEL=="spidev0.0", GROUP="dialout", MODE="0660"
+#   SUBSYSTEM=="gpio", KERNEL=="gpio*", GROUP="dialout", MODE="0660"
+# User=radio
+# Group=dialout
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,131 @@
+.\" SPDX-FileCopyrightText: 2026 Fridrich Strba
+.\" SPDX-License-Identifier: GPL-2.0-or-later
+.TH SI468X-PI 1 "October 2026" "si468x-pi 0.0.0" "User Commands"
+.SH NAME
+si468x-pi \- terminal radio application for the Silicon Labs Si468x receiver on Raspberry Pi
+.SH SYNOPSIS
+.B si468x-pi
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+\fBsi468x-pi\fR is an interactive terminal and headless daemon application for controlling
+the uGreen DAB Board and other Silicon Labs Si468x receiver boards on the Raspberry Pi.
+It provides automatic Band III scanning, station caching, real-time DLS text display with
+marquee scrolling, audio routing control (analog, I2S, or both), and hardware plugin
+support (Linux evdev remotes, framebuffer displays, and HD44780 character LCDs).
+
+.SH OPTIONS
+.TP
+.BR \-c ", " \-\-config " \fIFILE\fR"
+Load settings from the specified JSON \fIFILE\fR. If omitted, the standard XDG configuration
+search paths are consulted (\fI$XDG_CONFIG_HOME/si468x-pi/si468x-pi.json\fR, then \fI/etc/si468x-pi/si468x-pi.json\fR).
+.TP
+.BR \-s ", " \-\-spi " \fIDEV\fR"
+Override the SPI character device (default: \fI/dev/spidev0.0\fR).
+.TP
+.BR \-g ", " \-\-reset\-gpio " \fIN\fR"
+Override the BCM GPIO pin used for hardware reset (default: \fI23\fR).
+.TP
+.BR \-m ", " \-\-mode " \fIdab\fR|\fIfmhd\fR"
+Set tuner boot mode. Default is \fIdab\fR.
+.TP
+.BR \-a ", " \-\-audio " \fIanalog\fR|\fIi2s\fR|\fIboth\fR"
+Select audio output routing. Default is \fIanalog\fR.
+.TP
+.BR \-S ", " \-\-service\-id " \fIN\fR"
+Tune and immediately start playing the 32-bit Service ID \fIN\fR.
+.TP
+.BR \-p ", " \-\-programme " \fINAME\fR"
+Play the first cached station matching \fINAME\fR.
+.TP
+.BR \-n ", " \-\-no\-scan
+Use existing station cache; do not initiate a scan if the cache is empty.
+.TP
+.BR \-\-rescan
+Force a fresh Band III scan even if cached stations exist.
+.TP
+.BR \-\-log
+Enable low-level diagnostic driver logging from libsi468x.
+.TP
+.BR \-\-config\-example
+Print a fully populated JSON configuration template to stdout and exit.
+.TP
+.BR \-\-demo\-ui
+Launch the interactive terminal UI using a synthetic source without accessing hardware.
+.TP
+.BR \-v ", " \-\-verbose
+Print verbose runtime diagnostics to stderr.
+.TP
+.BR \-h ", " \-\-help
+Display command-line help and exit.
+.TP
+.BR \-\-version
+Output version information and exit.
+
+.SH INTERACTIVE CONTROLS
+When run from an interactive terminal (TTY), the following keys are available:
+.TP
+.B Up / Down, u / d
+Navigate station lists and menu choices.
+.TP
+.B Enter, e
+Select station or menu item.
+.TP
+.B Menu, m, Esc, Left
+Open the main menu or go back to the previous screen.
+.TP
+.B Home, h
+Return directly to the main radio playing screen.
+.TP
+.B +, =
+Increase volume.
+.TP
+.B \-
+Decrease volume.
+.TP
+.B 0
+Toggle mute.
+.TP
+.B q, x
+Exit the application cleanly.
+
+.SH CONFIGURATION
+Settings are formatted in JSON. Use \fBsi468x-pi \-\-config-example\fR to generate a starting template.
+The configuration file allows customizing hardware devices, volume defaults, scan channel lists,
+polling frequencies, and plugins:
+.IP \[bu] 2
+\fBdevice\fR: \fIspi\fR, \fIreset_gpio\fR, \fImode\fR, \fIaudio\fR, \fIregion\fR.
+.IP \[bu] 2
+\fBvolume\fR: \fIstart\fR (0..100 percent), \fIstep\fR (percent per step).
+.IP \[bu] 2
+\fBscan\fR: \fIrssi_min\fR (threshold in dBµV), \fIinclude_data\fR, \fIchannels\fR array.
+.IP \[bu] 2
+\fBinput\fR: array of input source definitions (stdin, evdev plugin).
+.IP \[bu] 2
+\fBdisplay\fR: array of display outputs (tty, fb plugin, lcd plugin).
+
+.SH PLUGINS
+Hardware drivers for input devices and displays are loaded dynamically as shared objects from
+\fI/usr/local/lib/si468x-pi/\fR or next to the executable in \fIsi468x-pi-plugins/\fR:
+.TP
+.B si468x-pi-evdev.so
+Reads Linux input event devices (\fI/dev/input/event*\fR) with configurable key mappings.
+.TP
+.B si468x-pi-fb.so
+Renders 8x8 font text to Linux framebuffers (\fI/dev/fb*\fR) in RGB565 or XRGB8888.
+.TP
+.B si468x-pi-lcd.so
+Drives HD44780 character LCD displays through \fI/dev/lcd\fR with automatic character set mapping.
+
+.SH FILES
+.TP
+.I /etc/si468x-pi/si468x-pi.json
+System-wide configuration file.
+.TP
+.I $HOME/.config/si468x-pi/si468x-pi.json
+User configuration file.
+.TP
+.I $HOME/.cache/si468x-pi/cache.json
+Cached station table and last played station.
+
+.SH AUTHORS
+Written by Fridrich Strba and si468x-pi contributors.
