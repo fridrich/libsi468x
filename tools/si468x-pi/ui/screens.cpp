@@ -115,6 +115,12 @@ void ScanningScreen::setScanningStatus(const std::string& channel, int foundCoun
     m_found = foundCount;
 }
 
+void ScanningScreen::setAbortCallback(std::function<void()> cb)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_abortCallback = std::move(cb);
+}
+
 void ScanningScreen::render(Frame& frame)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -129,7 +135,16 @@ void ScanningScreen::render(Frame& frame)
 
 void ScanningScreen::handleInput(InputAction action)
 {
-    (void)action;
+    if (action == InputAction::MENU || action == InputAction::QUIT) {
+        std::function<void()> cb;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            cb = m_abortCallback;
+        }
+        if (cb) {
+            cb();
+        }
+    }
 }
 
 RadioScreen::RadioScreen() : m_signalPresent(true), m_signalChanged(now_ms())

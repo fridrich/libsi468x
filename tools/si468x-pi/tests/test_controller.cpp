@@ -6,12 +6,14 @@
 #include "core/station.hpp"
 #include "fixtures.h"
 #include "mock_chip.h"
+#include "screens.hpp"
 #include "si468x.h"
 #include "si468x_internal.h"
 
 #include <algorithm>
 #include <iostream>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -28,6 +30,8 @@ void check(bool cond, const std::string& message)
 
 class RecordingSink : public si468x_pi::IControllerEvents {
 public:
+    std::function<void(const std::string&, int)> on_progress_cb;
+
     void onState(si468x_pi::ControllerState s) override
     {
         states.push_back(s);
@@ -43,9 +47,31 @@ public:
         volumes.push_back({ pct, m });
     }
 
+    void onScanProgress(const std::string& ch, int found, int cur, int tot) override
+    {
+        progress.push_back({ ch, found, cur, tot });
+        if (on_progress_cb) {
+            on_progress_cb(ch, found);
+        }
+    }
+
+    void onStationListChanged(const std::vector<si468x_pi::Station>& list) override
+    {
+        station_lists.push_back(list);
+    }
+
+    struct ProgressEntry {
+        std::string channel;
+        int found;
+        int current_idx;
+        int total;
+    };
+
     std::vector<si468x_pi::ControllerState> states;
     std::vector<std::string> errors;
     std::vector<std::pair<int, bool>> volumes;
+    std::vector<ProgressEntry> progress;
+    std::vector<std::vector<si468x_pi::Station>> station_lists;
 };
 
 void put_label(std::vector<uint8_t>& v, const char* label)
@@ -55,12 +81,15 @@ void put_label(std::vector<uint8_t>& v, const char* label)
     }
 }
 
-void put_service(std::vector<uint8_t>& v, uint32_t sid, uint8_t pty, const char* label,
+void put_service(std::vector<uint8_t>& v, uint32_t sid, uint8_t b4, const char* label,
                  const std::vector<std::pair<uint16_t, uint8_t>>& comps)
 {
     v.insert(v.end(), { static_cast<uint8_t>(sid), static_cast<uint8_t>(sid >> 8),
                         static_cast<uint8_t>(sid >> 16), static_cast<uint8_t>(sid >> 24) });
-    v.insert(v.end(), { 0, 0, 0, static_cast<uint8_t>((comps.size() << 4) | (pty & 0x1F)) });
+    v.push_back(b4);
+    v.push_back(static_cast<uint8_t>(comps.size()));
+    v.push_back(0x00); // SICHARSET 0
+    v.push_back(0xF0);
     put_label(v, label);
     for (const auto& c : comps) {
         v.insert(v.end(), { static_cast<uint8_t>(c.first), static_cast<uint8_t>(c.first >> 8), c.second, 0x00 });
@@ -71,6 +100,14 @@ std::vector<uint8_t> make_service_list_payload()
 {
     std::vector<uint8_t> p = { 0x01, 0x00, 1, 0, 0, 0 };
     put_service(p, 0x43D1, 0x02, "RTS Premiere", { { 0x0007, (63 << 2) | 0x02 } });
+    return p;
+}
+
+std::vector<uint8_t> make_two_service_payload()
+{
+    std::vector<uint8_t> p = { 0x01, 0x00, 2, 0, 0, 0 };
+    put_service(p, 0x43D1, 0x02, "RTS Premiere", { { 0x0007, (63 << 2) | 0x02 } });
+    put_service(p, 0x43D3, 0x04, "Couleur 3", { { 0x0009, (63 << 2) | 0x02 } });
     return p;
 }
 
@@ -123,20 +160,16 @@ void test_tune_and_play()
     ctrl.waitIdle();
     check(ctrl.state() == ControllerState::Idle, "starts in Idle state");
 
-    // Prepare mock chip expectations for tuning 12A and playing 0x43D1
-    chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 })); // STCINT set
+    chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
     chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
-    chip.expect(SI468X_CMD_DAB_GET_EVENT_STATUS, reply({ 0x81, 0x80, 0x00, 0xC0, 0x01, 0x01, 0x27, 0x00 })); // SVRLIST set
+    chip.expect(SI468X_CMD_DAB_GET_EVENT_STATUS, reply({ 0x81, 0x80, 0x00, 0xC0, 0x01, 0x01, 0x27, 0x00 }));
 
-    // Service list reply
     const auto list_data = make_service_list_payload();
     std::vector<uint8_t> sl_rep = reply({ 0x80, 0x80, 0x00, 0xC0,
                                           static_cast<uint8_t>(list_data.size()),
                                           static_cast<uint8_t>(list_data.size() >> 8) });
     sl_rep.insert(sl_rep.end(), list_data.begin(), list_data.end());
     chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_LIST, sl_rep);
-
-    // Play service reply
     chip.expect(SI468X_CMD_START_DIGITAL_SERVICE, reply({ 0x80, 0x80, 0x00, 0xC0 }));
 
     Station st{ "12A", "RTS Premiere", "RTS Prem", 0x43D1, 7, false };
@@ -147,7 +180,6 @@ void test_tune_and_play()
     check(ctrl.currentFrequency() == 223936000, "current frequency is 12A (223936000 Hz)");
     check(ctrl.currentStation().service_id == 0x43D1, "current station matches");
 
-    // Assert exact command bytes sent to chip
     auto tunes = chip.sent(SI468X_CMD_DAB_TUNE_FREQ);
     check(tunes.size() == 1, "exactly one DAB_TUNE_FREQ sent");
     if (!tunes.empty()) {
@@ -161,7 +193,6 @@ void test_tune_and_play()
         check(plays[0] == want_play, "START_DIGITAL_SERVICE command bytes match exact SId/CompId");
     }
 
-    // Verify sink recorded state transitions
     const bool saw_tuning = std::find(sink.states.begin(), sink.states.end(), ControllerState::Tuning) != sink.states.end();
     const bool saw_playing = std::find(sink.states.begin(), sink.states.end(), ControllerState::Playing) != sink.states.end();
     check(saw_tuning, "recorded Tuning state transition");
@@ -182,9 +213,7 @@ void test_tune_failure_active_frequency()
 
     const uint32_t prev_freq = ctrl.currentFrequency();
 
-    // Channel 5A: STCINT set but no lock (times out waiting for ACQ/VALID)
     chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
-    // DIGRAD returns no signal
     chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_NOSIG);
 
     Station bad_st{ "5A", "No Signal", "No Signal", 0x1111, 1, false };
@@ -221,7 +250,6 @@ void test_volume_and_mute()
     ctrl.waitIdle();
     check(ctrl.volume() < vol_after_up, "volume down decreases volume");
 
-    // Test mute toggle
     ctrl.postMute();
     ctrl.waitIdle();
     check(ctrl.isMuted(), "mute toggles muted on");
@@ -230,7 +258,6 @@ void test_volume_and_mute()
     ctrl.waitIdle();
     check(!ctrl.isMuted(), "second mute unmutes");
 
-    // Test direct set volume
     ctrl.postSetVolume(40);
     ctrl.waitIdle();
     check(ctrl.volume() == 40, "direct setVolume sets exact level");
@@ -248,7 +275,6 @@ void test_shutdown_sequence()
     ctrl.start(false);
     ctrl.waitIdle();
 
-    // Prepare tune & play
     chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
     chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
     chip.expect(SI468X_CMD_DAB_GET_EVENT_STATUS, reply({ 0x81, 0x80, 0x00, 0xC0, 0x01, 0x01, 0x27, 0x00 }));
@@ -273,13 +299,231 @@ void test_shutdown_sequence()
 
     check(ctrl.state() == ControllerState::Stopped, "state is Stopped after shutdown");
 
-    // Assert STOP_DIGITAL_SERVICE command bytes
     auto stops = chip.sent(SI468X_CMD_STOP_DIGITAL_SERVICE);
     check(stops.size() == 1, "exactly one STOP_DIGITAL_SERVICE frame sent before shutdown");
     if (!stops.empty()) {
         const std::vector<uint8_t> want_stop = { 0x82, 0x00, 0x00, 0x00, 0xD1, 0x43, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00 };
         check(stops[0] == want_stop, "STOP_DIGITAL_SERVICE contains playing SId and ComponentId");
     }
+}
+
+void test_two_channel_mock_scan_and_cache_roundtrip()
+{
+    using namespace si468x_pi;
+
+    MockChip chip;
+    RecordingSink sink;
+
+    const std::string cache_file = "/tmp/si468x-pi-test-cache-" + std::to_string(getpid()) + ".json";
+    unlink(cache_file.c_str());
+
+    Settings s;
+    s.scan.channels = { "5A", "12A" };
+    s.scan.rssi_min = 8;
+    RadioController ctrl(s, &sink, cache_file);
+    ctrl.start(false);
+    ctrl.waitIdle();
+
+    // Channel 1: 5A -> no signal
+    chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_NOSIG);
+
+    // Channel 2: 12A -> locked with 2 services
+    chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    chip.expect(SI468X_CMD_DAB_GET_EVENT_STATUS, reply({ 0x81, 0x80, 0x00, 0xC0, 0x01, 0x01, 0x27, 0x00 }));
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    chip.expect(SI468X_CMD_DAB_GET_ENSEMBLE_INFO, reply({ 0x80, 0x80, 0x00, 0xC0, 0x43, 0xF0 }));
+    const auto list_data = make_two_service_payload();
+    std::vector<uint8_t> sl_rep = reply({ 0x80, 0x80, 0x00, 0xC0,
+                                          static_cast<uint8_t>(list_data.size()),
+                                          static_cast<uint8_t>(list_data.size() >> 8) });
+    sl_rep.insert(sl_rep.end(), list_data.begin(), list_data.end());
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_LIST, sl_rep);
+
+    // Service info for the 2 services
+    chip.expect(SI468X_CMD_DAB_GET_SERVICE_INFO, reply({ 0x80, 0x80, 0x00, 0xC0 }));
+    chip.expect(SI468X_CMD_DAB_GET_SERVICE_INFO, reply({ 0x80, 0x80, 0x00, 0xC0 }));
+
+    // Auto-play expectation for the first service ("Couleur 3" sorted first)
+    chip.expect(SI468X_CMD_START_DIGITAL_SERVICE, reply({ 0x80, 0x80, 0x00, 0xC0 }));
+
+    ctrl.postScan(true);
+    ctrl.waitIdle();
+
+    check(ctrl.state() == ControllerState::Playing, "auto-played station after scan");
+    check(ctrl.stations().size() == 2, "found 2 stations from 12A");
+    if (ctrl.stations().size() >= 2) {
+        check(ctrl.stations()[0].program == "Couleur 3", "stations are sorted by program name");
+        check(ctrl.stations()[1].program == "RTS Premiere", "second station sorted");
+    }
+
+    // Cache round-trip verification
+    Cache loaded;
+    std::vector<std::string> warnings;
+    check(load_cache(cache_file, loaded, &warnings), "cache file written and loads");
+    check(loaded.complete == true, "cache is marked complete");
+    check(loaded.stations.size() == 2, "cache contains both stations");
+    if (loaded.stations.size() >= 2 && ctrl.stations().size() >= 2) {
+        check(loaded.stations[0].service_id == ctrl.stations()[0].service_id, "cached station 0 matches");
+        check(loaded.stations[1].service_id == ctrl.stations()[1].service_id, "cached station 1 matches");
+    }
+
+    unlink(cache_file.c_str());
+}
+
+void test_rssi_min_and_data_service_skip()
+{
+    using namespace si468x_pi;
+
+    MockChip chip;
+    RecordingSink sink;
+
+    Settings s;
+    s.scan.channels = { "5A", "12A" };
+    s.scan.rssi_min = 20; // threshold 20 dBµV
+    s.scan.include_data = false;
+    RadioController ctrl(s, &sink);
+    ctrl.start(false);
+    ctrl.waitIdle();
+
+    // 5A: Locked, but RSSI = 15 dBµV (< 20) -> must be skipped!
+    chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    chip.expect(SI468X_CMD_DAB_GET_EVENT_STATUS, reply({ 0x81, 0x80, 0x00, 0xC0, 0x01, 0x01, 0x27, 0x00 }));
+    std::vector<uint8_t> low_rssi = FX_DIGRAD_SYNCED;
+    low_rssi[7] = 15; // RSSI 15
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, low_rssi);
+
+    // 12A: Locked, RSSI = 48 dBµV (>= 20) -> accepted
+    chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    chip.expect(SI468X_CMD_DAB_GET_EVENT_STATUS, reply({ 0x81, 0x80, 0x00, 0xC0, 0x01, 0x01, 0x27, 0x00 }));
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    chip.expect(SI468X_CMD_DAB_GET_ENSEMBLE_INFO, reply({ 0x80, 0x80, 0x00, 0xC0 }));
+
+    // 1 audio service + 1 data service
+    std::vector<uint8_t> p = { 0x01, 0x00, 2, 0, 0, 0 };
+    put_service(p, 0x43D1, 0x02, "RTS Premiere", { { 0x0007, (63 << 2) | 0x02 } });
+    put_service(p, 0xE1400103, 0x01, "Data Service", { { 0xC010, 60 << 2 } }); // data service
+
+    std::vector<uint8_t> sl_rep = reply({ 0x80, 0x80, 0x00, 0xC0,
+                                          static_cast<uint8_t>(p.size()),
+                                          static_cast<uint8_t>(p.size() >> 8) });
+    sl_rep.insert(sl_rep.end(), p.begin(), p.end());
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_LIST, sl_rep);
+    chip.expect(SI468X_CMD_DAB_GET_SERVICE_INFO, reply({ 0x80, 0x80, 0x00, 0xC0 }));
+
+    ctrl.postScan(false); // auto_play false
+    ctrl.waitIdle();
+
+    check(ctrl.stations().size() == 1, "low RSSI channel and data service skipped");
+    if (!ctrl.stations().empty()) {
+        check(ctrl.stations()[0].program == "RTS Premiere", "only audio service retained");
+    }
+}
+
+void test_abort_between_channels_keeps_partial_cache()
+{
+    using namespace si468x_pi;
+
+    MockChip chip;
+    RecordingSink sink;
+
+    const std::string cache_file = "/tmp/si468x-pi-test-partial-" + std::to_string(getpid()) + ".json";
+    unlink(cache_file.c_str());
+
+    Settings s;
+    s.scan.channels = { "12A", "12B" };
+    s.scan.rssi_min = 8;
+    RadioController ctrl(s, &sink, cache_file);
+    ctrl.start(false);
+    ctrl.waitIdle();
+
+    // 12A succeeds with 1 station
+    chip.expect(SI468X_CMD_DAB_TUNE_FREQ, reply({ 0x81, 0x80, 0x00, 0xC0 }));
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    chip.expect(SI468X_CMD_DAB_GET_EVENT_STATUS, reply({ 0x81, 0x80, 0x00, 0xC0, 0x01, 0x01, 0x27, 0x00 }));
+    chip.expect(SI468X_CMD_DAB_DIGRAD_STATUS, FX_DIGRAD_SYNCED);
+    chip.expect(SI468X_CMD_DAB_GET_ENSEMBLE_INFO, reply({ 0x80, 0x80, 0x00, 0xC0 }));
+
+    const auto list_data = make_service_list_payload();
+    std::vector<uint8_t> sl_rep = reply({ 0x80, 0x80, 0x00, 0xC0,
+                                          static_cast<uint8_t>(list_data.size()),
+                                          static_cast<uint8_t>(list_data.size() >> 8) });
+    sl_rep.insert(sl_rep.end(), list_data.begin(), list_data.end());
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_LIST, sl_rep);
+    chip.expect(SI468X_CMD_DAB_GET_SERVICE_INFO, reply({ 0x80, 0x80, 0x00, 0xC0 }));
+
+    // Abort scan immediately after 12A completes
+    sink.on_progress_cb = [&](const std::string& ch, int found) {
+        if (ch == "12A" && found > 0) {
+            ctrl.abortScan();
+        }
+    };
+
+    ctrl.postScan(false);
+    ctrl.waitIdle();
+
+    check(ctrl.state() == ControllerState::Idle, "state is Idle after aborted scan");
+    check(ctrl.stations().size() == 1, "stations from 12A preserved in controller");
+
+    Cache loaded;
+    std::vector<std::string> warnings;
+    check(load_cache(cache_file, loaded, &warnings), "partial cache written to disk");
+    check(loaded.complete == false, "partial cache marked complete=false");
+    check(loaded.stations.size() == 1, "partial cache contains 1 station");
+
+    unlink(cache_file.c_str());
+}
+
+void test_warm_start_does_not_scan()
+{
+    using namespace si468x_pi;
+
+    MockChip chip;
+    RecordingSink sink;
+
+    const std::string cache_file = "/tmp/si468x-pi-test-warm-" + std::to_string(getpid()) + ".json";
+    unlink(cache_file.c_str());
+
+    // Write a pre-existing cache file
+    Cache existing;
+    existing.version = 1;
+    existing.complete = true;
+    existing.stations = {
+        Station{ "12A", "Warm Station 1", "Warm 1", 0x1111, 1, false },
+        Station{ "12A", "Warm Station 2", "Warm 2", 0x2222, 2, false },
+    };
+    save_cache(cache_file, existing);
+
+    Settings s;
+    RadioController ctrl(s, &sink, cache_file);
+    check(ctrl.loadCache(cache_file), "load existing cache succeeds");
+    check(ctrl.stations().size() == 2, "stations loaded from cache");
+
+    ctrl.start(false);
+    ctrl.waitIdle();
+
+    // Verify no tune commands were sent to the chip
+    check(chip.sent(SI468X_CMD_DAB_TUNE_FREQ).empty(), "warm start does not perform tuning/scan");
+
+    unlink(cache_file.c_str());
+}
+
+void test_scanning_screen_abort_wiring()
+{
+    using namespace si468x_pi;
+
+    ScanningScreen screen;
+    bool aborted = false;
+    screen.setAbortCallback([&]() { aborted = true; });
+
+    screen.handleInput(InputAction::UP);
+    check(!aborted, "UP does not abort");
+
+    screen.handleInput(InputAction::MENU);
+    check(aborted, "MENU triggers abort callback");
 }
 
 } // namespace
@@ -294,6 +538,11 @@ int main()
     test_tune_failure_active_frequency();
     test_volume_and_mute();
     test_shutdown_sequence();
+    test_two_channel_mock_scan_and_cache_roundtrip();
+    test_rssi_min_and_data_service_skip();
+    test_abort_between_channels_keeps_partial_cache();
+    test_warm_start_does_not_scan();
+    test_scanning_screen_abort_wiring();
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed" << std::endl;

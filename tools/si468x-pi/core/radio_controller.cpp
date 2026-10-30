@@ -8,10 +8,11 @@
 
 namespace si468x_pi {
 
-RadioController::RadioController(const Settings& settings, IControllerEvents* events)
-    : m_settings(settings), m_events(events)
+RadioController::RadioController(const Settings& settings, IControllerEvents* events,
+                                 const std::string& cache_path)
+    : m_settings(settings), m_events(events),
+      m_cache_path(cache_path.empty() ? default_cache_path() : cache_path)
 {
-    // Convert settings percent (0..100) to chip volume (0..63)
     const int start_pct = std::clamp(settings.volume.start, 0, 100);
     m_current_volume = std::clamp((start_pct * 63 + 50) / 100, 0, 63);
     m_saved_volume = m_current_volume;
@@ -77,6 +78,73 @@ int RadioController::initHardware()
     return SI468X_SUCCESS;
 }
 
+bool RadioController::loadCache(const std::string& path)
+{
+    Cache c;
+    std::vector<std::string> warnings;
+    if (!si468x_pi::load_cache(path, c, &warnings) || c.stations.empty()) {
+        return false;
+    }
+    std::vector<Station> st;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_stations = c.stations;
+        normalize_stations(m_stations);
+        if (c.volume >= 0 && c.volume <= 63) {
+            m_current_volume = c.volume;
+            m_saved_volume = m_current_volume;
+        }
+        st = m_stations;
+    }
+    notifyStationListChanged(st);
+    return true;
+}
+
+bool RadioController::saveCache(const std::string& path) const
+{
+    Cache c;
+    c.version = 1;
+    c.complete = true;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        c.stations = m_stations;
+        c.volume = m_current_volume;
+        if (!m_current_station.channel.empty()) {
+            c.last_played.channel = m_current_station.channel;
+            c.last_played.service_id = m_current_station.service_id;
+        }
+    }
+    return si468x_pi::save_cache(path, c);
+}
+
+void RadioController::setCachePath(const std::string& path)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_cache_path = path;
+}
+
+const std::string& RadioController::cachePath() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_cache_path;
+}
+
+const std::vector<Station>& RadioController::stations() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_stations;
+}
+
+void RadioController::setStations(const std::vector<Station>& stations)
+{
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_stations = stations;
+        normalize_stations(m_stations);
+    }
+    notifyStationListChanged(m_stations);
+}
+
 bool RadioController::start(bool auto_boot)
 {
     if (m_running.load()) {
@@ -92,9 +160,10 @@ void RadioController::stop()
     if (!m_running.exchange(false)) {
         return;
     }
+    m_abort_scan = true;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_queue.push_back({ CommandType::Shutdown, {}, 0 });
+        m_queue.push_back({ CommandType::Shutdown, {}, 0, false });
     }
     m_cv.notify_one();
     if (m_worker.joinable()) {
@@ -105,56 +174,74 @@ void RadioController::stop()
 void RadioController::postPlay(const Station& station)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_queue.push_back({ CommandType::Play, station, 0 });
+    m_queue.push_back({ CommandType::Play, station, 0, false });
     m_cv.notify_one();
 }
 
 void RadioController::postStop()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_queue.push_back({ CommandType::Stop, {}, 0 });
+    m_queue.push_back({ CommandType::Stop, {}, 0, false });
     m_cv.notify_one();
+}
+
+void RadioController::postScan(bool auto_play)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_queue.push_back({ CommandType::Scan, {}, 0, auto_play });
+    m_cv.notify_one();
+}
+
+void RadioController::abortScan()
+{
+    m_abort_scan = true;
+}
+
+bool RadioController::isScanning() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_state == ControllerState::Scanning;
 }
 
 void RadioController::postVolumeUp()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_queue.push_back({ CommandType::VolumeUp, {}, 0 });
+    m_queue.push_back({ CommandType::VolumeUp, {}, 0, false });
     m_cv.notify_one();
 }
 
 void RadioController::postVolumeDown()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_queue.push_back({ CommandType::VolumeDown, {}, 0 });
+    m_queue.push_back({ CommandType::VolumeDown, {}, 0, false });
     m_cv.notify_one();
 }
 
 void RadioController::postSetVolume(int chip_volume)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_queue.push_back({ CommandType::SetVolume, {}, chip_volume });
+    m_queue.push_back({ CommandType::SetVolume, {}, chip_volume, false });
     m_cv.notify_one();
 }
 
 void RadioController::postMute()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_queue.push_back({ CommandType::Mute, {}, 0 });
+    m_queue.push_back({ CommandType::Mute, {}, 0, false });
     m_cv.notify_one();
 }
 
 void RadioController::postAudioOutput(int output_mode)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_queue.push_back({ CommandType::AudioOutput, {}, output_mode });
+    m_queue.push_back({ CommandType::AudioOutput, {}, output_mode, false });
     m_cv.notify_one();
 }
 
 void RadioController::postShutdown()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_queue.push_back({ CommandType::Shutdown, {}, 0 });
+    m_queue.push_back({ CommandType::Shutdown, {}, 0, false });
     m_cv.notify_one();
 }
 
@@ -231,7 +318,6 @@ void RadioController::threadLoop(bool auto_boot)
             cmd = m_queue.front();
             m_queue.pop_front();
 
-            // Coalesce consecutive volume/mute commands
             while (!m_queue.empty() &&
                    (m_queue.front().type == CommandType::VolumeUp ||
                     m_queue.front().type == CommandType::VolumeDown ||
@@ -271,6 +357,9 @@ void RadioController::executeCommand(const Command& cmd)
         break;
     case CommandType::Stop:
         executeStop();
+        break;
+    case CommandType::Scan:
+        executeScan(cmd.bool_arg);
         break;
     case CommandType::VolumeUp:
         if (m_muted) {
@@ -330,20 +419,21 @@ void RadioController::executePlay(const Station& station)
     }
 
     uint32_t comp_id = station.component_id;
-    si468x_service_t services[64];
-    const int count = si468x_get_service_list(services, 64);
-    if (count > 0 && comp_id == 0) {
-        for (int i = 0; i < count; ++i) {
-            if (services[i].service_id == station.service_id) {
-                comp_id = services[i].component_id;
-                break;
+    if (comp_id == 0) {
+        si468x_service_t services[64];
+        const int count = si468x_get_service_list(services, 64);
+        if (count > 0) {
+            for (int i = 0; i < count; ++i) {
+                if (services[i].service_id == station.service_id) {
+                    comp_id = services[i].component_id;
+                    break;
+                }
             }
         }
-    }
-
-    if (comp_id == 0) {
-        si468x_service_info_t sinfo;
-        si468x_get_service_info(station.service_id, &sinfo);
+        if (comp_id == 0) {
+            si468x_service_info_t sinfo;
+            si468x_get_service_info(station.service_id, &sinfo);
+        }
     }
 
     int rc = si468x_play_service(station.service_id, comp_id);
@@ -375,6 +465,116 @@ void RadioController::executeStop()
         si468x_stop_service();
     }
     notifyState(ControllerState::Stopped);
+}
+
+void RadioController::executeScan(bool auto_play)
+{
+    notifyState(ControllerState::Scanning);
+    m_abort_scan = false;
+
+    const auto& channels = m_settings.scan.channels.empty() ? default_scan_channels()
+                                                            : m_settings.scan.channels;
+    const int total = static_cast<int>(channels.size());
+    std::vector<Station> found;
+    bool aborted = false;
+
+    for (int idx = 0; idx < total; ++idx) {
+        if (m_abort_scan.exchange(false) || !m_running.load()) {
+            aborted = true;
+            break;
+        }
+
+        const std::string& ch_name = channels[idx];
+        notifyScanProgress(ch_name, static_cast<int>(found.size()), idx, total);
+
+        const Channel* ch = find_channel(ch_name);
+        if (!ch) {
+            continue;
+        }
+
+        const int tune_rc = si468x_set_frequency(ch->frequency_hz);
+        if (tune_rc != SI468X_SUCCESS) {
+            continue;
+        }
+
+        si468x_signal_status_t sig;
+        if (si468x_get_signal_status(&sig) != SI468X_SUCCESS ||
+            !sig.sync_status || sig.rssi < m_settings.scan.rssi_min) {
+            continue;
+        }
+
+        si468x_ensemble_info_t ens;
+        si468x_get_ensemble_info(&ens);
+
+        si468x_service_t svcs[64];
+        const int count = si468x_get_service_list(svcs, 64);
+        if (count > 0) {
+            for (int i = 0; i < count; ++i) {
+                if (svcs[i].is_data_service && !m_settings.scan.include_data) {
+                    continue;
+                }
+                std::string prog_label = svcs[i].label;
+                while (!prog_label.empty() && (prog_label.back() == ' ' || prog_label.back() == '\0')) {
+                    prog_label.pop_back();
+                }
+
+                si468x_service_info_t sinfo;
+                std::string short_label;
+                if (si468x_get_service_info(svcs[i].service_id, &sinfo) == SI468X_SUCCESS) {
+                    short_label = sinfo.short_label;
+                }
+                if (short_label.empty()) {
+                    short_label = svcs[i].short_label;
+                }
+                while (!short_label.empty() && (short_label.back() == ' ' || short_label.back() == '\0')) {
+                    short_label.pop_back();
+                }
+
+                found.push_back(Station{
+                    ch_name,
+                    prog_label,
+                    short_label,
+                    svcs[i].service_id,
+                    static_cast<uint16_t>(svcs[i].component_id),
+                    svcs[i].is_data_service != 0
+                });
+            }
+        }
+        notifyScanProgress(ch_name, static_cast<int>(found.size()), idx + 1, total);
+    }
+
+    normalize_stations(found);
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_stations = found;
+    }
+    notifyStationListChanged(found);
+
+    if (!m_cache_path.empty()) {
+        Cache c;
+        c.version = 1;
+        c.complete = !aborted;
+        c.stations = found;
+        c.volume = m_current_volume;
+        if (!m_current_station.channel.empty()) {
+            c.last_played.channel = m_current_station.channel;
+            c.last_played.service_id = m_current_station.service_id;
+        }
+        si468x_pi::save_cache(m_cache_path, c);
+    }
+
+    if (auto_play && !found.empty()) {
+        Station to_play = found[0];
+        for (const auto& s : found) {
+            if (!s.data) {
+                to_play = s;
+                break;
+            }
+        }
+        executePlay(to_play);
+    } else {
+        notifyState(ControllerState::Idle);
+    }
 }
 
 void RadioController::executeShutdown()
@@ -428,6 +628,30 @@ void RadioController::notifyError(const std::string& msg)
     }
     if (ev) {
         ev->onError(msg);
+    }
+}
+
+void RadioController::notifyScanProgress(const std::string& channel, int found, int current_idx, int total)
+{
+    IControllerEvents* ev = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        ev = m_events;
+    }
+    if (ev) {
+        ev->onScanProgress(channel, found, current_idx, total);
+    }
+}
+
+void RadioController::notifyStationListChanged(const std::vector<Station>& stations)
+{
+    IControllerEvents* ev = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        ev = m_events;
+    }
+    if (ev) {
+        ev->onStationListChanged(stations);
     }
 }
 
