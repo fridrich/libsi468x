@@ -4,75 +4,70 @@
 #include "font8x8_ext_latin.h"
 #include "si468x-pi/display_plugin.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <linux/fb.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
-#include <stdbool.h>
 
 const char si468x_pi_plugin_name[] = "fb";
-const char si468x_pi_plugin_description[] = "Linux framebuffer display (/dev/fb*)";
+const char si468x_pi_plugin_description[] = "Linux framebuffer display (/dev/fb*, 16 or 32 bpp)";
 const int si468x_pi_display_abi = SI468X_PI_DISPLAY_ABI;
 
 struct fb_ctx {
     int fd;
     uint8_t* fb_mem;
     size_t fb_size;
-    int width;
-    int height;
-    int bpp;
-    int stride;
+    unsigned stride;
+    unsigned bpp;
+    unsigned width;
+    unsigned height;
     int cols;
     int rows;
     FILE* out_file;
 };
 
-static const uint8_t* get_glyph(uint32_t cp)
+/* U+2588 FULL BLOCK, the filled part of the volume bar (volumeLine() in
+ * ui_manager.cpp); the ASCII fonts have no block */
+static const uint8_t glyph_full_block[8] = {
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+};
+
+/* Next code point of UTF-8 s; '?' outside the font (U+0000-007F, U+00A0-00FF
+ * and the block above) */
+static const uint8_t* glyph(const char* s, const char** next)
 {
-    static const uint8_t full_block[8] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-    if (cp == 0x2588) { // U+2588 FULL BLOCK
-        return full_block;
+    unsigned char c = (unsigned char)s[0];
+    unsigned cp = '?';
+    *next = s + 1;
+    if (c < 0x80) {
+        cp = c;
+    } else if ((c & 0xe0) == 0xc0 && s[1]) {
+        cp = ((c & 0x1fu) << 6) | (s[1] & 0x3fu);
+        *next = s + 2;
+    } else if ((c & 0xf0) == 0xe0 && s[1] && s[2]) {
+        cp = ((c & 0x0fu) << 12) | ((s[1] & 0x3fu) << 6) | (s[2] & 0x3fu);
+        *next = s + 3;
+    } else {
+        while ((**next & 0xc0) == 0x80) (*next)++;
     }
-    if (cp < 128) {
-        return font8x8_basic[cp];
-    }
-    if (cp >= 0xA0 && cp <= 0xFF) {
-        return font8x8_ext_latin[cp - 0xA0];
-    }
+    if (cp >= 0x20 && cp < 0x80) return font8x8_basic[cp];
+    if (cp >= 0xa0 && cp <= 0xff) return font8x8_ext_latin[cp - 0xa0];
+    if (cp == 0x2588) return glyph_full_block;
     return font8x8_basic['?'];
 }
 
-static uint32_t next_utf8(const char** p)
+static void put_pixel(struct fb_ctx* fb, unsigned x, unsigned y, int on)
 {
-    const uint8_t* s = (const uint8_t*)*p;
-    if (!*s) {
-        return 0;
-    }
-    uint32_t cp = 0;
-    if (*s < 0x80) {
-        cp = *s++;
-    } else if ((*s & 0xE0) == 0xC0) {
-        cp = (*s++ & 0x1F) << 6;
-        if (*s) cp |= (*s++ & 0x3F);
-    } else if ((*s & 0xF0) == 0xE0) {
-        cp = (*s++ & 0x0F) << 12;
-        if (*s) cp |= (*s++ & 0x3F) << 6;
-        if (*s) cp |= (*s++ & 0x3F);
-    } else if ((*s & 0xF8) == 0xF0) {
-        cp = (*s++ & 0x07) << 18;
-        if (*s) cp |= (*s++ & 0x3F) << 12;
-        if (*s) cp |= (*s++ & 0x3F) << 6;
-        if (*s) cp |= (*s++ & 0x3F);
-    } else {
-        cp = '?';
-        s++;
-    }
-    *p = (const char*)s;
-    return cp;
+    uint8_t* p = fb->fb_mem + y * fb->stride + x * (fb->bpp / 8);
+    if (fb->bpp == 32) *(uint32_t*)p = on ? 0xffffffff : 0;
+    else *(uint16_t*)p = on ? 0xffff : 0;
 }
 
 void* si468x_pi_display_open(const char* config, int* cols, int* rows, unsigned* features)
@@ -81,7 +76,6 @@ void* si468x_pi_display_open(const char* config, int* cols, int* rows, unsigned*
     if (!ctx) {
         return NULL;
     }
-    ctx->fd = -1;
 
     char file_path[1024] = {};
     char dev_path[1024] = "/dev/fb0";
@@ -108,6 +102,7 @@ void* si468x_pi_display_open(const char* config, int* cols, int* rows, unsigned*
     if (file_path[0]) {
         ctx->out_file = fopen(file_path, "wb");
         if (!ctx->out_file) {
+            fprintf(stderr, "si468x-pi-fb: cannot open '%s': %s\n", file_path, strerror(errno));
             free(ctx);
             return NULL;
         }
@@ -120,42 +115,46 @@ void* si468x_pi_display_open(const char* config, int* cols, int* rows, unsigned*
         ctx->fb_size = ctx->stride * ctx->height;
         ctx->fb_mem = (uint8_t*)calloc(1, ctx->fb_size);
     } else {
-        ctx->fd = open(dev_path, O_RDWR);
-        if (ctx->fd < 0) {
+        int fd = open(dev_path, O_RDWR);
+        struct fb_var_screeninfo var;
+        struct fb_fix_screeninfo fix;
+        if (fd < 0 || ioctl(fd, FBIOGET_VSCREENINFO, &var) || ioctl(fd, FBIOGET_FSCREENINFO, &fix)) {
+            fprintf(stderr, "si468x-pi-fb: cannot open/ioctl '%s': %s\n", dev_path, strerror(errno));
+            if (fd >= 0) close(fd);
+            free(ctx);
+            return NULL;
+        }
+        if (var.bits_per_pixel != 16 && var.bits_per_pixel != 32) {
+            fprintf(stderr, "si468x-pi-fb: %s has %u bpp, only 16 and 32 supported\n", dev_path, var.bits_per_pixel);
+            close(fd);
             free(ctx);
             return NULL;
         }
 
-        struct fb_var_screeninfo vinfo = {};
-        struct fb_fix_screeninfo finfo = {};
-        if (ioctl(ctx->fd, FBIOGET_VSCREENINFO, &vinfo) < 0 ||
-            ioctl(ctx->fd, FBIOGET_FSCREENINFO, &finfo) < 0) {
-            close(ctx->fd);
+        /* Without fbcon nobody sets the mode: DRM fbdev emulation (ssd130x)
+         * keeps the panel off until fb_set_par */
+        var.activate = FB_ACTIVATE_NOW | FB_ACTIVATE_FORCE;
+        (void)ioctl(fd, FBIOPUT_VSCREENINFO, &var);
+        (void)ioctl(fd, FBIOBLANK, FB_BLANK_UNBLANK);
+
+        void* mem = mmap(NULL, fix.smem_len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (mem == MAP_FAILED) {
+            fprintf(stderr, "si468x-pi-fb: mmap on '%s' failed: %s\n", dev_path, strerror(errno));
+            close(fd);
             free(ctx);
             return NULL;
         }
 
-        ctx->width = vinfo.xres;
-        ctx->height = vinfo.yres;
-        ctx->bpp = vinfo.bits_per_pixel;
-        ctx->stride = finfo.line_length;
-        ctx->fb_size = finfo.smem_len;
-
-        if (ctx->width < 8 || ctx->height < 8) {
-            close(ctx->fd);
-            free(ctx);
-            return NULL;
-        }
-
-        ctx->fb_mem = (uint8_t*)mmap(NULL, ctx->fb_size, PROT_READ | PROT_WRITE, MAP_SHARED, ctx->fd, 0);
-        if (ctx->fb_mem == MAP_FAILED) {
-            close(ctx->fd);
-            free(ctx);
-            return NULL;
-        }
-
-        ctx->cols = ctx->width / 8;
-        ctx->rows = ctx->height / 8;
+        ctx->fd = fd;
+        ctx->fb_mem = (uint8_t*)mem;
+        ctx->fb_size = fix.smem_len;
+        ctx->stride = fix.line_length;
+        ctx->bpp = var.bits_per_pixel;
+        ctx->width = var.xres;
+        ctx->height = var.yres;
+        memset(ctx->fb_mem, 0, ctx->fb_size);
+        ctx->cols = (int)(ctx->width / 8);
+        ctx->rows = (int)(ctx->height / 8);
     }
 
     *cols = ctx->cols;
@@ -166,53 +165,43 @@ void* si468x_pi_display_open(const char* config, int* cols, int* rows, unsigned*
 
 void si468x_pi_display_present(void* handle, const char* const* lines, int cols, int rows, int highlight)
 {
-    struct fb_ctx* ctx = (struct fb_ctx*)handle;
-    if (!ctx || !ctx->fb_mem) {
+    struct fb_ctx* fb = (struct fb_ctx*)handle;
+    if (!fb || !fb->fb_mem) {
         return;
     }
 
-    const uint32_t fg_color = 0xFFFFFFFF;
-    const uint32_t bg_color = 0x00000000;
-
-    for (int r = 0; r < rows && r < ctx->rows; ++r) {
-        const bool is_hl = (r == highlight);
-        const uint32_t char_fg = is_hl ? bg_color : fg_color;
-        const uint32_t char_bg = is_hl ? fg_color : bg_color;
-
-        const char* p = lines[r];
-        for (int c = 0; c < cols && c < ctx->cols; ++c) {
-            uint32_t cp = next_utf8(&p);
-            if (!cp) {
-                cp = ' ';
+    memset(fb->fb_mem, 0, fb->fb_size);
+    for (int row = 0; row < rows && row < fb->rows; row++) {
+        const int inverse = (row == highlight);
+        if (inverse) {
+            /* reverse video: the focused row in the foreground colour, its
+             * glyphs in the background colour */
+            for (unsigned y = 0; y < 8; y++) {
+                for (int x = 0; x < cols * 8 && (unsigned)x < fb->width; x++) {
+                    put_pixel(fb, x, row * 8 + y, 1);
+                }
             }
-            const uint8_t* glyph = get_glyph(cp);
-
-            for (int y = 0; y < 8; ++y) {
-                const uint8_t row_bits = glyph[y];
-                const int py = r * 8 + y;
-                uint8_t* row_ptr = ctx->fb_mem + py * ctx->stride;
-
-                for (int x = 0; x < 8; ++x) {
-                    const int px = c * 8 + x;
-                    const bool lit = (row_bits & (1 << x)) != 0;
-                    const uint32_t color = lit ? char_fg : char_bg;
-
-                    if (ctx->bpp == 16) {
-                        uint16_t* p16 = (uint16_t*)row_ptr + px;
-                        *p16 = (color != 0) ? 0xFFFF : 0x0000;
-                    } else {
-                        uint32_t* p32 = (uint32_t*)row_ptr + px;
-                        *p32 = color;
-                    }
+        }
+        const char* s = lines[row];
+        for (int col = 0; col < cols && col < fb->cols && *s; col++) {
+            const uint8_t* g = glyph(s, &s);
+            for (unsigned y = 0; y < 8; y++) {
+                for (unsigned x = 0; x < 8; x++) {
+                    put_pixel(fb, col * 8 + x, row * 8 + y, (((g[y] >> x) & 1) ^ inverse));
                 }
             }
         }
     }
 
-    if (ctx->out_file) {
-        fseek(ctx->out_file, 0, SEEK_SET);
-        fwrite(ctx->fb_mem, 1, ctx->fb_size, ctx->out_file);
-        fflush(ctx->out_file);
+    if (fb->fd >= 0 && fb->fb_mem) {
+        msync(fb->fb_mem, fb->fb_size, MS_ASYNC);
+        (void)pwrite(fb->fd, fb->fb_mem, fb->fb_size, 0);
+    }
+
+    if (fb->out_file) {
+        fseek(fb->out_file, 0, SEEK_SET);
+        fwrite(fb->fb_mem, 1, fb->fb_size, fb->out_file);
+        fflush(fb->out_file);
     }
 }
 
@@ -226,10 +215,12 @@ void si468x_pi_display_close(void* handle)
         fclose(ctx->out_file);
         free(ctx->fb_mem);
     } else {
-        if (ctx->fb_mem && ctx->fb_mem != MAP_FAILED) {
-            munmap(ctx->fb_mem, ctx->fb_size);
-        }
         if (ctx->fd >= 0) {
+            if (ctx->fb_mem && ctx->fb_mem != MAP_FAILED) {
+                memset(ctx->fb_mem, 0, ctx->fb_size);
+                (void)pwrite(ctx->fd, ctx->fb_mem, ctx->fb_size, 0);
+                munmap(ctx->fb_mem, ctx->fb_size);
+            }
             close(ctx->fd);
         }
     }

@@ -25,7 +25,7 @@ endif
 
 if ENABLE_PLUGIN_LCD
 plugin_LTLIBRARIES += si468x-pi-lcd.la
-si468x_pi_lcd_la_SOURCES = lcd/lcd.c
+si468x_pi_lcd_la_SOURCES = lcd/lcd.c lcd/hd44780_charset.h
 si468x_pi_lcd_la_LDFLAGS = -module -avoid-version -shared -rpath $(plugindir)
 endif
 

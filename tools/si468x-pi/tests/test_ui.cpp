@@ -221,23 +221,23 @@ void test_menu()
     using namespace si468x_pi;
 
     MenuScreen menu(nullptr);
-    check(menu.optionCount() == 6, "menu option count");
+    check(menu.optionCount() == 5, "menu option count");
     check(menu.option(0) == "Rescan" && menu.option(1) == "Stations"
-              && menu.option(2) == "Audio output" && menu.option(3) == "Info"
-              && menu.option(4) == "Back to radio" && menu.option(5) == "Exit",
+              && menu.option(2) == "Info" && menu.option(3) == "Back to radio"
+              && menu.option(4) == "Exit",
           "menu options");
 
     Frame frame(20, 8, 0);
     menu.render(frame);
     check(frame.lines[0] == "Menu", "menu header");
-    check(has(frame.lines[1], "Rescan"), "menu starts on Rescan");
+    check(has(frame.lines[2], "Rescan"), "menu starts on Rescan");
 
     int selected = -1;
     menu.setSelectCallback([&](int index) { selected = index; });
     menu.handleInput(InputAction::DOWN);
     Frame down(20, 8, 0);
     menu.render(down);
-    check(has(down.lines[2], "Stations"), "menu moves down");
+    check(has(down.lines[3], "Stations"), "menu moves down");
     menu.handleInput(InputAction::ENTER);
     check(selected == 1, "menu enter reports the index");
 

@@ -213,6 +213,9 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
             auto pdisp = si468x_pi::PluginDisplay::open(dcfg.plugin, dcfg.config_json);
             if (pdisp) {
                 displays.push_back(std::move(pdisp));
+            } else {
+                std::fprintf(stderr, "si468x-pi: warning: failed to open display plugin '%s'\n",
+                             dcfg.plugin.c_str());
             }
         }
     }
