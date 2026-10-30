@@ -393,7 +393,7 @@ void StationListScreen::resetSelected()
 MenuScreen::MenuScreen(UIManager* uiManager) : m_uiManager(uiManager), m_index(0)
 {
     m_options = {
-        "Rescan", "Stations", "Audio output", "Info", "Back to radio", "Exit",
+        "Rescan", "Stations", "Info", "Back to radio", "Exit",
     };
 }
 
@@ -427,18 +427,6 @@ void MenuScreen::handleInput(InputAction action)
 void MenuScreen::setSelectCallback(std::function<void(int)> cb)
 {
     m_selectCallback = std::move(cb);
-}
-
-void MenuScreen::setAudioOutputOption(const std::string& name)
-{
-    if (m_options.size() > 2) {
-        m_options[2] = "Audio: " + name;
-    }
-}
-
-std::string MenuScreen::audioOutputOption() const
-{
-    return m_options.size() > 2 ? m_options[2] : "";
 }
 
 std::string MenuScreen::option(size_t index) const

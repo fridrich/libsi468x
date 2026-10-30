@@ -106,12 +106,9 @@ int run_demo_ui(const Settings& settings, const Cache& cache)
             });
             ui.pushScreen(list);
         } else if (index == 2) {
-            radio->setDLS("Audio output: " + settings.device.audio + " (demo)");
-            ui.resetToRoot();
-        } else if (index == 3) {
             radio->setDLS("Info: RSSI --, SNR --, CNR -- (demo)");
             ui.resetToRoot();
-        } else if (index == 5) {
+        } else if (index == 4) {
             g_signal_stop = 1;
         }
     });

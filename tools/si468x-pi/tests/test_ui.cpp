@@ -246,12 +246,8 @@ void test_menu()
 
     menu.handleInput(InputAction::DOWN);
     menu.handleInput(InputAction::DOWN);
-    menu.handleInput(InputAction::DOWN);
     menu.handleInput(InputAction::ENTER); // Back to radio with no manager
     check(selected == 1, "back to radio does not call the option callback");
-
-    menu.setAudioOutputOption("i2s");
-    check(menu.audioOutputOption() == "Audio: i2s", "audio output option updated");
 }
 
 void test_info_screen()

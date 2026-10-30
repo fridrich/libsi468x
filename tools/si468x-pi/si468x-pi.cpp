@@ -229,8 +229,6 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
     auto scanning = std::make_shared<si468x_pi::ScanningScreen>();
     auto info = std::make_shared<si468x_pi::InfoScreen>(&ui);
 
-    menu->setAudioOutputOption(settings.device.audio);
-
     AppSink sink(radio, station_list, scanning, info, &ui);
 
     si468x_pi::RadioController controller(settings, &sink, cache_path);
@@ -242,8 +240,6 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
         return 1;
     }
     controller.start(false);
-
-    std::string current_audio_mode = settings.device.audio;
 
     auto play_next_station = [&](int delta) {
         const auto& stations = controller.stations();
@@ -293,20 +289,8 @@ int run_application(const si468x_pi::Settings& settings, const si468x_pi::Cache&
         } else if (index == 1) {
             ui.pushScreen(station_list);
         } else if (index == 2) {
-            if (current_audio_mode == "analog") {
-                current_audio_mode = "i2s";
-                controller.postAudioOutput(SI468X_AUDIO_I2S);
-            } else if (current_audio_mode == "i2s") {
-                current_audio_mode = "both";
-                controller.postAudioOutput(SI468X_AUDIO_SIMUL);
-            } else {
-                current_audio_mode = "analog";
-                controller.postAudioOutput(SI468X_AUDIO_ANALOG);
-            }
-            menu->setAudioOutputOption(current_audio_mode);
-        } else if (index == 3) {
             ui.pushScreen(info);
-        } else if (index == 5) {
+        } else if (index == 4) {
             g_stop_requested = true;
         }
     });

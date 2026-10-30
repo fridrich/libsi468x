@@ -100,8 +100,6 @@ public:
     void render(Frame& frame) override;
     void handleInput(InputAction action) override;
     void setSelectCallback(std::function<void(int)> cb);
-    void setAudioOutputOption(const std::string& name);
-    std::string audioOutputOption() const;
 
     size_t optionCount() const { return m_options.size(); }
     std::string option(size_t index) const;
