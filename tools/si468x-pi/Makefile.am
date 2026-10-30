@@ -53,6 +53,6 @@ libsi468x_pi_core_la_LIBADD = @LIBDL@
 si468x_pi_SOURCES = si468x-pi.cpp
 si468x_pi_LDADD = libsi468x-pi-core.la $(top_builddir)/src/libsi468x.la @LIBDL@
 
-SUBDIRS = . tests
+SUBDIRS = . plugins tests
 
 EXTRA_DIST = README.md third_party/nlohmann/LICENSE.MIT third_party/nlohmann/json.hpp

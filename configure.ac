@@ -58,7 +58,42 @@ if test "x$enable_si468x_pi" = xyes; then
     fi
 
     AC_CHECK_LIB([dl], [dlopen], [LIBDL="-ldl"], [LIBDL=""])
+
+    AC_CHECK_HEADERS([linux/input.h linux/fb.h])
+
+    AC_ARG_ENABLE([si468x-pi-plugins],
+        [AS_HELP_STRING([--disable-si468x-pi-plugins], [do not build optional plugins (evdev, fb, lcd)])],
+        [], [enable_si468x_pi_plugins=yes])
+
+    AC_ARG_ENABLE([si468x-pi-evdev],
+        [AS_HELP_STRING([--disable-si468x-pi-evdev], [do not build evdev input plugin])],
+        [], [enable_si468x_pi_evdev=yes])
+
+    AC_ARG_ENABLE([si468x-pi-fb],
+        [AS_HELP_STRING([--disable-si468x-pi-fb], [do not build framebuffer display plugin])],
+        [], [enable_si468x_pi_fb=yes])
+
+    AC_ARG_ENABLE([si468x-pi-lcd],
+        [AS_HELP_STRING([--disable-si468x-pi-lcd], [do not build lcd display plugin])],
+        [], [enable_si468x_pi_lcd=yes])
+
+    if test "x$enable_si468x_pi_plugins" != "xyes"; then
+        enable_si468x_pi_evdev=no
+        enable_si468x_pi_fb=no
+        enable_si468x_pi_lcd=no
+    fi
+
+    if test "x$ac_cv_header_linux_input_h" != "xyes"; then
+        enable_si468x_pi_evdev=no
+    fi
+    if test "x$ac_cv_header_linux_fb_h" != "xyes"; then
+        enable_si468x_pi_fb=no
+    fi
 fi
+
+AM_CONDITIONAL([ENABLE_PLUGIN_EVDEV], [test "x$enable_si468x_pi_evdev" = "xyes"])
+AM_CONDITIONAL([ENABLE_PLUGIN_FB], [test "x$enable_si468x_pi_fb" = "xyes"])
+AM_CONDITIONAL([ENABLE_PLUGIN_LCD], [test "x$enable_si468x_pi_lcd" = "xyes"])
 
 # Firmware images embedded at build time (never distributed). Missing/empty = configure error.
 AC_ARG_ENABLE([firmware],
@@ -118,6 +153,7 @@ AC_CONFIG_FILES([
     tests/Makefile
     tools/Makefile
     tools/si468x-pi/Makefile
+    tools/si468x-pi/plugins/Makefile
     tools/si468x-pi/tests/Makefile
     libsi468x.pc
     Doxyfile
