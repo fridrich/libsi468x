@@ -77,6 +77,17 @@ static bool test_short_label_decoding()
     si468x_decode_short_label(raw8, 6, 0xA000, 6, short_label, 9);
     ASSERT_TRUE(std::strcmp(short_label, "A\xC3\x89") == 0, "UCS-2: mask bits select characters, not bytes");
 
+    // EBU Latin is not Latin-1 above 0x9F: 0xC2 is E-acute, not A-circumflex
+    const uint8_t raw9[] = { 'l', '\'', 0xC2, 'c', 'h', 'o' };
+    si468x_decode_short_label(raw9, sizeof(raw9), 0xFC00, 0, short_label, sizeof(short_label));
+    ASSERT_TRUE(std::strcmp(short_label, "l'\xC3\x89" "cho") == 0, "EBU 0xC2 -> E-acute");
+
+    // Characters that differ between the old and current EBU Latin repertoire
+    const uint8_t raw10[] = { 0x5E, 0x7C, 0x7E, 0x8F, 0x9F }; // Ł ů Ľ Ÿ ÿ
+    si468x_decode_short_label(raw10, sizeof(raw10), 0xF800, 0, short_label, sizeof(short_label));
+    ASSERT_TRUE(std::strcmp(short_label, "\xC5\x81\xC5\xAF\xC4\xBD\xC5\xB8\xC3\xBF") == 0,
+                "complete EBU Latin table, not just 0x80-0x9F");
+
     std::cout << "PASS: test_short_label_decoding" << std::endl;
     return true;
 }
@@ -889,6 +900,14 @@ static bool test_dls_mot()
     chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA, dsd(2, 0, 0, { 0x00, 0x40, 0x00, 0xC9, 0x00, 0x74, 0x00, 0xE9 }));
     ASSERT_TRUE(si468x_get_dls_text(dls, sizeof(dls)) == 1 && std::strcmp(dls, "\xC3\x89t\xC3\xA9") == 0, "charset 4 = UCS-2");
     ASSERT_TRUE(si468x_get_dls_text(dls, 3) == 0 && std::strcmp(dls, "\xC3\x89") == 0, "truncated on char boundary");
+
+    // DLS charset 0 (EBU Latin): 0xC2 is E-acute; treating it as Latin-1 gave A-circumflex
+    chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA,
+                dsd(2, 0, 0, { 0x00, 0x00, 'l', '\'', 0xC2, 'c', 'h', 'o', ' ', 'd', 'e', 's', ' ',
+                               'p', 'a', 'v', 'a', 'n', 'e', 's', 0x00 }));
+    ASSERT_TRUE(si468x_get_dls_text(dls, sizeof(dls)) == 1
+                    && std::strcmp(dls, "l'\xC3\x89" "cho des pavanes") == 0,
+                "EBU Latin DLS decodes 0xC2 as E-acute");
 
     // Clear command
     chip.expect(SI468X_CMD_GET_DIGITAL_SERVICE_DATA, dsd(2, 0, 0, { 0x11, 0x00 }));
